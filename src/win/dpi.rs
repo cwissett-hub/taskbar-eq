@@ -20,16 +20,21 @@ mod tests {
         set_per_monitor_v2().expect("should set awareness");
         let ctx = unsafe { GetThreadDpiAwarenessContext() };
 
-        // This asserts a per-monitor awareness context, and deliberately does not try
-        // to distinguish v1 from v2. DPI_AWARENESS_CONTEXT is an opaque pseudo-handle
-        // (*mut c_void), which is why AreDpiAwarenessContextsEqual exists at all -
-        // comparing the raw value is meaningless, and this API documents v1 and v2 as
-        // equal. That is acceptable here: v2's extra behaviour is non-client-area
-        // scaling, child-window DPI notifications and dialog scaling, and this overlay
-        // is a single top-level WS_POPUP with none of those. The regressions that would
-        // actually break the overlay are UNAWARE and SYSTEM_AWARE - the 1.25x
-        // virtualisation that misreports the taskbar as 1536x48 - and this assertion
-        // catches both.
+        // One assertion, and it is stronger than it looks. Both claims below were
+        // measured on this machine on 2026-07-30, not taken from the docs:
+        //
+        //  - AreDpiAwarenessContextsEqual DOES discriminate v1 from v2 here. With
+        //    PER_MONITOR_AWARE (v1) deliberately set instead, this returned false.
+        //    So this genuinely pins v2, and a regression to v1 fails the test. (A
+        //    review claimed the API treats v1 and v2 as equal; the experiment
+        //    disproved that. Do not weaken this assertion on the strength of the
+        //    documentation's ambiguity.)
+        //
+        //  - Do NOT be tempted to compare the raw values instead. It looks more
+        //    precise and it does not work: DPI_AWARENESS_CONTEXT wraps an opaque
+        //    *mut c_void, and GetThreadDpiAwarenessContext returned handle 0x22
+        //    while the v2 sentinel is -4, so a raw comparison fails even when the
+        //    awareness is correct. It cannot even be hex-formatted.
         let equal = unsafe {
             AreDpiAwarenessContextsEqual(ctx, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
         };
