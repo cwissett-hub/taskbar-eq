@@ -1,4 +1,5 @@
 mod geom;
+mod render;
 mod win;
 
 use anyhow::Result;
