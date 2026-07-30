@@ -327,3 +327,14 @@ versioning a guess.
 
 A single portable `taskbar-eq.exe`, copied to both machines. No installer, no admin, no runtime.
 Local git repo at `Documents\projects\taskbar-eq`, no remote.
+
+The README must carry a **self-contained, copy-pasteable prompt for generating new colourways**,
+so themes can be authored by an agent later without re-deriving any of this. It has to include
+the full schema, the per-family key sets, and — critically — the canvas constraints that are not
+guessable: dark mode only, the wallpaper-tinted acrylic background, why each theme draws its own
+near-black panel, the ≥3:1 contrast requirement against that panel, and the fact that these are
+emissive colours rather than chart fills. A prompt with only the schema would produce
+schema-valid themes that look wrong.
+
+This is a shipping requirement, not documentation polish: if the extensibility seam is only
+usable by someone who was present for this design conversation, it is not extensible.
