@@ -1,0 +1,459 @@
+<h2>Theme families</h2>
+<p class="subtitle">
+  Everything below is animated at <strong>true size, 190 &times; 60 physical pixels</strong>, sitting on the real
+  colour I sampled off your taskbar. Each is shown 1:1 in a mock taskbar and again at 3&times; for detail.
+  <br>
+  <strong>Family 1</strong> is settled &mdash; treatment A, five colourways, scroll down to check the new
+  three-colour classic. <strong>Family 2</strong> is three candidate concepts for a second family: pick the
+  concept and I will expand it into a full colourway set.
+</p>
+
+<style>
+  .tv-ctl { display:flex; gap:16px; align-items:center; margin:0 0 22px; flex-wrap:wrap;
+            padding:12px 14px; border:1px solid rgba(128,128,128,.28); border-radius:10px;
+            position:sticky; top:8px; backdrop-filter:blur(10px); z-index:5;
+            background:color-mix(in srgb, canvas 82%, transparent); }
+  .tv-ctl .grp { display:flex; gap:8px; align-items:center; }
+  .tv-ctl .lbl { font-size:11px; text-transform:uppercase; letter-spacing:.09em; opacity:.55; }
+  .tv-ctl button { font:inherit; font-size:13px; padding:5px 11px; border-radius:7px; cursor:pointer;
+                   background:transparent; color:inherit; border:1px solid rgba(128,128,128,.45); }
+  .tv-ctl button.on { border-color:#5fc8ff; box-shadow:inset 0 0 0 1px #5fc8ff; }
+  .tv-ctl input[type=range] { width:110px; accent-color:#5fc8ff; }
+  .tv-ctl .val { font-size:12px; opacity:.6; min-width:34px; font-variant-numeric:tabular-nums; }
+
+  .tv-famhead { margin:34px 0 6px; padding-bottom:8px; border-bottom:1px solid rgba(128,128,128,.28); }
+  .tv-famhead:first-of-type { margin-top:6px; }
+  .tv-famhead h3 { margin:0 0 3px; font-size:19px; }
+  .tv-famhead p { margin:0; font-size:13px; opacity:.7; line-height:1.5; }
+
+  .tv-grid { display:flex; flex-direction:column; gap:18px; margin-top:16px; }
+  .tv-card { border:1px solid rgba(128,128,128,.3); border-radius:12px; padding:14px 16px 16px;
+             cursor:pointer; transition:border-color .15s, box-shadow .15s; }
+  .tv-card:hover { border-color:rgba(95,200,255,.55); }
+  .tv-card.selected { border-color:#5fc8ff; box-shadow:0 0 0 2px rgba(95,200,255,.3); }
+  .tv-head { display:flex; align-items:center; gap:9px; margin-bottom:3px; flex-wrap:wrap; }
+  .tv-head h4 { margin:0; font-size:16px; }
+  .tv-sw { width:13px; height:13px; border-radius:3px; }
+  .tv-hex { font-size:11px; opacity:.5; font-family:ui-monospace,Consolas,monospace; }
+  .tv-tag { font-size:10px; text-transform:uppercase; letter-spacing:.08em; opacity:.6;
+            border:1px solid currentColor; border-radius:4px; padding:1px 6px; }
+  .tv-desc { font-size:13px; opacity:.78; margin:0 0 8px; line-height:1.55; }
+  .tv-ways { font-size:12px; opacity:.62; margin:0 0 12px; line-height:1.5; }
+  .tv-ways b { opacity:.85; font-weight:600; }
+  .tv-views { display:flex; gap:24px; align-items:flex-end; flex-wrap:wrap; }
+  .tv-vl { font-size:11px; text-transform:uppercase; letter-spacing:.09em; opacity:.5; margin-bottom:6px; }
+  .tv-strip { display:flex; align-items:center; justify-content:flex-end; height:60px; width:420px;
+              border-radius:6px; overflow:hidden; font-family:"Segoe UI",system-ui,sans-serif; }
+  .tv-ti { color:#fff; font-size:12px; opacity:.9; padding:0 9px; }
+  .tv-clock { color:#fff; font-size:12px; line-height:1.3; text-align:center; padding:0 10px; }
+  .tv-zoom { border-radius:6px; overflow:hidden; }
+  canvas { display:block; }
+</style>
+
+<div class="tv-ctl">
+  <div class="grp">
+    <span class="lbl">Taskbar bg</span>
+    <button data-bg="acrylic" class="on">Your wallpaper</button>
+    <button data-bg="neutral">Neutral dark</button>
+    <button data-bg="cool">Cool wallpaper</button>
+  </div>
+  <div class="grp">
+    <span class="lbl">Sat</span>
+    <input type="range" id="tv-sat" min="0" max="200" value="100">
+    <span class="val" id="tv-satv">100%</span>
+  </div>
+  <div class="grp">
+    <span class="lbl">Bright</span>
+    <input type="range" id="tv-bri" min="40" max="140" value="100">
+    <span class="val" id="tv-briv">100%</span>
+  </div>
+</div>
+
+<div class="tv-famhead">
+  <h3>Family 1 &mdash; Segmented Display</h3>
+  <p>Smoked-glass panel, discrete stacked segments, faint dormant grid, peak-hold caps. One skeleton; each
+     colourway brings its own panel tint, bloom weight and panel texture so they read as different devices.</p>
+</div>
+<div class="tv-grid" id="tv-f1"></div>
+
+<div class="tv-famhead">
+  <h3>Family 2 &mdash; candidates</h3>
+  <p>Three concepts, each deliberately <em>not</em> bars. One colourway shown each. Pick the concept you want and
+     I will build out its full set.</p>
+</div>
+<div class="tv-grid" id="tv-f2"></div>
+
+<script>
+(function () {
+  const DPR = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+  const W = 190, H = 60;
+  const BG = { acrylic:['#4a1d16','#33150f'], neutral:['#262626','#1c1c1c'], cool:['#16243a','#101827'] };
+  let bgKey = 'acrylic', sat = 1, bri = 1;
+
+  function hex2rgb(h){ h=h.replace('#',''); return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)]; }
+  function adjust(hex){
+    let [r,g,b] = hex2rgb(hex);
+    const l = 0.2126*r+0.7152*g+0.0722*b;
+    r=l+(r-l)*sat; g=l+(g-l)*sat; b=l+(b-l)*sat;
+    const c=v=>Math.max(0,Math.min(255,Math.round(v*bri)));
+    return 'rgb('+c(r)+','+c(g)+','+c(b)+')';
+  }
+  function glowOf(hex, a){
+    let [r,g,b] = hex2rgb(hex);
+    const l = 0.2126*r+0.7152*g+0.0722*b;
+    r=l+(r-l)*sat*1.15; g=l+(g-l)*sat*1.15; b=l+(b-l)*sat*1.15;
+    const c=v=>Math.max(0,Math.min(255,Math.round(v*bri)));
+    return 'rgba('+c(r)+','+c(g)+','+c(b)+','+a+')';
+  }
+  function rrect(c,x,y,w,h,r){ c.beginPath(); c.moveTo(x+r,y); c.arcTo(x+w,y,x+w,y+h,r);
+    c.arcTo(x+w,y+h,x,y+h,r); c.arcTo(x,y+h,x,y,r); c.arcTo(x,y,x+w,y,r); c.closePath(); }
+
+  // ================== shared synthetic audio ============================
+  const NB = 64, NW = 256;
+  const spec = new Float32Array(NB);
+  const wave = new Float32Array(NW);
+  let vuL=0, vuR=0, vuPkL=0, vuPkR=0;
+
+  const F1 = [
+    { id:'vfd', name:'VFD Ice', hex:'#8fe4ff',
+      desc:'Hi-fi vacuum-fluorescent ice blue. Pale and near-white-hot, which is exactly what real VFD phosphor looks like. Glass panel with a thin lit top edge, crisp segments, medium bloom.',
+      lit:'#8fe4ff', hot:'#e4f8ff', panel:'rgba(4,10,14,0.55)', edge:'rgba(150,225,255,0.13)',
+      ghost:0.11, bloom:9, decay:0.0055, texture:'glass', core:true },
+    { id:'matrix', name:'Matrix Green', hex:'#35ff6e',
+      desc:'Terminal-phosphor green on near-pure black, with a brighter dormant grid so the whole matrix of segments is faintly present when idle. Fine scanlines across the panel.',
+      lit:'#35ff6e', hot:'#ccffdb', panel:'rgba(0,9,3,0.70)', edge:'rgba(60,255,120,0.14)',
+      ghost:0.17, bloom:8, decay:0.0070, texture:'scanlines', core:true },
+    { id:'neon', name:'Neon Pink', hex:'#ff4fb0',
+      desc:'Hot magenta neon tubing. Heaviest bloom of the five, on a purple-black panel with an outer haze - a real neon tube throws light onto whatever it is mounted on.',
+      lit:'#ff4fb0', hot:'#ffd9ee', panel:'rgba(13,2,11,0.62)', edge:'rgba(255,79,176,0.22)',
+      ghost:0.09, bloom:14, decay:0.0050, texture:'haze', core:true },
+    { id:'tube', name:'Vac Tube Orange', hex:'#ff9a2e',
+      desc:'Warm valve-filament amber. Soft wide bloom, the slowest peak-cap fall of the five so it feels like heat dissipating, and a filament glow pooling along the bottom of the panel.',
+      lit:'#ff9a2e', hot:'#ffe9c9', panel:'rgba(15,6,2,0.64)', edge:'rgba(255,150,50,0.16)',
+      ghost:0.13, bloom:12, decay:0.0035, texture:'filament', core:true },
+    { id:'classic', name:'Classic Three-Colour', hex:'#3ddc5a',
+      desc:'The stereo level meter everyone knows: green while there is headroom, amber when it gets loud, red at the top. Flat segment colour with no hot core, like real coloured LEDs, and the dormant grid shows its zones faintly. Peak caps brighten within their own zone.',
+      panel:'rgba(6,7,8,0.66)', edge:'rgba(200,210,215,0.12)',
+      ghost:0.13, bloom:7, decay:0.0045, texture:'grille', core:false,
+      zones:[ {upto:0.58, lit:'#3ddc5a', hot:'#b6ffc6'},
+              {upto:0.84, lit:'#ffc21f', hot:'#fff0b8'},
+              {upto:1.01, lit:'#ff3b30', hot:'#ffc2bd'} ] }
+  ];
+  const GEO = { barW:5, gap:2, segH:3, segGap:1, padX:5, padY:6 };
+  const f1state = F1.map(()=>({ level:new Float32Array(NB), peak:new Float32Array(NB) }));
+
+  function advance(t) {
+    const beat = Math.pow(Math.max(0, Math.sin(t/405)), 8);
+    const swell = Math.pow(Math.max(0, Math.sin(t/1620)), 3);
+
+    for (let i=0;i<NB;i++){
+      const f=i/(NB-1);
+      const tilt=Math.pow(1-f,1.5)*0.88+0.09;
+      const wob=0.5+0.5*Math.sin(t/(240+i*41)+i*1.7);
+      const jit=0.5+0.5*Math.sin(t/(61+i*13)+i*4.3);
+      let tgt=tilt*(0.30+0.70*wob)*(0.55+0.45*jit)+beat*tilt*0.60+swell*0.10*(1-f);
+      if(f>0.82) tgt*=0.55;
+      tgt=Math.min(1,Math.max(0,tgt));
+      spec[i]+=(tgt-spec[i])*(tgt>spec[i]?0.55:0.11);
+      for (let s=0;s<f1state.length;s++){
+        const st=f1state[s];
+        st.level[i]+=(tgt-st.level[i])*(tgt>st.level[i]?0.55:0.11);
+        st.peak[i]=Math.max(st.peak[i]-F1[s].decay, st.level[i]);
+      }
+    }
+
+    const amp = 0.34 + 0.52*beat + 0.16*swell;
+    for (let i=0;i<NW;i++){
+      const p=i/NW;
+      wave[i]=amp*( Math.sin(p*Math.PI*2*2.0+t/300)*0.62 +
+                    Math.sin(p*Math.PI*2*5.0+t/170)*0.24 +
+                    Math.sin(p*Math.PI*2*11.0+t/90)*0.10 +
+                    Math.sin(p*Math.PI*2*23.0+t/45)*0.05 );
+    }
+    const tL=Math.min(1,amp*0.95+beat*0.18), tR=Math.min(1,amp*0.88+beat*0.24+0.04*Math.sin(t/700));
+    vuL+=(tL-vuL)*0.085; vuR+=(tR-vuR)*0.085;
+    vuPkL=Math.max(vuPkL-0.004,vuL); vuPkR=Math.max(vuPkR-0.004,vuR);
+  }
+  function samp(arr,b,n){ const a=b/n*NB,e=(b+1)/n*NB; let m=0;
+    for(let i=Math.floor(a);i<Math.max(Math.floor(a)+1,Math.ceil(e));i++) m=Math.max(m,arr[Math.min(NB-1,i)]);
+    return m; }
+
+  // ================== FAMILY 1 renderer =================================
+  function drawSeg(o, s) {
+    const T=F1[o.i], st=f1state[o.i], c=o.ctx, w=W*s, h=H*s;
+    c.setTransform(DPR,0,0,DPR,0,0); c.clearRect(0,0,w,h);
+    c.fillStyle=T.panel; rrect(c,1*s,2*s,w-2*s,h-4*s,4*s); c.fill();
+
+    c.save(); rrect(c,1*s,2*s,w-2*s,h-4*s,4*s); c.clip();
+    if (T.texture==='scanlines'){ c.fillStyle='rgba(80,255,140,0.045)';
+      for(let y=2*s;y<h-4*s;y+=2*s) c.fillRect(1*s,y,w-2*s,Math.max(1,s*0.5)); }
+    else if (T.texture==='filament'){ const g=c.createLinearGradient(0,h-4*s,0,h*0.45);
+      g.addColorStop(0,glowOf(T.lit,0.20)); g.addColorStop(1,'rgba(0,0,0,0)');
+      c.fillStyle=g; c.fillRect(1*s,2*s,w-2*s,h-4*s); }
+    else if (T.texture==='haze'){ const g=c.createRadialGradient(w/2,h/2,0,w/2,h/2,w*0.55);
+      g.addColorStop(0,glowOf(T.lit,0.13)); g.addColorStop(1,'rgba(0,0,0,0)');
+      c.fillStyle=g; c.fillRect(1*s,2*s,w-2*s,h-4*s); }
+    else if (T.texture==='glass'){ const g=c.createLinearGradient(0,2*s,0,h*0.5);
+      g.addColorStop(0,'rgba(190,240,255,0.09)'); g.addColorStop(1,'rgba(0,0,0,0)');
+      c.fillStyle=g; c.fillRect(1*s,2*s,w-2*s,h*0.5); }
+    else if (T.texture==='grille'){ c.fillStyle='rgba(255,255,255,0.028)';
+      for(let x=1*s;x<w-1*s;x+=3*s) c.fillRect(x,2*s,Math.max(1,s*0.5),h-4*s); }
+    c.restore();
+
+    c.strokeStyle=T.edge; c.lineWidth=Math.max(1,s*0.6);
+    rrect(c,1*s,2*s,w-2*s,h-4*s,4*s); c.stroke();
+
+    const padX=GEO.padX*s, padY=GEO.padY*s, uw=w-padX*2, uh=h-padY*2;
+    const pitch=(GEO.barW+GEO.gap)*s, n=Math.floor(uw/pitch);
+    const ox=padX+(uw-n*pitch+GEO.gap*s)/2;
+    const sp=(GEO.segH+GEO.segGap)*s, nseg=Math.floor(uh/sp), bw=GEO.barW*s;
+    const zoneOf=fr=>{ for(let z=0;z<T.zones.length;z++) if(fr<=T.zones[z].upto) return T.zones[z];
+                       return T.zones[T.zones.length-1]; };
+    const segY=k=>padY+uh-(k+1)*sp;
+
+    if (T.ghost>0){
+      c.globalAlpha=T.ghost;
+      if (T.zones){ for(let k=0;k<nseg;k++){ c.fillStyle=adjust(zoneOf((k+1)/nseg).lit);
+          for(let b=0;b<n;b++) c.fillRect(ox+b*pitch,segY(k),bw,GEO.segH*s); } }
+      else { c.fillStyle=adjust(T.lit);
+        for(let b=0;b<n;b++) c.fillRect(ox+b*pitch,padY,bw,nseg*sp-GEO.segGap*s); }
+      c.globalAlpha=1;
+    }
+
+    c.shadowBlur=T.bloom*s;
+    if (T.zones){
+      for(let k=0;k<nseg;k++){
+        const z=zoneOf((k+1)/nseg);
+        c.shadowColor=glowOf(z.lit,0.9); c.fillStyle=adjust(z.lit);
+        for(let b=0;b<n;b++) if(Math.round(samp(st.level,b,n)*nseg)>k) c.fillRect(ox+b*pitch,segY(k),bw,GEO.segH*s);
+      }
+    } else {
+      c.shadowColor=glowOf(T.lit,0.95); c.fillStyle=adjust(T.lit);
+      for(let b=0;b<n;b++){ const lit=Math.round(samp(st.level,b,n)*nseg);
+        if(lit<=0) continue; const hh=lit*sp-GEO.segGap*s;
+        c.fillRect(ox+b*pitch,padY+uh-hh,bw,hh); }
+    }
+    c.shadowBlur=0;
+
+    if (T.core){
+      c.fillStyle=adjust(T.hot); c.globalAlpha=0.55;
+      for(let b=0;b<n;b++){ const lit=Math.round(samp(st.level,b,n)*nseg);
+        if(lit<=0) continue; const hh=lit*sp-GEO.segGap*s;
+        c.fillRect(ox+b*pitch+bw*0.28,padY+uh-hh,bw*0.44,hh); }
+      c.globalAlpha=1;
+    }
+
+    c.globalCompositeOperation='destination-out';
+    for(let k=1;k<=nseg;k++) c.fillRect(0,padY+uh-k*sp+GEO.segH*s,w,GEO.segGap*s);
+    c.globalCompositeOperation='source-over';
+
+    c.shadowBlur=T.bloom*0.7*s;
+    for(let b=0;b<n;b++){
+      const pk=Math.round(samp(st.peak,b,n)*nseg); if(pk<=0) continue;
+      const col=T.zones?zoneOf(pk/nseg):T;
+      c.shadowColor=glowOf(col.lit,0.9); c.fillStyle=adjust(col.hot);
+      c.fillRect(ox+b*pitch,padY+uh-pk*sp,bw,Math.max(1,s));
+    }
+    c.shadowBlur=0;
+  }
+
+  // ================== FAMILY 2 renderers ================================
+  function drawScope(o, s) {
+    const c=o.ctx, w=W*s, h=H*s, P=o.persist;
+    P.globalCompositeOperation='destination-out'; P.globalAlpha=0.14;
+    P.fillStyle='#000'; P.fillRect(0,0,w*DPR,h*DPR);
+    P.globalAlpha=1; P.globalCompositeOperation='source-over';
+    P.setTransform(DPR,0,0,DPR,0,0);
+    P.strokeStyle=adjust('#5cff9a'); P.shadowColor=glowOf('#3cff96',0.95); P.shadowBlur=6*s;
+    P.lineWidth=Math.max(1,1.3*s); P.lineJoin='round';
+    P.beginPath();
+    const x0=5*s, ww=w-10*s, mid=h/2;
+    for(let i=0;i<NW;i++){ const x=x0+(i/(NW-1))*ww, y=mid-wave[i]*(h*0.38);
+      if(i===0) P.moveTo(x,y); else P.lineTo(x,y); }
+    P.stroke(); P.shadowBlur=0;
+
+    c.setTransform(DPR,0,0,DPR,0,0); c.clearRect(0,0,w,h);
+    c.fillStyle='rgba(2,8,5,0.66)'; rrect(c,1*s,2*s,w-2*s,h-4*s,4*s); c.fill();
+    c.save(); rrect(c,1*s,2*s,w-2*s,h-4*s,4*s); c.clip();
+    c.strokeStyle='rgba(90,255,150,0.10)'; c.lineWidth=Math.max(1,s*0.5);
+    for(let k=1;k<8;k++){ const x=1*s+(w-2*s)*k/8; c.beginPath(); c.moveTo(x,2*s); c.lineTo(x,h-2*s); c.stroke(); }
+    for(let k=1;k<4;k++){ const y=2*s+(h-4*s)*k/4; c.beginPath(); c.moveTo(1*s,y); c.lineTo(w-1*s,y); c.stroke(); }
+    c.strokeStyle='rgba(90,255,150,0.20)'; c.beginPath(); c.moveTo(1*s,h/2); c.lineTo(w-1*s,h/2); c.stroke();
+    c.restore();
+    c.setTransform(1,0,0,1,0,0); c.drawImage(o.pcv,0,0); c.setTransform(DPR,0,0,DPR,0,0);
+    c.strokeStyle='rgba(120,255,180,0.14)'; c.lineWidth=Math.max(1,s*0.6);
+    rrect(c,1*s,2*s,w-2*s,h-4*s,4*s); c.stroke();
+  }
+
+  function drawVU(o, s) {
+    const c=o.ctx, w=W*s, h=H*s;
+    const INK='rgba(255,226,170,0.72)', NEEDLE=adjust('#ffe6b0'), RED='#ff5340';
+    c.setTransform(DPR,0,0,DPR,0,0); c.clearRect(0,0,w,h);
+    c.fillStyle='rgba(20,14,6,0.72)'; rrect(c,1*s,2*s,w-2*s,h-4*s,4*s); c.fill();
+    c.save(); rrect(c,1*s,2*s,w-2*s,h-4*s,4*s); c.clip();
+    const g=c.createLinearGradient(0,h,0,h*0.25);
+    g.addColorStop(0,glowOf('#ffaa3c',0.22)); g.addColorStop(1,'rgba(0,0,0,0)');
+    c.fillStyle=g; c.fillRect(0,0,w,h); c.restore();
+
+    const dials=[{x:2*s,v:vuL,pk:vuPkL,tag:'L'},{x:w/2,v:vuR,pk:vuPkR,tag:'R'}];
+    const dw=w/2-3*s;
+    dials.forEach(function(d){
+      const cx=d.x+dw/2, cy=h-4*s, R=dw*0.60;
+      const A0=-Math.PI*0.78, A1=-Math.PI*0.22;
+      c.strokeStyle=INK; c.lineWidth=Math.max(1,s*0.55);
+      c.beginPath(); c.arc(cx,cy,R,A0,A1); c.stroke();
+      c.strokeStyle='rgba(255,90,70,0.85)'; c.lineWidth=Math.max(1,s*1.1);
+      c.beginPath(); c.arc(cx,cy,R,A0+(A1-A0)*0.76,A1); c.stroke();
+      c.strokeStyle=INK; c.lineWidth=Math.max(1,s*0.5);
+      for(let k=0;k<=6;k++){
+        const a=A0+(A1-A0)*k/6, big=(k===0||k===3||k===6), r1=R-(big?4.5*s:2.8*s);
+        c.beginPath(); c.moveTo(cx+Math.cos(a)*r1,cy+Math.sin(a)*r1);
+        c.lineTo(cx+Math.cos(a)*R,cy+Math.sin(a)*R); c.stroke();
+      }
+      c.fillStyle=INK; c.font=(s>=2?8*s:7)+'px "Segoe UI",system-ui,sans-serif'; c.textAlign='center';
+      c.fillText(d.tag,cx,h-6.5*s);
+      const apk=A0+(A1-A0)*Math.min(1,d.pk);
+      c.strokeStyle='rgba(255,120,90,0.45)'; c.lineWidth=Math.max(1,s*0.7);
+      c.beginPath(); c.moveTo(cx+Math.cos(apk)*R*0.30,cy+Math.sin(apk)*R*0.30);
+      c.lineTo(cx+Math.cos(apk)*R*0.97,cy+Math.sin(apk)*R*0.97); c.stroke();
+      const a=A0+(A1-A0)*Math.min(1,d.v);
+      c.shadowColor=glowOf('#ffb43c',0.9); c.shadowBlur=5*s;
+      c.strokeStyle=(d.v>0.76)?RED:NEEDLE; c.lineWidth=Math.max(1,s*1.15); c.lineCap='round';
+      c.beginPath(); c.moveTo(cx,cy); c.lineTo(cx+Math.cos(a)*R*0.95,cy+Math.sin(a)*R*0.95); c.stroke();
+      c.shadowBlur=0;
+      c.fillStyle=NEEDLE; c.beginPath(); c.arc(cx,cy,Math.max(1,s*1.1),0,Math.PI*2); c.fill();
+    });
+    c.strokeStyle='rgba(255,200,120,0.16)'; c.lineWidth=Math.max(1,s*0.6);
+    rrect(c,1*s,2*s,w-2*s,h-4*s,4*s); c.stroke();
+  }
+
+  const RAMP=[[0,4,8,14],[0.18,12,44,96],[0.40,20,110,190],[0.62,60,196,232],[0.82,168,238,250],[1,240,252,255]];
+  function rampCol(v){
+    v=Math.max(0,Math.min(1,v));
+    for(let i=1;i<RAMP.length;i++){
+      if(v<=RAMP[i][0]){
+        const a=RAMP[i-1],b=RAMP[i],f=(v-a[0])/((b[0]-a[0])||1);
+        return 'rgb('+Math.round(a[1]+(b[1]-a[1])*f)+','+Math.round(a[2]+(b[2]-a[2])*f)+','+Math.round(a[3]+(b[3]-a[3])*f)+')';
+      }
+    }
+    return 'rgb(240,252,255)';
+  }
+  function drawSpectro(o, s) {
+    const c=o.ctx, w=W*s, h=H*s, B=o.buf;
+    B.globalCompositeOperation='copy'; B.drawImage(o.bcv,-1,0); B.globalCompositeOperation='source-over';
+    const inner=H-8;
+    for(let y=0;y<inner;y++){
+      const f=1-y/(inner-1);
+      const idx=Math.min(NB-1,Math.floor(Math.pow(f,1.35)*(NB-1)));
+      B.fillStyle=rampCol(spec[idx]); B.fillRect(W-1,4+y,1,1);
+    }
+    c.setTransform(DPR,0,0,DPR,0,0); c.clearRect(0,0,w,h);
+    c.fillStyle='rgba(2,5,10,0.70)'; rrect(c,1*s,2*s,w-2*s,h-4*s,4*s); c.fill();
+    c.save(); rrect(c,2*s,3*s,w-4*s,h-6*s,3*s); c.clip();
+    c.imageSmoothingEnabled=false; c.drawImage(o.bcv,0,0,W,H,0,0,w,h); c.restore();
+    c.strokeStyle='rgba(150,220,255,0.14)'; c.lineWidth=Math.max(1,s*0.6);
+    rrect(c,1*s,2*s,w-2*s,h-4*s,4*s); c.stroke();
+  }
+
+  const F2=[
+    { id:'scope', name:'Oscilloscope', tag:'CRT trace', render:drawScope, persist:true,
+      desc:'A glowing waveform on a phosphor CRT, with a graticule behind it and genuine persistence - the trace leaves a fading trail because previous frames decay rather than being cleared. Shows the actual waveform rather than a spectrum, so it moves quite differently: it breathes with the music instead of bouncing.',
+      ways:'<b>Colourways as phosphor types:</b> P1 green (shown) / P7 ice blue / P11 blue-violet / amber / white-hot' },
+    { id:'vu', name:'Analogue VU', tag:'twin needles', render:drawVU,
+      desc:'Two backlit needle dials with a printed arc, tick marks and a red overload zone. Proper VU ballistics - a slow ~300ms integration, so the needles swing and settle rather than twitch. Faint ghost needles hold the peaks. Level per channel, not spectrum, so it is the calmest of the three.',
+      ways:'<b>Colourways as dial backlight:</b> warm cream (shown) / amber / ice blue / green / red' },
+    { id:'spectro', name:'Spectrogram', tag:'waterfall', render:drawSpectro, buffer:true,
+      desc:'A scrolling waterfall: frequency up the Y axis, time flowing right to left, colour carrying magnitude. This shows the most about the music - hi-hats appear as speckle along the top, kicks as blooms along the bottom. Nearest-neighbour upscaling keeps it crisp and pixelly.',
+      ways:'<b>Colourways as sequential ramps:</b> ice blue (shown) / inferno / viridis / mono amber - each a proper single-hue-to-white ramp with monotonic lightness' }
+  ];
+
+  // ================== card builder =======================================
+  const cards=[];
+  function mkc(scale){ const cv=document.createElement('canvas');
+    cv.width=W*scale*DPR; cv.height=H*scale*DPR;
+    cv.style.width=(W*scale)+'px'; cv.style.height=(H*scale)+'px'; return cv; }
+
+  function build(container, spec_, headHTML, renderFor) {
+    const card=document.createElement('div'); card.className='tv-card'; card.dataset.choice=spec_.id;
+    const head=document.createElement('div'); head.className='tv-head'; head.innerHTML=headHTML;
+    card.appendChild(head);
+    const d=document.createElement('p'); d.className='tv-desc'; d.textContent=spec_.desc; card.appendChild(d);
+    if (spec_.ways){ const wy=document.createElement('p'); wy.className='tv-ways'; wy.innerHTML=spec_.ways; card.appendChild(wy); }
+
+    const views=document.createElement('div'); views.className='tv-views';
+    const w1=document.createElement('div');
+    const l1=document.createElement('div'); l1.className='tv-vl'; l1.textContent='1:1 - in your taskbar';
+    const strip=document.createElement('div'); strip.className='tv-strip';
+    const cv1=mkc(1);
+    strip.innerHTML='<span class="tv-ti">&#x25B2;</span>'; strip.appendChild(cv1);
+    const tail=document.createElement('span'); tail.style.display='flex'; tail.style.alignItems='center';
+    tail.innerHTML='<span class="tv-ti">&#x1F50A;</span><span class="tv-ti">&#x1F4F6;</span><span class="tv-clock">21:40<br>30/07/2026</span>';
+    strip.appendChild(tail);
+    w1.appendChild(l1); w1.appendChild(strip); views.appendChild(w1);
+
+    const w2=document.createElement('div');
+    const l2=document.createElement('div'); l2.className='tv-vl'; l2.textContent='3x - detail';
+    const zoom=document.createElement('div'); zoom.className='tv-zoom';
+    const cv2=mkc(3); zoom.appendChild(cv2);
+    w2.appendChild(l2); w2.appendChild(zoom); views.appendChild(w2);
+
+    card.appendChild(views);
+    card.addEventListener('click', function(){
+      document.querySelectorAll('.tv-card').forEach(function(x){ x.classList.remove('selected'); });
+      card.classList.add('selected');
+      if (typeof toggleSelect==='function'){ try{ toggleSelect(card); }catch(e){} }
+      else if (typeof sendEvent==='function'){ try{ sendEvent({type:'click',choice:spec_.id,text:spec_.name}); }catch(e){} }
+    });
+    container.appendChild(card);
+
+    const vs=[];
+    [[cv1,1],[cv2,3]].forEach(function(p){
+      const cv=p[0], s=p[1], o={ ctx:cv.getContext('2d'), s:s, i:spec_._i };
+      if (spec_.persist){ o.pcv=document.createElement('canvas');
+        o.pcv.width=W*s*DPR; o.pcv.height=H*s*DPR; o.persist=o.pcv.getContext('2d'); }
+      if (spec_.buffer){ o.bcv=document.createElement('canvas');
+        o.bcv.width=W; o.bcv.height=H; o.buf=o.bcv.getContext('2d');
+        o.buf.fillStyle=rampCol(0); o.buf.fillRect(0,0,W,H); }
+      vs.push(o);
+    });
+    cards.push({ render:renderFor, views:vs, strip:strip, zoom:zoom });
+  }
+
+  const f1c=document.getElementById('tv-f1'), f2c=document.getElementById('tv-f2');
+  F1.forEach(function(T,i){
+    T._i=i;
+    const sw = T.zones
+      ? T.zones.map(function(z){ return '<span class="tv-sw" style="background:'+z.lit+';box-shadow:0 0 9px '+z.lit+'"></span>'; }).join('')
+      : '<span class="tv-sw" style="background:'+T.hex+';box-shadow:0 0 9px '+T.hex+'"></span>';
+    const hex = T.zones ? T.zones.map(function(z){return z.lit;}).join(' / ') : T.hex;
+    build(f1c, T, sw+'<h4>'+T.name+'</h4><span class="tv-hex">'+hex+'</span>', drawSeg);
+  });
+  F2.forEach(function(K){
+    build(f2c, K, '<h4>'+K.name+'</h4><span class="tv-tag">'+K.tag+'</span>', K.render);
+  });
+
+  function paintBg(){
+    const g=BG[bgKey], css='linear-gradient(90deg,'+g[0]+','+g[1]+')';
+    cards.forEach(function(o){ o.strip.style.background=css; o.zoom.style.background=css; });
+  }
+  paintBg();
+  document.querySelectorAll('.tv-ctl button').forEach(function(b){
+    b.addEventListener('click', function(){
+      document.querySelectorAll('.tv-ctl button').forEach(function(x){ x.classList.remove('on'); });
+      b.classList.add('on'); bgKey=b.dataset.bg; paintBg();
+    });
+  });
+  const satEl=document.getElementById('tv-sat'), satV=document.getElementById('tv-satv');
+  const briEl=document.getElementById('tv-bri'), briV=document.getElementById('tv-briv');
+  satEl.addEventListener('input',function(){ sat=satEl.value/100; satV.textContent=satEl.value+'%'; });
+  briEl.addEventListener('input',function(){ bri=briEl.value/100; briV.textContent=briEl.value+'%'; });
+
+  let last=0;
+  function frame(t){
+    if (t-last > 1000/33){ advance(t);
+      cards.forEach(function(o){ o.views.forEach(function(v){ o.render(v, v.s); }); }); last=t; }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>

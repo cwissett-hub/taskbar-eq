@@ -1,0 +1,313 @@
+<h2>Oscilloscope &amp; VU colourways</h2>
+<p class="subtitle">
+  Family 1 is settled. Here are the colourway sets for the two new families &mdash; five each, all animated at true
+  size on your real taskbar colour. Both sets are grounded in real hardware rather than picked arbitrarily:
+  the scope colours are actual CRT phosphor designations, the VU colours are dial backlights amps really used.
+  Tell me if any should be dropped or swapped.
+</p>
+
+<style>
+  .cw-ctl { display:flex; gap:16px; align-items:center; margin:0 0 20px; flex-wrap:wrap;
+            padding:12px 14px; border:1px solid rgba(128,128,128,.28); border-radius:10px;
+            position:sticky; top:8px; z-index:5; backdrop-filter:blur(10px);
+            background:color-mix(in srgb, canvas 82%, transparent); }
+  .cw-ctl .lbl { font-size:11px; text-transform:uppercase; letter-spacing:.09em; opacity:.55; }
+  .cw-ctl button { font:inherit; font-size:13px; padding:5px 11px; border-radius:7px; cursor:pointer;
+                   background:transparent; color:inherit; border:1px solid rgba(128,128,128,.45); }
+  .cw-ctl button.on { border-color:#5fc8ff; box-shadow:inset 0 0 0 1px #5fc8ff; }
+
+  .cw-fam { margin:32px 0 6px; padding-bottom:8px; border-bottom:1px solid rgba(128,128,128,.28); }
+  .cw-fam:first-of-type { margin-top:4px; }
+  .cw-fam h3 { margin:0 0 3px; font-size:19px; }
+  .cw-fam p { margin:0; font-size:13px; opacity:.7; line-height:1.5; }
+
+  .cw-grid { display:flex; flex-direction:column; gap:16px; margin-top:14px; }
+  .cw-card { border:1px solid rgba(128,128,128,.3); border-radius:12px; padding:13px 15px 15px; }
+  .cw-head { display:flex; align-items:center; gap:9px; margin-bottom:3px; flex-wrap:wrap; }
+  .cw-head h4 { margin:0; font-size:15px; }
+  .cw-sw { width:12px; height:12px; border-radius:3px; }
+  .cw-hex { font-size:11px; opacity:.5; font-family:ui-monospace,Consolas,monospace; }
+  .cw-note { font-size:12.5px; opacity:.72; margin:0 0 11px; line-height:1.5; }
+  .cw-views { display:flex; gap:22px; align-items:flex-end; flex-wrap:wrap; }
+  .cw-vl { font-size:11px; text-transform:uppercase; letter-spacing:.09em; opacity:.5; margin-bottom:5px; }
+  .cw-strip { display:flex; align-items:center; justify-content:flex-end; height:60px; width:400px;
+              border-radius:6px; overflow:hidden; font-family:"Segoe UI",system-ui,sans-serif; }
+  .cw-ti { color:#fff; font-size:12px; opacity:.9; padding:0 8px; }
+  .cw-clock { color:#fff; font-size:12px; line-height:1.3; text-align:center; padding:0 9px; }
+  .cw-zoom { border-radius:6px; overflow:hidden; }
+  canvas { display:block; }
+</style>
+
+<div class="cw-ctl">
+  <span class="lbl">Taskbar bg</span>
+  <button data-bg="acrylic" class="on">Your wallpaper</button>
+  <button data-bg="neutral">Neutral dark</button>
+  <button data-bg="cool">Cool wallpaper</button>
+</div>
+
+<div class="cw-fam">
+  <h3>Oscilloscope &mdash; phosphor colourways</h3>
+  <p>Same renderer throughout: graticule, glowing trace, genuine persistence trails. Only the phosphor changes
+     &mdash; and with it the decay rate, because real phosphors differ in how long they hold.</p>
+</div>
+<div class="cw-grid" id="cw-scope"></div>
+
+<div class="cw-fam">
+  <h3>Analogue VU &mdash; dial backlight colourways</h3>
+  <p>Same twin-needle movement and ~300ms ballistics throughout. The backlight changes the face tint, the printed
+     ink, the needle and the glow pool. The overload arc stays red except on the red dial, where it goes white to
+     stay legible.</p>
+</div>
+<div class="cw-grid" id="cw-vu"></div>
+
+<script>
+(function () {
+  const DPR = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+  const W = 190, H = 60;
+  const BG = { acrylic:['#4a1d16','#33150f'], neutral:['#262626','#1c1c1c'], cool:['#16243a','#101827'] };
+  let bgKey = 'acrylic';
+
+  function rrect(c,x,y,w,h,r){ c.beginPath(); c.moveTo(x+r,y); c.arcTo(x+w,y,x+w,y+h,r);
+    c.arcTo(x+w,y+h,x,y+h,r); c.arcTo(x,y+h,x,y,r); c.arcTo(x,y,x+w,y,r); c.closePath(); }
+
+  // ---------- synthetic audio -------------------------------------------
+  const NW = 256;
+  const wave = new Float32Array(NW);
+  let vuL=0, vuR=0, vuPkL=0, vuPkR=0;
+  function advance(t){
+    const beat = Math.pow(Math.max(0,Math.sin(t/405)),8);
+    const swell = Math.pow(Math.max(0,Math.sin(t/1620)),3);
+    const amp = 0.34 + 0.52*beat + 0.16*swell;
+    for(let i=0;i<NW;i++){
+      const p=i/NW;
+      wave[i]=amp*( Math.sin(p*Math.PI*2*2.0+t/300)*0.62 +
+                    Math.sin(p*Math.PI*2*5.0+t/170)*0.24 +
+                    Math.sin(p*Math.PI*2*11.0+t/90)*0.10 +
+                    Math.sin(p*Math.PI*2*23.0+t/45)*0.05 );
+    }
+    const tL=Math.min(1,amp*0.95+beat*0.18), tR=Math.min(1,amp*0.88+beat*0.24+0.04*Math.sin(t/700));
+    vuL+=(tL-vuL)*0.085; vuR+=(tR-vuR)*0.085;
+    vuPkL=Math.max(vuPkL-0.004,vuL); vuPkR=Math.max(vuPkR-0.004,vuR);
+  }
+
+  // ================= SCOPE =============================================
+  // P7 is a genuine dual-layer phosphor: blue-white flash, yellow-green trail.
+  const SCOPE = [
+    { id:'p1', name:'P1 green', hex:'#4dff88', trace:'#5cff9a', glow:'rgba(60,255,150,0.95)',
+      grid:'rgba(90,255,150,0.10)', mid:'rgba(90,255,150,0.20)', edge:'rgba(120,255,180,0.14)',
+      panel:'rgba(2,8,5,0.66)', fade:0.14,
+      note:'The classic lab-scope phosphor, 525nm green. Medium persistence - a short readable tail.' },
+
+    { id:'p7', name:'P7 dual-layer', hex:'#bcdcff', trace:'#e8f4ff', glow:'rgba(150,200,255,0.95)',
+      grid:'rgba(150,200,255,0.10)', mid:'rgba(150,200,255,0.20)', edge:'rgba(170,215,255,0.15)',
+      panel:'rgba(3,6,12,0.68)', fade:0.30,
+      dual:{ trail:'#cfe86a', glow:'rgba(190,225,90,0.85)', fade:0.055 },
+      note:'The radar phosphor, and the most interesting one: a blue-white flash on the fresh trace, decaying through a long yellow-green tail. Genuinely two phosphor layers, so the trail is a different colour from the trace.' },
+
+    { id:'p11', name:'P11 blue-violet', hex:'#7f9dff', trace:'#9db4ff', glow:'rgba(110,140,255,0.95)',
+      grid:'rgba(120,150,255,0.10)', mid:'rgba(120,150,255,0.20)', edge:'rgba(150,175,255,0.15)',
+      panel:'rgba(3,4,12,0.68)', fade:0.20,
+      note:'Photographic-recording phosphor. Short persistence, so the trace is tight and crisp with barely any tail.' },
+
+    { id:'amber', name:'Amber', hex:'#ffb43c', trace:'#ffc766', glow:'rgba(255,160,40,0.95)',
+      grid:'rgba(255,180,80,0.10)', mid:'rgba(255,180,80,0.20)', edge:'rgba(255,200,120,0.15)',
+      panel:'rgba(12,6,2,0.66)', fade:0.11,
+      note:'Amber storage-tube warmth. Longest tail of the single-layer options, which suits slow music.' },
+
+    { id:'white', name:'White-hot', hex:'#eaf4ff', trace:'#f6fbff', glow:'rgba(200,225,255,0.95)',
+      grid:'rgba(210,230,255,0.09)', mid:'rgba(210,230,255,0.18)', edge:'rgba(220,238,255,0.15)',
+      panel:'rgba(4,6,9,0.66)', fade:0.17,
+      note:'Neutral white trace. Reads least like a period device and most like a modern instrument - it will match any wallpaper.' }
+  ];
+
+  function drawScope(o){
+    const S=o.spec, c=o.ctx, s=o.s, w=W*s, h=H*s;
+    const x0=5*s, ww=w-10*s, mid=h/2;
+
+    // dual-layer: slow yellow-green trail buffer underneath
+    if (S.dual){
+      const T=o.trail;
+      T.globalCompositeOperation='destination-out'; T.globalAlpha=S.dual.fade;
+      T.fillStyle='#000'; T.fillRect(0,0,w*DPR,h*DPR);
+      T.globalAlpha=1; T.globalCompositeOperation='source-over';
+      T.setTransform(DPR,0,0,DPR,0,0);
+      T.strokeStyle=S.dual.trail; T.shadowColor=S.dual.glow; T.shadowBlur=5*s;
+      T.lineWidth=Math.max(1,1.1*s); T.lineJoin='round';
+      T.beginPath();
+      for(let i=0;i<NW;i++){ const x=x0+(i/(NW-1))*ww, y=mid-wave[i]*(h*0.38);
+        if(i===0) T.moveTo(x,y); else T.lineTo(x,y); }
+      T.stroke(); T.shadowBlur=0;
+    }
+
+    const P=o.persist;
+    P.globalCompositeOperation='destination-out'; P.globalAlpha=S.fade;
+    P.fillStyle='#000'; P.fillRect(0,0,w*DPR,h*DPR);
+    P.globalAlpha=1; P.globalCompositeOperation='source-over';
+    P.setTransform(DPR,0,0,DPR,0,0);
+    P.strokeStyle=S.trace; P.shadowColor=S.glow; P.shadowBlur=6*s;
+    P.lineWidth=Math.max(1,1.3*s); P.lineJoin='round';
+    P.beginPath();
+    for(let i=0;i<NW;i++){ const x=x0+(i/(NW-1))*ww, y=mid-wave[i]*(h*0.38);
+      if(i===0) P.moveTo(x,y); else P.lineTo(x,y); }
+    P.stroke(); P.shadowBlur=0;
+
+    c.setTransform(DPR,0,0,DPR,0,0); c.clearRect(0,0,w,h);
+    c.fillStyle=S.panel; rrect(c,1*s,2*s,w-2*s,h-4*s,4*s); c.fill();
+
+    c.save(); rrect(c,1*s,2*s,w-2*s,h-4*s,4*s); c.clip();
+    c.strokeStyle=S.grid; c.lineWidth=Math.max(1,s*0.5);
+    for(let k=1;k<8;k++){ const x=1*s+(w-2*s)*k/8; c.beginPath(); c.moveTo(x,2*s); c.lineTo(x,h-2*s); c.stroke(); }
+    for(let k=1;k<4;k++){ const y=2*s+(h-4*s)*k/4; c.beginPath(); c.moveTo(1*s,y); c.lineTo(w-1*s,y); c.stroke(); }
+    c.strokeStyle=S.mid; c.beginPath(); c.moveTo(1*s,h/2); c.lineTo(w-1*s,h/2); c.stroke();
+    c.restore();
+
+    c.setTransform(1,0,0,1,0,0);
+    if (S.dual) c.drawImage(o.tcv,0,0);
+    c.drawImage(o.pcv,0,0);
+    c.setTransform(DPR,0,0,DPR,0,0);
+    c.strokeStyle=S.edge; c.lineWidth=Math.max(1,s*0.6);
+    rrect(c,1*s,2*s,w-2*s,h-4*s,4*s); c.stroke();
+  }
+
+  // ================= VU ================================================
+  const VU = [
+    { id:'cream', name:'Warm cream', hex:'#ffe6b0',
+      face:'rgba(20,14,6,0.72)', pool:'rgba(255,170,60,0.22)', ink:'rgba(255,226,170,0.72)',
+      needle:'#ffe6b0', glow:'rgba(255,180,60,0.9)', over:'rgba(255,90,70,0.85)', edge:'rgba(255,200,120,0.16)',
+      note:'The default look of almost every 1970s receiver: cream printed scale on a dark face, warm lamp behind it.' },
+
+    { id:'amber', name:'Amber', hex:'#ffb43c',
+      face:'rgba(22,11,2,0.74)', pool:'rgba(255,140,20,0.26)', ink:'rgba(255,190,110,0.75)',
+      needle:'#ffcf7a', glow:'rgba(255,150,30,0.95)', over:'rgba(255,80,60,0.9)', edge:'rgba(255,175,80,0.18)',
+      note:'Deeper and hotter than the cream. Pairs unusually well with your warm wallpaper tint.' },
+
+    { id:'ice', name:'Ice blue', hex:'#a8e4ff',
+      face:'rgba(4,12,20,0.74)', pool:'rgba(70,180,255,0.24)', ink:'rgba(190,230,255,0.75)',
+      needle:'#d8f2ff', glow:'rgba(90,200,255,0.95)', over:'rgba(255,95,80,0.9)', edge:'rgba(160,220,255,0.18)',
+      note:'The blue-backlit dial of later hi-fi. Matches the VFD Ice colourway in family 1, so the two look like one system.' },
+
+    { id:'green', name:'Green', hex:'#9dffb4',
+      face:'rgba(2,14,6,0.74)', pool:'rgba(60,220,110,0.22)', ink:'rgba(180,255,205,0.72)',
+      needle:'#c8ffd8', glow:'rgba(70,235,130,0.95)', over:'rgba(255,90,70,0.9)', edge:'rgba(140,255,180,0.18)',
+      note:'Studio-console green. Calm and slightly clinical; matches Matrix Green in family 1.' },
+
+    { id:'red', name:'Red', hex:'#ff8a7a',
+      face:'rgba(20,3,2,0.76)', pool:'rgba(255,60,40,0.22)', ink:'rgba(255,170,155,0.75)',
+      needle:'#ffb3a6', glow:'rgba(255,70,50,0.95)', over:'rgba(255,255,255,0.9)', edge:'rgba(255,130,110,0.18)',
+      note:'Instrument red, and the closest match to your Windows accent (#D0000C). Note the overload arc flips to white here, since red-on-red would vanish.' }
+  ];
+
+  function drawVU(o){
+    const V=o.spec, c=o.ctx, s=o.s, w=W*s, h=H*s;
+    c.setTransform(DPR,0,0,DPR,0,0); c.clearRect(0,0,w,h);
+    c.fillStyle=V.face; rrect(c,1*s,2*s,w-2*s,h-4*s,4*s); c.fill();
+    c.save(); rrect(c,1*s,2*s,w-2*s,h-4*s,4*s); c.clip();
+    const g=c.createLinearGradient(0,h,0,h*0.25);
+    g.addColorStop(0,V.pool); g.addColorStop(1,'rgba(0,0,0,0)');
+    c.fillStyle=g; c.fillRect(0,0,w,h); c.restore();
+
+    const dials=[{x:2*s,v:vuL,pk:vuPkL,tag:'L'},{x:w/2,v:vuR,pk:vuPkR,tag:'R'}];
+    const dw=w/2-3*s;
+    dials.forEach(function(d){
+      const cx=d.x+dw/2, cy=h-4*s, R=dw*0.60;
+      const A0=-Math.PI*0.78, A1=-Math.PI*0.22;
+      c.strokeStyle=V.ink; c.lineWidth=Math.max(1,s*0.55);
+      c.beginPath(); c.arc(cx,cy,R,A0,A1); c.stroke();
+      c.strokeStyle=V.over; c.lineWidth=Math.max(1,s*1.1);
+      c.beginPath(); c.arc(cx,cy,R,A0+(A1-A0)*0.76,A1); c.stroke();
+      c.strokeStyle=V.ink; c.lineWidth=Math.max(1,s*0.5);
+      for(let k=0;k<=6;k++){
+        const a=A0+(A1-A0)*k/6, big=(k===0||k===3||k===6), r1=R-(big?4.5*s:2.8*s);
+        c.beginPath(); c.moveTo(cx+Math.cos(a)*r1,cy+Math.sin(a)*r1);
+        c.lineTo(cx+Math.cos(a)*R,cy+Math.sin(a)*R); c.stroke();
+      }
+      c.fillStyle=V.ink; c.font=(s>=2?8*s:7)+'px "Segoe UI",system-ui,sans-serif'; c.textAlign='center';
+      c.fillText(d.tag,cx,h-6.5*s);
+      const apk=A0+(A1-A0)*Math.min(1,d.pk);
+      c.strokeStyle='rgba(255,255,255,0.32)'; c.lineWidth=Math.max(1,s*0.7);
+      c.beginPath(); c.moveTo(cx+Math.cos(apk)*R*0.30,cy+Math.sin(apk)*R*0.30);
+      c.lineTo(cx+Math.cos(apk)*R*0.97,cy+Math.sin(apk)*R*0.97); c.stroke();
+      const a=A0+(A1-A0)*Math.min(1,d.v);
+      c.shadowColor=V.glow; c.shadowBlur=5*s;
+      c.strokeStyle=(d.v>0.76)?V.over:V.needle;
+      c.lineWidth=Math.max(1,s*1.15); c.lineCap='round';
+      c.beginPath(); c.moveTo(cx,cy); c.lineTo(cx+Math.cos(a)*R*0.95,cy+Math.sin(a)*R*0.95); c.stroke();
+      c.shadowBlur=0;
+      c.fillStyle=V.needle; c.beginPath(); c.arc(cx,cy,Math.max(1,s*1.1),0,Math.PI*2); c.fill();
+    });
+    c.strokeStyle=V.edge; c.lineWidth=Math.max(1,s*0.6);
+    rrect(c,1*s,2*s,w-2*s,h-4*s,4*s); c.stroke();
+  }
+
+  // ---------- build ------------------------------------------------------
+  const all=[];
+  function mkc(scale){ const cv=document.createElement('canvas');
+    cv.width=W*scale*DPR; cv.height=H*scale*DPR;
+    cv.style.width=(W*scale)+'px'; cv.style.height=(H*scale)+'px'; return cv; }
+
+  function build(container, S, render, kind){
+    const card=document.createElement('div'); card.className='cw-card';
+    const head=document.createElement('div'); head.className='cw-head';
+    head.innerHTML='<span class="cw-sw" style="background:'+S.hex+';box-shadow:0 0 9px '+S.hex+'"></span>' +
+                   '<h4>'+S.name+'</h4><span class="cw-hex">'+S.hex+'</span>';
+    card.appendChild(head);
+    const n=document.createElement('p'); n.className='cw-note'; n.textContent=S.note; card.appendChild(n);
+
+    const views=document.createElement('div'); views.className='cw-views';
+    const w1=document.createElement('div');
+    const l1=document.createElement('div'); l1.className='cw-vl'; l1.textContent='1:1';
+    const strip=document.createElement('div'); strip.className='cw-strip';
+    const cv1=mkc(1);
+    strip.innerHTML='<span class="cw-ti">&#x25B2;</span>'; strip.appendChild(cv1);
+    const tail=document.createElement('span'); tail.style.display='flex'; tail.style.alignItems='center';
+    tail.innerHTML='<span class="cw-ti">&#x1F50A;</span><span class="cw-clock">21:47<br>30/07/2026</span>';
+    strip.appendChild(tail);
+    w1.appendChild(l1); w1.appendChild(strip); views.appendChild(w1);
+
+    const w2=document.createElement('div');
+    const l2=document.createElement('div'); l2.className='cw-vl'; l2.textContent='3x';
+    const zoom=document.createElement('div'); zoom.className='cw-zoom';
+    const cv2=mkc(3); zoom.appendChild(cv2);
+    w2.appendChild(l2); w2.appendChild(zoom); views.appendChild(w2);
+
+    card.appendChild(views); container.appendChild(card);
+
+    [[cv1,1],[cv2,3]].forEach(function(p){
+      const cv=p[0], s=p[1];
+      const o={ ctx:cv.getContext('2d'), s:s, spec:S, render:render };
+      if (kind==='scope'){
+        o.pcv=document.createElement('canvas'); o.pcv.width=W*s*DPR; o.pcv.height=H*s*DPR;
+        o.persist=o.pcv.getContext('2d');
+        if (S.dual){ o.tcv=document.createElement('canvas'); o.tcv.width=W*s*DPR; o.tcv.height=H*s*DPR;
+          o.trail=o.tcv.getContext('2d'); }
+      }
+      all.push(o);
+    });
+    return { strip:strip, zoom:zoom };
+  }
+
+  const strips=[];
+  const sc=document.getElementById('cw-scope'), vc=document.getElementById('cw-vu');
+  SCOPE.forEach(function(S){ strips.push(build(sc,S,drawScope,'scope')); });
+  VU.forEach(function(V){ strips.push(build(vc,V,drawVU,'vu')); });
+
+  function paintBg(){
+    const g=BG[bgKey], css='linear-gradient(90deg,'+g[0]+','+g[1]+')';
+    strips.forEach(function(o){ o.strip.style.background=css; o.zoom.style.background=css; });
+  }
+  paintBg();
+  document.querySelectorAll('.cw-ctl button').forEach(function(b){
+    b.addEventListener('click', function(){
+      document.querySelectorAll('.cw-ctl button').forEach(function(x){ x.classList.remove('on'); });
+      b.classList.add('on'); bgKey=b.dataset.bg; paintBg();
+    });
+  });
+
+  let last=0;
+  function frame(t){
+    if (t-last > 1000/33){ advance(t); all.forEach(function(o){ o.render(o); }); last=t; }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
