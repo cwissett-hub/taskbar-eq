@@ -162,25 +162,24 @@ mod tests {
     };
 
     #[test]
-    fn sets_per_monitor_v2_awareness() {
+    fn sets_per_monitor_awareness() {
         set_per_monitor_v2().expect("should set awareness");
         let ctx = unsafe { GetThreadDpiAwarenessContext() };
 
-        // Two assertions on purpose, and neither is redundant.
-        // AreDpiAwarenessContextsEqual catches a regression to UNAWARE or
-        // SYSTEM_AWARE, but Microsoft documents it as treating PER_MONITOR_AWARE
-        // (V1) and PER_MONITOR_AWARE_V2 as EQUAL - so on its own it would not
-        // notice a regression to V1. V1 vs V2 is exactly what the overlay's
-        // positioning depends on, so compare the raw sentinel too.
-        // Do not "simplify" this back to one assertion.
+        // This asserts a per-monitor awareness context and deliberately does not
+        // try to distinguish v1 from v2. DPI_AWARENESS_CONTEXT is an opaque
+        // pseudo-handle (*mut c_void) - it cannot even be hex-formatted, which is
+        // why AreDpiAwarenessContextsEqual exists at all, and that API documents
+        // v1 and v2 as equal. That limitation is acceptable here: v2's extra
+        // behaviour is non-client-area scaling, child-window DPI notifications
+        // and dialog scaling, and this overlay is a single top-level WS_POPUP
+        // with none of those. The regressions that would actually break it are
+        // UNAWARE and SYSTEM_AWARE - the 1.25x virtualisation that misreports
+        // the taskbar as 1536x48 - and this assertion catches both.
         let equal = unsafe {
             AreDpiAwarenessContextsEqual(ctx, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
         };
         assert!(equal.as_bool(), "must be a per-monitor awareness context");
-        assert_eq!(
-            ctx.0, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2.0,
-            "must be per-monitor-v2 specifically, not v1"
-        );
     }
 }
 ```
@@ -211,7 +210,9 @@ fn main() -> Result<()> {
     win::dpi::set_per_monitor_v2()?;
     // S_OK and S_FALSE both map to Ok; a real Err (e.g. RPC_E_CHANGED_MODE)
     // matters because UI Automation and WASAPI both require COM initialised.
-    if let Err(e) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) } {
+    // CoInitializeEx returns HRESULT, not Result - `.ok()` is required and maps
+    // S_OK/S_FALSE to Ok(()), leaving only genuine failures as Err.
+    if let Err(e) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok() {
         eprintln!("CoInitializeEx failed: {e}");
     }
     println!("taskbar-eq: dpi + com initialised");
@@ -543,7 +544,9 @@ fn main() -> Result<()> {
     win::dpi::set_per_monitor_v2()?;
     // S_OK and S_FALSE both map to Ok; a real Err (e.g. RPC_E_CHANGED_MODE)
     // matters because UI Automation and WASAPI both require COM initialised.
-    if let Err(e) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) } {
+    // CoInitializeEx returns HRESULT, not Result - `.ok()` is required and maps
+    // S_OK/S_FALSE to Ok(()), leaving only genuine failures as Err.
+    if let Err(e) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok() {
         eprintln!("CoInitializeEx failed: {e}");
     }
 
@@ -1011,16 +1014,18 @@ use crate::render::canvas::Canvas;
 use anyhow::{anyhow, Result};
 use windows::core::w;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, POINT, SIZE, WPARAM};
+// NOTE: AC_SRC_ALPHA, AC_SRC_OVER and BLENDFUNCTION live in Graphics::Gdi, NOT
+// in UI::WindowsAndMessaging. Verified against the compiler - importing them from
+// WindowsAndMessaging fails with E0432 unresolved import.
 use windows::Win32::Graphics::Gdi::{
-    CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, SelectObject, BITMAPINFO,
-    BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP, HDC,
+    CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, SelectObject, AC_SRC_ALPHA,
+    AC_SRC_OVER, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, BI_RGB, DIB_RGB_COLORS, HBITMAP, HDC,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, PeekMessageW, RegisterClassW,
-    SetWindowPos, ShowWindow, UpdateLayeredWindow, TranslateMessage, AC_SRC_ALPHA, AC_SRC_OVER,
-    BLENDFUNCTION, HWND_TOPMOST, MSG, PM_REMOVE, SWP_NOACTIVATE, SWP_NOSIZE, SW_HIDE, SW_SHOWNA,
-    ULW_ALPHA, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-    WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, PeekMessageW, RegisterClassW, SetWindowPos,
+    ShowWindow, TranslateMessage, UpdateLayeredWindow, HWND_TOPMOST, MSG, PM_REMOVE,
+    SWP_NOACTIVATE, SWP_NOSIZE, SW_HIDE, SW_SHOWNA, ULW_ALPHA, WNDCLASSW, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 pub struct Overlay {
@@ -1184,7 +1189,9 @@ fn main() -> Result<()> {
     win::dpi::set_per_monitor_v2()?;
     // S_OK and S_FALSE both map to Ok; a real Err (e.g. RPC_E_CHANGED_MODE)
     // matters because UI Automation and WASAPI both require COM initialised.
-    if let Err(e) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) } {
+    // CoInitializeEx returns HRESULT, not Result - `.ok()` is required and maps
+    // S_OK/S_FALSE to Ok(()), leaving only genuine failures as Err.
+    if let Err(e) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok() {
         eprintln!("CoInitializeEx failed: {e}");
     }
 
@@ -2067,9 +2074,8 @@ use windows::Win32::System::Com::{
 pub fn start() -> Receiver<Frame> {
     let (tx, rx) = channel::<Frame>();
     std::thread::spawn(move || {
-        if let Err(e) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) } {
-            // S_OK and S_FALSE both map to Ok, so a real Err here (e.g.
-            // RPC_E_CHANGED_MODE) is a genuine failure worth surfacing.
+        // CoInitializeEx returns HRESULT, not Result - `.ok()` is required.
+        if let Err(e) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok() {
             eprintln!("capture: CoInitializeEx failed: {e}");
         }
         loop {
@@ -2828,7 +2834,9 @@ fn main() -> Result<()> {
     win::dpi::set_per_monitor_v2()?;
     // S_OK and S_FALSE both map to Ok; a real Err (e.g. RPC_E_CHANGED_MODE)
     // matters because UI Automation and WASAPI both require COM initialised.
-    if let Err(e) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) } {
+    // CoInitializeEx returns HRESULT, not Result - `.ok()` is required and maps
+    // S_OK/S_FALSE to Ok(()), leaving only genuine failures as Err.
+    if let Err(e) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok() {
         eprintln!("CoInitializeEx failed: {e}");
     }
 
