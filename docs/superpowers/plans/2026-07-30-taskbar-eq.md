@@ -144,8 +144,7 @@ Create `src/win/dpi.rs`:
 ```rust
 use anyhow::Result;
 use windows::Win32::UI::HiDpi::{
-    GetThreadDpiAwarenessContext, SetProcessDpiAwarenessContext,
-    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+    SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
 
 /// MUST be called before any window is created. A DPI-unaware process reads the
@@ -158,16 +157,30 @@ pub fn set_per_monitor_v2() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use windows::Win32::UI::HiDpi::AreDpiAwarenessContextsEqual;
+    use windows::Win32::UI::HiDpi::{
+        AreDpiAwarenessContextsEqual, GetThreadDpiAwarenessContext,
+    };
 
     #[test]
     fn sets_per_monitor_v2_awareness() {
         set_per_monitor_v2().expect("should set awareness");
         let ctx = unsafe { GetThreadDpiAwarenessContext() };
+
+        // Two assertions on purpose, and neither is redundant.
+        // AreDpiAwarenessContextsEqual catches a regression to UNAWARE or
+        // SYSTEM_AWARE, but Microsoft documents it as treating PER_MONITOR_AWARE
+        // (V1) and PER_MONITOR_AWARE_V2 as EQUAL - so on its own it would not
+        // notice a regression to V1. V1 vs V2 is exactly what the overlay's
+        // positioning depends on, so compare the raw sentinel too.
+        // Do not "simplify" this back to one assertion.
         let equal = unsafe {
             AreDpiAwarenessContextsEqual(ctx, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
         };
-        assert!(equal.as_bool(), "process must report per-monitor-v2 awareness");
+        assert!(equal.as_bool(), "must be a per-monitor awareness context");
+        assert_eq!(
+            ctx.0, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2.0,
+            "must be per-monitor-v2 specifically, not v1"
+        );
     }
 }
 ```
@@ -196,7 +209,11 @@ use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 fn main() -> Result<()> {
     // Order matters: DPI awareness before anything creates a window.
     win::dpi::set_per_monitor_v2()?;
-    let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    // S_OK and S_FALSE both map to Ok; a real Err (e.g. RPC_E_CHANGED_MODE)
+    // matters because UI Automation and WASAPI both require COM initialised.
+    if let Err(e) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) } {
+        eprintln!("CoInitializeEx failed: {e}");
+    }
     println!("taskbar-eq: dpi + com initialised");
     Ok(())
 }
@@ -524,7 +541,11 @@ use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 
 fn main() -> Result<()> {
     win::dpi::set_per_monitor_v2()?;
-    let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    // S_OK and S_FALSE both map to Ok; a real Err (e.g. RPC_E_CHANGED_MODE)
+    // matters because UI Automation and WASAPI both require COM initialised.
+    if let Err(e) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) } {
+        eprintln!("CoInitializeEx failed: {e}");
+    }
 
     for _ in 0..5 {
         let widget = win::placement::find_widget_rect()?;
@@ -1161,7 +1182,11 @@ use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 
 fn main() -> Result<()> {
     win::dpi::set_per_monitor_v2()?;
-    let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    // S_OK and S_FALSE both map to Ok; a real Err (e.g. RPC_E_CHANGED_MODE)
+    // matters because UI Automation and WASAPI both require COM initialised.
+    if let Err(e) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) } {
+        eprintln!("CoInitializeEx failed: {e}");
+    }
 
     let overlay = win::overlay::Overlay::new()?;
 
@@ -2042,7 +2067,11 @@ use windows::Win32::System::Com::{
 pub fn start() -> Receiver<Frame> {
     let (tx, rx) = channel::<Frame>();
     std::thread::spawn(move || {
-        let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        if let Err(e) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) } {
+            // S_OK and S_FALSE both map to Ok, so a real Err here (e.g.
+            // RPC_E_CHANGED_MODE) is a genuine failure worth surfacing.
+            eprintln!("capture: CoInitializeEx failed: {e}");
+        }
         loop {
             if let Err(e) = capture_loop(&tx) {
                 eprintln!("capture: {e}; reopening in 1s");
@@ -2797,7 +2826,11 @@ use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 
 fn main() -> Result<()> {
     win::dpi::set_per_monitor_v2()?;
-    let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    // S_OK and S_FALSE both map to Ok; a real Err (e.g. RPC_E_CHANGED_MODE)
+    // matters because UI Automation and WASAPI both require COM initialised.
+    if let Err(e) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) } {
+        eprintln!("CoInitializeEx failed: {e}");
+    }
 
     let theme = themes::builtin::vfd_ice();
     let mut family = render::family_for(&theme.family);
