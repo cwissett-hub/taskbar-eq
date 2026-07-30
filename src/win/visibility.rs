@@ -7,9 +7,9 @@
 use crate::geom::Rect;
 
 /// QUNS_RUNNING_D3D_FULL_SCREEN
-pub const QUNS_FULLSCREEN: i32 = 6;
+pub const QUNS_FULLSCREEN: i32 = 3;
 /// QUNS_PRESENTATION_MODE
-pub const QUNS_PRESENTATION: i32 = 3;
+pub const QUNS_PRESENTATION: i32 = 4;
 
 pub struct Inputs {
     pub widget: Option<Rect>,
@@ -62,6 +62,26 @@ mod tests {
     #[test]
     fn hides_in_presentation_mode() {
         let i = Inputs { notification_state: QUNS_PRESENTATION, ..base() };
+        assert!(!should_show(&i));
+    }
+
+    // These two pin the literal values from the real Win32
+    // QUERY_USER_NOTIFICATION_STATE enum (shellapi.h), independent of the
+    // QUNS_FULLSCREEN / QUNS_PRESENTATION symbols above. A future edit that
+    // breaks the symbol-to-real-value mapping (e.g. re-transposing them)
+    // must fail here even though the symbol-based tests above would still
+    // pass, because those only assert internal self-consistency.
+    #[test]
+    fn hides_on_real_win32_fullscreen_value() {
+        // QUNS_RUNNING_D3D_FULL_SCREEN = 3
+        let i = Inputs { notification_state: 3, ..base() };
+        assert!(!should_show(&i));
+    }
+
+    #[test]
+    fn hides_on_real_win32_presentation_value() {
+        // QUNS_PRESENTATION_MODE = 4
+        let i = Inputs { notification_state: 4, ..base() };
         assert!(!should_show(&i));
     }
 
