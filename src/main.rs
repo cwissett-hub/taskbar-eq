@@ -1,3 +1,4 @@
+mod geom;
 mod win;
 
 use anyhow::Result;
