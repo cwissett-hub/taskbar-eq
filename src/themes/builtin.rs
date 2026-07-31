@@ -12,6 +12,11 @@ pub fn all() -> Vec<Theme> {
         p11_blue_violet(),
         scope_amber(),
         scope_white(),
+        vu_cream(),
+        vu_amber(),
+        vu_ice(),
+        vu_green(),
+        vu_red(),
     ]
 }
 
@@ -240,6 +245,89 @@ pub fn scope_white() -> Theme {
     }
 }
 
+fn vu_base() -> Theme {
+    Theme {
+        family: "vu".into(),
+        texture: Texture::Filament,
+        ghost: 0.0,
+        bloom: 5.0,
+        ..Theme::default()
+    }
+}
+
+pub fn vu_cream() -> Theme {
+    Theme {
+        id: "vu-cream".into(),
+        name: "Warm cream".into(),
+        lit: "#ffe2aa".into(),
+        hot: "#ffe6b0".into(),
+        panel: "#140e06".into(),
+        panel_alpha: 1.0,
+        edge: "#ffc878".into(),
+        edge_alpha: 0.16,
+        ..vu_base()
+    }
+}
+
+pub fn vu_amber() -> Theme {
+    Theme {
+        id: "vu-amber".into(),
+        name: "Amber".into(),
+        lit: "#ffbe6e".into(),
+        hot: "#ffcf7a".into(),
+        panel: "#160b02".into(),
+        panel_alpha: 1.0,
+        edge: "#ffaf50".into(),
+        edge_alpha: 0.18,
+        ..vu_base()
+    }
+}
+
+pub fn vu_ice() -> Theme {
+    Theme {
+        id: "vu-ice".into(),
+        name: "Ice blue".into(),
+        // Deliberately matches the VFD Ice segmented colourway.
+        lit: "#bee6ff".into(),
+        hot: "#d8f2ff".into(),
+        panel: "#040c14".into(),
+        panel_alpha: 1.0,
+        edge: "#a0dcff".into(),
+        edge_alpha: 0.18,
+        ..vu_base()
+    }
+}
+
+pub fn vu_green() -> Theme {
+    Theme {
+        id: "vu-green".into(),
+        name: "Green".into(),
+        // Matches Matrix Green.
+        lit: "#b4ffcd".into(),
+        hot: "#c8ffd8".into(),
+        panel: "#020e06".into(),
+        panel_alpha: 1.0,
+        edge: "#8cffb4".into(),
+        edge_alpha: 0.18,
+        ..vu_base()
+    }
+}
+
+pub fn vu_red() -> Theme {
+    Theme {
+        id: "vu-red".into(),
+        name: "Red".into(),
+        // Closest match to the system accent (#D0000C).
+        lit: "#ffaa9b".into(),
+        hot: "#ffb3a6".into(),
+        panel: "#140302".into(),
+        panel_alpha: 1.0,
+        edge: "#ff826e".into(),
+        edge_alpha: 0.18,
+        ..vu_base()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,6 +353,16 @@ mod tests {
         let ids: Vec<String> = all().iter().map(|t| t.id.clone()).collect();
         for want in ["vfd-ice", "matrix-green", "neon-pink", "vac-tube-orange", "classic-three-colour"] {
             assert!(ids.contains(&want.to_string()), "missing {want}");
+        }
+    }
+
+    #[test]
+    fn ships_fifteen_colourways_across_three_families() {
+        let all = all();
+        assert_eq!(all.len(), 15, "expected 15 colourways, got {}", all.len());
+        for fam in ["segmented", "scope", "vu"] {
+            let n = all.iter().filter(|t| t.family == fam).count();
+            assert_eq!(n, 5, "family {fam} should have 5 colourways, has {n}");
         }
     }
 
@@ -347,12 +445,24 @@ mod tests {
     }
 
     #[test]
-    fn each_colourway_has_a_distinct_texture_or_bloom() {
+    fn colourways_are_visually_distinct_within_their_family() {
         // Guards against a theme being an unmodified copy with a new hex.
-        let sigs: Vec<(super::Texture, i32)> =
-            all().iter().map(|t| (t.texture, t.bloom as i32)).collect();
-        let mut uniq = sigs.clone();
-        uniq.dedup();
-        assert_eq!(uniq.len(), sigs.len(), "two themes are visually identical: {sigs:?}");
+        // Grouped by family rather than compared across all fifteen: the scope
+        // and vu families each share a single (texture, bloom) pair across all
+        // five of their own colourways (`Texture::None_`/6.0-ish and
+        // `Texture::Filament`/5.0 respectively), so comparing (texture, bloom)
+        // globally would flag every scope-vs-scope and vu-vs-vu pair as
+        // "identical" even though their `lit`/`fade` genuinely differ.
+        for fam in ["segmented", "scope", "vu"] {
+            let mut sigs: Vec<String> = all()
+                .iter()
+                .filter(|t| t.family == fam)
+                .map(|t| format!("{:?}/{}/{}/{}", t.texture, t.bloom, t.lit, t.fade))
+                .collect();
+            let before = sigs.len();
+            sigs.sort();
+            sigs.dedup();
+            assert_eq!(sigs.len(), before, "two {fam} themes are identical");
+        }
     }
 }

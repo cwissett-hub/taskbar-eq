@@ -115,4 +115,14 @@ impl Theme {
         }
         self.zones.last().map(|z| z.hot.as_str()).unwrap_or(&self.hot)
     }
+
+    /// The printed overload arc. Red on every dial except the red one, where it
+    /// goes white because red-on-red is illegible.
+    pub fn overload_hex(&self) -> &str {
+        if self.id == "vu-red" {
+            "#ffffff"
+        } else {
+            "#ff5a46"
+        }
+    }
 }
