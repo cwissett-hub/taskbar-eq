@@ -441,10 +441,9 @@ mod tests {
     fn golden_vfd_ice_at_half_level() {
         let mut c = Canvas::new(190, 60);
         Segmented.draw(&mut c, &builtin::vfd_ice(), &frame(0.5));
-        let actual = canvas_to_ascii(&c);
         let expected = include_str!("../../tests/golden/vfd-ice.txt");
-        assert_eq!(
-            actual, expected,
+        assert!(
+            crate::render::golden::matches_golden(&c, expected),
             "golden mismatch - if this change is intended, overwrite \
              tests/golden/vfd-ice.txt and eyeball the diff"
         );
@@ -521,6 +520,29 @@ mod tests {
                 else if delta < 90.0 { "VISIBLE, subtle" }
                 else { "obvious" };
             println!("{e:9.1}  {bezel:5.1}  {panel:5.1}  {delta:5.1}  {verdict}");
+        }
+    }
+
+    /// Measurement, not an assertion. For every shipped colourway, prints how bright a
+    /// lit segment is versus the gap BETWEEN adjacent bars. Bars stop reading as
+    /// separate once those converge, and the halo radius is what decides it.
+    #[test]
+    #[ignore]
+    fn audit_every_colourway_bar_separation() {
+        println!("{:<22} {:>6} {:>8} {:>8} {:>6}  verdict", "theme", "bloom", "segment", "gap", "ratio");
+        for t in builtin::all() {
+            let mut c = Canvas::new(190, 60);
+            Segmented.draw(&mut c, &t, &frame(0.75));
+            let x = first_bar_x();
+            let y = 60 - PAD_Y - 3;
+            let seg = lum(c.get(x + 2, y));
+            let gap = lum(c.get(x + BAR_W, y)).max(lum(c.get(x + BAR_W + 1, y)));
+            let ratio = if gap > 0.5 { seg / gap } else { 999.0 };
+            let verdict = if ratio < 2.2 { "MERGED - bars lost" }
+                else if ratio < 3.2 { "close" }
+                else if ratio < 9.0 { "good" }
+                else { "no visible halo" };
+            println!("{:<22} {:>6.1} {:>8.1} {:>8.1} {:>6.2}  {}", t.id, t.bloom, seg, gap, ratio, verdict);
         }
     }
 }

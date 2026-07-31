@@ -48,7 +48,9 @@ pub fn matrix_green() -> Theme {
         edge: "#3cff78".into(),
         edge_alpha: 0.14,
         ghost: 0.17,
-        bloom: 8.0,
+        // Tightened from 8 for the same reason as neon-pink - measured ratio 8.16,
+        // i.e. barely any visible halo.
+        bloom: 5.0,
         texture: Texture::Scanlines,
         ballistics: crate::dsp::ballistics::Ballistics {
             attack: 0.55,
@@ -70,7 +72,10 @@ pub fn neon_pink() -> Theme {
         edge: "#ff4fb0".into(),
         edge_alpha: 0.22,
         ghost: 0.09,
-        bloom: 14.0,
+        // 14 measured as the FAINTEST halo of the five, not the strongest: a wider
+        // radius spreads the same energy across a much bigger kernel, so per-pixel
+        // intensity drops. 6 keeps neon's soft character without losing the halo.
+        bloom: 6.0,
         texture: Texture::Haze,
         ballistics: crate::dsp::ballistics::Ballistics {
             attack: 0.55,

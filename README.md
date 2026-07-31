@@ -194,13 +194,38 @@ FIELDS
   zones         optional, for meters that change colour by height (see the classic
                 three-colour built-in). Ascending, last one >= 1.0.
 
+MEASURED REFERENCE - the five shipped colourways, so you can anchor your numbers
+rather than guess. "ratio" is the luminance of a lit segment divided by the gap
+BETWEEN adjacent bars, measured at 75% level. Below about 2.2 the bars stop reading
+as separate; above about 9 there is no visible halo at all. Aim for 4-8.
+
+  theme                  bloom  glow_str  edge_glow  ghost  texture     ratio
+  vfd-ice                  4.0      0.35        4.0   0.11  glass        5.91
+  matrix-green             5.0      0.35        4.0   0.17  scanlines    5.97
+  neon-pink                6.0      0.35        4.0   0.09  haze         7.88
+  vac-tube-orange         12.0      0.35        4.0   0.13  filament     4.21
+  classic-three-colour     7.0      0.35        4.0   0.13  grille       5.66
+
+  Two things that table teaches, both of which are counter-intuitive and were both
+  learned the hard way:
+
+  * A BIGGER bloom radius makes the halo FAINTER, not stronger. The blur normalises
+    by kernel size, so a wider radius spreads the same energy across far more pixels.
+    neon-pink at radius 14 measured as the faintest of the five; dropping it to 6 made
+    it brighter. If you want more glow, raise glow_strength, never bloom.
+  * The texture affects the measurement. vac-tube-orange reads as the strongest halo
+    partly because `filament` brightens the lower panel, which lifts the gap reading.
+    Do not chase the ratio number alone.
+
 WHAT I WANT
   <describe: how many, what mood, which families, any reference hardware>
 
 FOR EACH THEME, TELL ME
   1. Every field value.
   2. The computed contrast ratio of `lit` against `panel`, as a number.
-  3. One sentence on what real device it imitates. If you cannot name one, the theme is
+  3. Which shipped colourway in the table above yours sits closest to, and why you
+     departed from it.
+  4. One sentence on what real device it imitates. If you cannot name one, the theme is
      probably an arbitrary hue shift - I would rather have fewer, more deliberate themes
      than more generic ones.
 ````

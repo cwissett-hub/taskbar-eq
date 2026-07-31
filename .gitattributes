@@ -1,0 +1,6 @@
+# Goldens are compared byte-for-byte against `canvas_to_ascii`, which emits LF.
+# Without this, git's autocrlf checks them out as CRLF on Windows and every golden
+# test fails on a fresh clone - a real failure mode, hit during a branch merge.
+tests/golden/*.txt text eol=lf
+# Same reasoning for theme fixtures parsed as exact text.
+tests/themes/*.toml text eol=lf
