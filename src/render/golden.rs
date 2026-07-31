@@ -9,23 +9,6 @@ const RAMP: &[u8] = b" .:-=+*#%@";
 
 /// Renders a canvas to an ASCII luminance map so golden diffs are readable in
 /// review. Alpha-weighted, so transparent areas read as blank.
-#[allow(dead_code)]
-/// Compares a rendered canvas against a committed golden, tolerant of line endings.
-///
-/// Belt and braces alongside `.gitattributes`: `canvas_to_ascii` emits LF, but git
-/// can hand back CRLF on Windows depending on `core.autocrlf` and how the file was
-/// last written - which genuinely broke every golden test during a branch merge, with
-/// byte-identical content. A golden failing over invisible whitespace teaches nobody
-/// anything.
-#[allow(dead_code)]
-pub fn matches_golden(c: &Canvas, golden: &str) -> bool {
-    fn lf(s: &str) -> String {
-        s.replace("\r\n", "\n")
-    }
-    lf(&canvas_to_ascii(c)) == lf(golden)
-}
-
-
 pub fn canvas_to_ascii(c: &Canvas) -> String {
     let mut s = String::with_capacity(((c.width() + 1) * c.height()) as usize);
     for y in 0..c.height() {

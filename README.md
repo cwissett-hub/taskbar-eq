@@ -78,7 +78,7 @@ overlay does not exist, so the tray icon is all that is left to click.
 
 ## Status
 
-**Last updated: 2026-07-31.** 102 tests passing, release build warning-free.
+**Last updated: 2026-08-01.** 154 tests passing, release build warning-free.
 
 | | Feature | State |
 |---|---|---|
@@ -88,13 +88,16 @@ overlay does not exist, so the tray icon is all that is left to click.
 | ✅ | dB-scaled spectrum — 2048-pt FFT, 64 log bands, bass-compensating tilt | working |
 | ✅ | Reveal/hide gate with blip rejection | working |
 | ✅ | **Segmented family — 5 colourways** | working |
+| ✅ | **Oscilloscope family — 5 phosphors**, genuine persistence trails incl. dual-layer P7 | **unseen** |
+| ✅ | **Analogue VU family — 5 dial backlights**, twin needles, ~300 ms ballistics | **unseen** |
 | ✅ | Tray icon, theme menu, start-with-Windows, clean quit | working |
 | ✅ | Right-click equaliser → theme menu; left-click → `Win+W` | working |
 | 🔜 | Oscilloscope family — 5 phosphors, persistence trace | in progress |
 | 🔜 | Analogue VU family — 5 dial backlights, twin needles | in progress |
 | 🔜 | External TOML colourways with a versioned schema | queued |
 | 🔜 | Hot reload of theme files | queued |
-| 📋 | Vaporwave grid family ([specced](docs/superpowers/specs/2026-07-31-vaporwave-grid-family-design.md)) | needs 6 new Canvas primitives |
+| ✅ | Canvas primitives for scene families (line, polygon, gradients, circles) | done |
+| 📋 | Vaporwave grid family ([specced](docs/superpowers/specs/2026-07-31-vaporwave-grid-family-design.md)) | ready to build |
 
 ### Known gaps
 
