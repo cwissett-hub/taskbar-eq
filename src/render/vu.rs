@@ -23,8 +23,19 @@ impl Family for Vu {
 
         // Ballistics live on the family, not the canvas, so a resize does not
         // reset the needles.
-        self.l += (d.rms_l.clamp(0.0, 1.0) - self.l) * VU_SMOOTHING;
-        self.r += (d.rms_r.clamp(0.0, 1.0) - self.r) * VU_SMOOTHING;
+        //
+        // f32::clamp does not sanitise NaN (NaN < min and NaN > max are both
+        // false, so clamp returns NaN unchanged), so a single non-finite
+        // rms_l/rms_r sample would poison self.l/self.r with NaN forever -
+        // every later frame computes `(NaN - self.l) * k` which is still
+        // NaN, and cos/sin of a NaN angle then casts to 0 when drawn,
+        // collapsing the needle to a dot at the pivot until process restart.
+        // Guard exactly like `dsp::ballistics::Smoother::update` already
+        // does for the same pattern.
+        let l_in = if d.rms_l.is_finite() { d.rms_l } else { 0.0 }.clamp(0.0, 1.0);
+        let r_in = if d.rms_r.is_finite() { d.rms_r } else { 0.0 }.clamp(0.0, 1.0);
+        self.l += (l_in - self.l) * VU_SMOOTHING;
+        self.r += (r_in - self.r) * VU_SMOOTHING;
         self.pk_l = (self.pk_l - 0.004).max(self.l);
         self.pk_r = (self.pk_r - 0.004).max(self.r);
 
@@ -236,6 +247,29 @@ mod tests {
                 assert_eq!(p.a, 0, "row {y} col {x} must stay blank outside the panel bezel, got {p:?}");
             }
         }
+    }
+
+    #[test]
+    fn a_single_nan_sample_does_not_poison_the_level_forever() {
+        // Mirrors `dsp::ballistics::Smoother`'s own regression test for the
+        // identical one-pole-filter-on-live-audio pattern: f32::clamp does
+        // not sanitise NaN, so an unguarded `self.l += (target - self.l) * k`
+        // would leave `self.l`/`self.r` NaN on every subsequent frame once a
+        // single non-finite rms sample arrives.
+        let mut v = Vu::default();
+        let mut c = Canvas::new(190, 60);
+        v.draw(&mut c, &builtin::vu_cream(), &level(0.5, 0.5));
+        v.draw(&mut c, &builtin::vu_cream(), &level(f32::NAN, f32::NAN));
+        assert!(v.l.is_finite(), "a NaN target must not leave l non-finite, got {}", v.l);
+        assert!(v.r.is_finite(), "a NaN target must not leave r non-finite, got {}", v.r);
+
+        // Confirm the poisoning doesn't linger: subsequent normal frames must
+        // still converge, not stay NaN forever.
+        for _ in 0..80 {
+            v.draw(&mut c, &builtin::vu_cream(), &level(0.7, 0.7));
+        }
+        assert!((v.l - 0.7).abs() < 0.01, "got {}", v.l);
+        assert!((v.r - 0.7).abs() < 0.01, "got {}", v.r);
     }
 
     #[test]
