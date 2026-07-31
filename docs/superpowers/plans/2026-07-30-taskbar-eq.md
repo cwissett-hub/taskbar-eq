@@ -260,10 +260,16 @@ Create `src/win/visibility.rs`:
 ```rust
 use crate::geom::Rect;
 
+// Real Win32 QUERY_USER_NOTIFICATION_STATE values. The full enum is
+// NOT_PRESENT=1, BUSY=2, RUNNING_D3D_FULL_SCREEN=3, PRESENTATION_MODE=4,
+// ACCEPTS_NOTIFICATIONS=5, QUIET_TIME=6, APP=7. An earlier draft of this plan
+// had 6 and 3, which is QUIET_TIME and FULL_SCREEN - i.e. it would have hidden
+// the overlay during quiet hours and shown it over fullscreen games, exactly
+// backwards. A live probe on this machine returned 5.
 /// QUNS_RUNNING_D3D_FULL_SCREEN
-pub const QUNS_FULLSCREEN: i32 = 6;
+pub const QUNS_FULLSCREEN: i32 = 3;
 /// QUNS_PRESENTATION_MODE
-pub const QUNS_PRESENTATION: i32 = 3;
+pub const QUNS_PRESENTATION: i32 = 4;
 
 pub struct Inputs {
     pub widget: Option<Rect>,
@@ -641,7 +647,12 @@ impl Rgba {
     /// are user-authored and must never crash the app.
     pub fn from_hex(hex: &str, alpha: f32) -> Self {
         let h = hex.trim_start_matches('#');
-        if h.len() != 6 {
+        // The ASCII check is load-bearing, not defensive. len() is a BYTE count,
+        // so a non-ASCII string can be exactly 6 bytes ("a\u{FC}aaa" is 5 chars
+        // in 6 bytes) and then the h[i..i+2] slices below land inside a
+        // multi-byte char and PANIC rather than returning TRANSPARENT. Theme
+        // files are user-authored, so that is a real crash vector.
+        if !h.is_ascii() || h.len() != 6 {
             return Rgba::TRANSPARENT;
         }
         let p = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).ok();
@@ -893,7 +904,14 @@ impl Canvas {
     }
 
     pub fn rounded_rect(&mut self, x: i32, y: i32, w: i32, h: i32, r: i32, c: Rgba) {
-        let r = r.clamp(0, w.min(h) / 2);
+        // Guard before the clamp, or this panics in RELEASE builds. For a
+        // negative dimension w.min(h)/2 goes negative (190, -4 -> -2), and
+        // i32::clamp's min <= max assertion is unconditional, not debug-only.
+        // Reachable because the widget rect changes size at runtime.
+        if w <= 0 || h <= 0 {
+            return;
+        }
+        let r = r.max(0).min(w.min(h) / 2);
         for yy in 0..h {
             // Shrink the span near the top and bottom to round the corners.
             let dy = if yy < r {
