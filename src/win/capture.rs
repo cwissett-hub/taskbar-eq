@@ -1,6 +1,14 @@
 use crate::dsp::bands::{BandMapper, FFT_SIZE, HOP, NUM_BANDS};
 use anyhow::Result;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
+
+/// Capacity of the capture->render handoff queue. Bounded so a stalled
+/// consumer (a slow UI Automation call, a hung `pump_messages`, etc.) makes
+/// the capture thread drop frames via `try_send` instead of growing the
+/// queue without limit; frames are analysed at HOP/rate ~ 10.7ms apart, so 8
+/// slots is a little under 100ms of slack - comfortably more than one
+/// render tick, without letting a real stall accumulate unbounded memory.
+const QUEUE_CAPACITY: usize = 8;
 
 #[derive(Clone)]
 pub struct Frame {
@@ -137,7 +145,7 @@ unsafe fn pwstr_to_string_and_free(s: windows::core::PWSTR) -> String {
 /// default device changes (the reference machine's default is a virtual device,
 /// so this path is exercised in normal use, not just on unplug).
 pub fn start() -> Receiver<Frame> {
-    let (tx, rx) = channel::<Frame>();
+    let (tx, rx) = sync_channel::<Frame>(QUEUE_CAPACITY);
     std::thread::spawn(move || {
         // CoInitializeEx returns HRESULT, not Result - `.ok()` is required.
         if let Err(e) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok() {
@@ -148,15 +156,20 @@ pub fn start() -> Receiver<Frame> {
                 eprintln!("capture: {e}; reopening in 1s");
             }
             std::thread::sleep(std::time::Duration::from_secs(1));
-            if tx.send(Frame::default()).is_err() {
-                return; // main thread gone
+            // try_send: a full queue just means the consumer is stalled and
+            // will catch up later, which is fine for a reset marker - the
+            // capture thread must never block waiting for it to drain.
+            // Disconnected still means the main thread is gone for good.
+            match tx.try_send(Frame::default()) {
+                Ok(()) | Err(TrySendError::Full(_)) => {}
+                Err(TrySendError::Disconnected(_)) => return,
             }
         }
     });
     rx
 }
 
-fn capture_loop(tx: &Sender<Frame>) -> Result<()> {
+fn capture_loop(tx: &SyncSender<Frame>) -> Result<()> {
     unsafe {
         let enumerator: IMMDeviceEnumerator =
             CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
@@ -231,9 +244,18 @@ fn capture_loop(tx: &Sender<Frame>) -> Result<()> {
                 for i in 0..256 {
                     frame.waveform[i] = ring[i * FFT_SIZE / 256];
                 }
-                if tx.send(frame.clone()).is_err() {
-                    client.Stop()?;
-                    return Ok(());
+                // try_send, not send: the queue is bounded, so a stalled
+                // consumer (slow UI Automation call, hung pump_messages,
+                // etc.) must never block the capture thread. Full just
+                // drops this frame - the analysed audio is still fresh next
+                // time around - while Disconnected means the receiver
+                // (main thread) is gone for good and we should stop.
+                match tx.try_send(frame.clone()) {
+                    Ok(()) | Err(TrySendError::Full(_)) => {}
+                    Err(TrySendError::Disconnected(_)) => {
+                        client.Stop()?;
+                        return Ok(());
+                    }
                 }
                 ring.drain(..HOP);
             }
