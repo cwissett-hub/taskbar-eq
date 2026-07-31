@@ -1,3 +1,5 @@
 /target
 **/*.pdb
 .superpowers/
+# built binaries staged for hand-delivery; the git history is the source of truth
+/dist
