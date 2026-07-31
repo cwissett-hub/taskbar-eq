@@ -49,6 +49,14 @@ fn main() -> Result<()> {
     let mut latest = Frame::default();
     let mut rect_tick = 0u32;
     let mut rect = None;
+    // Consecutive rect-discovery misses tolerated before the overlay gives up and
+    // hides. At one probe per second this is a few seconds of grace.
+    const RECT_MISS_LIMIT: u32 = 4;
+    // Fallback placement, used when there is no Widgets button: sit this far left of
+    // the tray's overflow chevron, at this width.
+    const FALLBACK_GAP: i32 = 4;
+    const FALLBACK_WIDTH: i32 = 190;
+    let mut rect_misses: u32 = 0;
 
     loop {
         while let Ok(f) = rx.try_recv() {
@@ -106,7 +114,44 @@ fn main() -> Result<()> {
 
         // Re-discover the rect once a second - it moves with the weather text.
         if rect_tick == 0 {
-            rect = win::placement::find_widget_rect().unwrap_or(None);
+            match win::placement::find_widget_rect() {
+                Ok(Some(found)) => {
+                    rect = Some(found);
+                    rect_misses = 0;
+                }
+                // A transient failure must NOT throw away a known-good rect.
+                //
+                // UI Automation can fail for a tick - notably while a popup menu is
+                // open, which is exactly when a theme is being chosen. Clearing `rect`
+                // on the first miss hid the overlay for a second and the real weather
+                // showed through underneath, which reads as the EQ "bleeding". Only
+                // give up after several consecutive misses, which still handles the
+                // genuine cases (the widget switched off, or a Windows version that
+                // has no Widgets button at all - see the chevron fallback below).
+                Ok(None) | Err(_) => {
+                    rect_misses += 1;
+                    if rect_misses >= RECT_MISS_LIMIT {
+                        rect = None;
+                    }
+                }
+            }
+
+            // No Widgets button at all? Anchor to the tray's overflow chevron instead.
+            // That element exists on Windows 10 as well ("Show hidden icons"), which is
+            // the only reason this app shows anything at all on that OS.
+            if rect.is_none() {
+                if let (Ok(Some(chev)), Some(bar)) = (
+                    win::placement::find_chevron_rect(),
+                    win::placement::taskbar_rect(),
+                ) {
+                    rect = Some(win::placement::rect_left_of(
+                        chev,
+                        bar,
+                        FALLBACK_GAP,
+                        FALLBACK_WIDTH,
+                    ));
+                }
+            }
         }
         rect_tick = (rect_tick + 1) % 60;
 
