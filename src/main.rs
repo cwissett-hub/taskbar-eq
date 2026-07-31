@@ -1,3 +1,4 @@
+mod dsp;
 mod geom;
 mod render;
 mod win;
