@@ -19,12 +19,14 @@ Every task's requirements implicitly include this section. All values verified o
 - **Audio format:** default endpoint reports 48000 Hz, 2 ch, 32-bit float. Handle the general case but optimise for this.
 - **FFT:** 2048-point, Hann window, 512-sample hop. Bin resolution 23.4 Hz — a 1000 Hz sine peaks at bin 43 (1008 Hz). Verified.
 - **Dark mode only.** Light mode is an explicit non-goal.
-- **Panel opacity floor:** `panel_alpha >= 0.92`. Two reasons, and the second is the one that
+- **Panel opacity:** `panel_alpha = 1.0` (fully opaque). Two reasons, and the second is the one that
   bites: the taskbar is wallpaper-tinted acrylic (`#3D1712` on the reference machine) rather than
   black, so each theme supplies its own near-black panel; AND the panel must **occlude the
   Widgets button's own icon and text**. At 0.55 the white weather text composited to ~45% of 255
   and stayed plainly legible through the panel. The design chose "EQ replaces the weather while
-  playing", not a translucent wash, so anything below ~0.92 fails the requirement.
+  playing", not a translucent wash. Even 0.96 transmitted 4% of the weather, which is
+  invisible against a lit bar but clearly visible against the dark segment gaps and the
+  dormant grid, so the shipped value is 1.0. The floor test asserts >= 0.92.
 - **Contrast floor:** every `lit` colour must reach ≥ 3:1 against its own theme's `panel`. Computed, never eyeballed.
 - **No elevation, ever.** The user is in the local Administrators group but the app must never require elevation. Autostart writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
 - **No runtime dependency.** Output is one exe, copied to two machines.
@@ -71,6 +73,25 @@ opt-level = 3
 lto = true
 strip = true
 ```
+
+### Renderer facts established after this plan was written
+
+Any task touching `render/` must know these; they were all discovered by fixing something
+that looked right and was not.
+
+- `Canvas` now also has `draw_over(&Canvas)`, `punch_rect`, `clip_to_rounded_rect`, and
+  `#[derive(Clone)]`.
+- **`Canvas::bloom` composites its halo UNDER existing content.** With an opaque panel that
+  hides the halo completely. Bloom the marks on their own transparent layer and
+  `draw_over` it onto the panel.
+- **Bloom radius must stay small relative to the mark pitch** (7px for segmented bars) or
+  adjacent halos merge into one wash. Radius is not the brightness knob; `glow_strength` is.
+- **Never use `punch_row` to cut gaps between marks** - it zeroes alpha across the full
+  canvas width, erasing the panel and leaving transparent stripes. Paint the gap with the
+  panel colour instead.
+- Assertions on `.a` are vacuous where the opaque panel sits underneath. Assert luminance.
+- `Theme::glow_strength` scales the main halo; `Theme::edge_glow` scales a dim halo masked
+  to the display's edge ring.
 
 ### File structure
 
@@ -2257,7 +2278,7 @@ because the reference machine's default endpoint is virtual."
 - Produces:
   - `themes::Zone { pub upto: f32, pub lit: String, pub hot: String }`
   - `themes::Texture` enum: `Glass | Scanlines | Haze | Filament | Grille | None_`
-  - `themes::Theme` with fields `id: String`, `name: String`, `family: String`, `lit: String`, `hot: String`, `panel: String`, `panel_alpha: f32`, `edge: String`, `edge_alpha: f32`, `ghost: f32`, `bloom: f32`, `fade: f32`, `texture: Texture`, `ballistics: Ballistics`, `zones: Vec<Zone>`, `dual: Option<(String, f32)>`
+  - `themes::Theme` with fields `id: String`, `name: String`, `family: String`, `lit: String`, `hot: String`, `panel: String`, `panel_alpha: f32`, `edge: String`, `edge_alpha: f32`, `ghost: f32`, `bloom: f32`, `glow_strength: f32`, `edge_glow: f32`, `fade: f32`, `texture: Texture`, `ballistics: Ballistics`, `zones: Vec<Zone>`, `dual: Option<(String, f32)>`
   - `themes::builtin::all() -> Vec<Theme>`
   - `render::FrameData { pub levels: [f32; NUM_BANDS], pub peaks: [f32; NUM_BANDS], pub waveform: [f32; 256], pub rms_l: f32, pub rms_r: f32 }`
   - `render::Family` trait: `fn id(&self) -> &'static str;` and `fn draw(&mut self, c: &mut Canvas, t: &Theme, d: &FrameData);`
@@ -2380,7 +2401,7 @@ impl Default for Theme {
             lit: "#8fe4ff".into(),
             hot: "#e4f8ff".into(),
             panel: "#040a0e".into(),
-            panel_alpha: 0.96,
+            panel_alpha: 1.0,
             edge: "#96e1ff".into(),
             edge_alpha: 0.13,
             ghost: 0.11,
@@ -2433,7 +2454,7 @@ pub fn vfd_ice() -> Theme {
         lit: "#8fe4ff".into(),
         hot: "#e4f8ff".into(),
         panel: "#040a0e".into(),
-        panel_alpha: 0.96,
+        panel_alpha: 1.0,
         edge: "#96e1ff".into(),
         edge_alpha: 0.13,
         ghost: 0.11,
@@ -3552,7 +3573,7 @@ pub fn matrix_green() -> Theme {
         lit: "#35ff6e".into(),
         hot: "#ccffdb".into(),
         panel: "#000903".into(),
-        panel_alpha: 0.96,
+        panel_alpha: 1.0,
         edge: "#3cff78".into(),
         edge_alpha: 0.14,
         ghost: 0.17,
@@ -3574,7 +3595,7 @@ pub fn neon_pink() -> Theme {
         lit: "#ff4fb0".into(),
         hot: "#ffd9ee".into(),
         panel: "#0d020b".into(),
-        panel_alpha: 0.96,
+        panel_alpha: 1.0,
         edge: "#ff4fb0".into(),
         edge_alpha: 0.22,
         ghost: 0.09,
@@ -3596,7 +3617,7 @@ pub fn vac_tube_orange() -> Theme {
         lit: "#ff9a2e".into(),
         hot: "#ffe9c9".into(),
         panel: "#0f0602".into(),
-        panel_alpha: 0.96,
+        panel_alpha: 1.0,
         edge: "#ff9632".into(),
         edge_alpha: 0.16,
         ghost: 0.13,
@@ -3619,7 +3640,7 @@ pub fn classic_three_colour() -> Theme {
         lit: "#3ddc5a".into(),
         hot: "#b6ffc6".into(),
         panel: "#060708".into(),
-        panel_alpha: 0.96,
+        panel_alpha: 1.0,
         edge: "#c8d2d7".into(),
         edge_alpha: 0.12,
         ghost: 0.13,
@@ -3879,7 +3900,7 @@ pub fn p1_green() -> Theme {
         lit: "#5cff9a".into(),
         hot: "#ccffdd".into(),
         panel: "#020805".into(),
-        panel_alpha: 0.96,
+        panel_alpha: 1.0,
         edge: "#78ffb4".into(),
         edge_alpha: 0.14,
         fade: 0.14,
@@ -3894,7 +3915,7 @@ pub fn p7_dual() -> Theme {
         lit: "#e8f4ff".into(),
         hot: "#ffffff".into(),
         panel: "#03060c".into(),
-        panel_alpha: 0.96,
+        panel_alpha: 1.0,
         edge: "#aad7ff".into(),
         edge_alpha: 0.15,
         fade: 0.30,
@@ -3912,7 +3933,7 @@ pub fn p11_blue_violet() -> Theme {
         lit: "#9db4ff".into(),
         hot: "#dde5ff".into(),
         panel: "#03040c".into(),
-        panel_alpha: 0.96,
+        panel_alpha: 1.0,
         edge: "#96afff".into(),
         edge_alpha: 0.15,
         fade: 0.20,
@@ -3927,7 +3948,7 @@ pub fn scope_amber() -> Theme {
         lit: "#ffc766".into(),
         hot: "#ffe9c9".into(),
         panel: "#0c0602".into(),
-        panel_alpha: 0.96,
+        panel_alpha: 1.0,
         edge: "#ffc878".into(),
         edge_alpha: 0.15,
         fade: 0.11,
@@ -3942,7 +3963,7 @@ pub fn scope_white() -> Theme {
         lit: "#f6fbff".into(),
         hot: "#ffffff".into(),
         panel: "#040609".into(),
-        panel_alpha: 0.96,
+        panel_alpha: 1.0,
         edge: "#dceeff".into(),
         edge_alpha: 0.15,
         fade: 0.17,
@@ -4270,7 +4291,7 @@ pub fn vu_cream() -> Theme {
         lit: "#ffe2aa".into(),
         hot: "#ffe6b0".into(),
         panel: "#140e06".into(),
-        panel_alpha: 0.96,
+        panel_alpha: 1.0,
         edge: "#ffc878".into(),
         edge_alpha: 0.16,
         ..vu_base()
@@ -4284,7 +4305,7 @@ pub fn vu_amber() -> Theme {
         lit: "#ffbe6e".into(),
         hot: "#ffcf7a".into(),
         panel: "#160b02".into(),
-        panel_alpha: 0.96,
+        panel_alpha: 1.0,
         edge: "#ffaf50".into(),
         edge_alpha: 0.18,
         ..vu_base()
@@ -4299,7 +4320,7 @@ pub fn vu_ice() -> Theme {
         lit: "#bee6ff".into(),
         hot: "#d8f2ff".into(),
         panel: "#040c14".into(),
-        panel_alpha: 0.96,
+        panel_alpha: 1.0,
         edge: "#a0dcff".into(),
         edge_alpha: 0.18,
         ..vu_base()
@@ -4314,7 +4335,7 @@ pub fn vu_green() -> Theme {
         lit: "#b4ffcd".into(),
         hot: "#c8ffd8".into(),
         panel: "#020e06".into(),
-        panel_alpha: 0.96,
+        panel_alpha: 1.0,
         edge: "#8cffb4".into(),
         edge_alpha: 0.18,
         ..vu_base()
@@ -4329,7 +4350,7 @@ pub fn vu_red() -> Theme {
         lit: "#ffaa9b".into(),
         hot: "#ffb3a6".into(),
         panel: "#140302".into(),
-        panel_alpha: 0.96,
+        panel_alpha: 1.0,
         edge: "#ff826e".into(),
         edge_alpha: 0.18,
         ..vu_base()
@@ -4516,7 +4537,7 @@ family = "segmented"
 lit         = "#c07fff"
 hot         = "#ecd9ff"
 panel       = "#0a040f"
-panel_alpha = 0.62
+panel_alpha = 1.0
 edge        = "#c07fff"
 edge_alpha  = 0.15
 
@@ -4562,7 +4583,7 @@ family = "segmented"
 lit         = "#00ffff"
 hot         = "#ccffff"
 panel       = "#000508"
-panel_alpha = 0.60
+panel_alpha = 1.0
 ```
 
 `tests/themes/zoned.toml`:
@@ -4575,7 +4596,7 @@ family = "segmented"
 
 [colour]
 panel       = "#050505"
-panel_alpha = 0.66
+panel_alpha = 1.0
 
 [[zone]]
 upto = 0.5
