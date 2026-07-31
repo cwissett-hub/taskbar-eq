@@ -19,7 +19,12 @@ Every task's requirements implicitly include this section. All values verified o
 - **Audio format:** default endpoint reports 48000 Hz, 2 ch, 32-bit float. Handle the general case but optimise for this.
 - **FFT:** 2048-point, Hann window, 512-sample hop. Bin resolution 23.4 Hz — a 1000 Hz sine peaks at bin 43 (1008 Hz). Verified.
 - **Dark mode only.** Light mode is an explicit non-goal.
-- **Panel opacity floor:** `panel_alpha >= 0.55`. The taskbar is wallpaper-tinted acrylic (`#3D1712` on the reference machine), not black, so each theme supplies its own near-black panel.
+- **Panel opacity floor:** `panel_alpha >= 0.92`. Two reasons, and the second is the one that
+  bites: the taskbar is wallpaper-tinted acrylic (`#3D1712` on the reference machine) rather than
+  black, so each theme supplies its own near-black panel; AND the panel must **occlude the
+  Widgets button's own icon and text**. At 0.55 the white weather text composited to ~45% of 255
+  and stayed plainly legible through the panel. The design chose "EQ replaces the weather while
+  playing", not a translucent wash, so anything below ~0.92 fails the requirement.
 - **Contrast floor:** every `lit` colour must reach ≥ 3:1 against its own theme's `panel`. Computed, never eyeballed.
 - **No elevation, ever.** The user is in the local Administrators group but the app must never require elevation. Autostart writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
 - **No runtime dependency.** Output is one exe, copied to two machines.
@@ -2375,11 +2380,11 @@ impl Default for Theme {
             lit: "#8fe4ff".into(),
             hot: "#e4f8ff".into(),
             panel: "#040a0e".into(),
-            panel_alpha: 0.55,
+            panel_alpha: 0.96,
             edge: "#96e1ff".into(),
             edge_alpha: 0.13,
             ghost: 0.11,
-            bloom: 9.0,
+            bloom: 16.0,
             fade: 0.30,
             texture: Texture::Glass,
             ballistics: Ballistics::default(),
@@ -2428,11 +2433,11 @@ pub fn vfd_ice() -> Theme {
         lit: "#8fe4ff".into(),
         hot: "#e4f8ff".into(),
         panel: "#040a0e".into(),
-        panel_alpha: 0.55,
+        panel_alpha: 0.96,
         edge: "#96e1ff".into(),
         edge_alpha: 0.13,
         ghost: 0.11,
-        bloom: 9.0,
+        bloom: 16.0,
         texture: Texture::Glass,
         ..Theme::default()
     }
@@ -2749,7 +2754,9 @@ Replace the `todo!()` in `src/render/segmented.rs`:
             }
         }
 
-        c.bloom(t.bloom.round() as i32, 0.85);
+        // Strength above 1.0 deliberately: the halo is composited UNDER the crisp
+        // marks, so overdriving it reads as phosphor glow rather than as blur.
+        c.bloom(t.bloom.round() as i32, 1.35);
 
         // 6. hot core: a narrower brighter rect, not a gradient
         if t.zones.is_empty() {
@@ -3453,9 +3460,9 @@ mod tests {
 
     #[test]
     fn every_panel_alpha_meets_the_floor() {
-        // Below 0.55 the wallpaper-tinted acrylic washes the theme out.
+        // Below 0.92 the widget's own weather text shows through the panel.
         for t in all() {
-            assert!(t.panel_alpha >= 0.55, "{} has panel_alpha {}", t.id, t.panel_alpha);
+            assert!(t.panel_alpha >= 0.92, "{} has panel_alpha {}", t.id, t.panel_alpha);
         }
     }
 
@@ -3545,11 +3552,11 @@ pub fn matrix_green() -> Theme {
         lit: "#35ff6e".into(),
         hot: "#ccffdb".into(),
         panel: "#000903".into(),
-        panel_alpha: 0.70,
+        panel_alpha: 0.96,
         edge: "#3cff78".into(),
         edge_alpha: 0.14,
         ghost: 0.17,
-        bloom: 8.0,
+        bloom: 15.0,
         texture: Texture::Scanlines,
         ballistics: crate::dsp::ballistics::Ballistics {
             attack: 0.55,
@@ -3567,11 +3574,11 @@ pub fn neon_pink() -> Theme {
         lit: "#ff4fb0".into(),
         hot: "#ffd9ee".into(),
         panel: "#0d020b".into(),
-        panel_alpha: 0.62,
+        panel_alpha: 0.96,
         edge: "#ff4fb0".into(),
         edge_alpha: 0.22,
         ghost: 0.09,
-        bloom: 14.0,
+        bloom: 20.0,
         texture: Texture::Haze,
         ballistics: crate::dsp::ballistics::Ballistics {
             attack: 0.55,
@@ -3589,11 +3596,11 @@ pub fn vac_tube_orange() -> Theme {
         lit: "#ff9a2e".into(),
         hot: "#ffe9c9".into(),
         panel: "#0f0602".into(),
-        panel_alpha: 0.64,
+        panel_alpha: 0.96,
         edge: "#ff9632".into(),
         edge_alpha: 0.16,
         ghost: 0.13,
-        bloom: 12.0,
+        bloom: 18.0,
         texture: Texture::Filament,
         // Slowest peak fall of the five - heat dissipating rather than snapping back.
         ballistics: crate::dsp::ballistics::Ballistics {
@@ -3612,11 +3619,11 @@ pub fn classic_three_colour() -> Theme {
         lit: "#3ddc5a".into(),
         hot: "#b6ffc6".into(),
         panel: "#060708".into(),
-        panel_alpha: 0.66,
+        panel_alpha: 0.96,
         edge: "#c8d2d7".into(),
         edge_alpha: 0.12,
         ghost: 0.13,
-        bloom: 7.0,
+        bloom: 13.0,
         texture: Texture::Grille,
         zones: vec![
             Zone { upto: 0.58, lit: "#3ddc5a".into(), hot: "#b6ffc6".into() },
@@ -3872,7 +3879,7 @@ pub fn p1_green() -> Theme {
         lit: "#5cff9a".into(),
         hot: "#ccffdd".into(),
         panel: "#020805".into(),
-        panel_alpha: 0.66,
+        panel_alpha: 0.96,
         edge: "#78ffb4".into(),
         edge_alpha: 0.14,
         fade: 0.14,
@@ -3887,7 +3894,7 @@ pub fn p7_dual() -> Theme {
         lit: "#e8f4ff".into(),
         hot: "#ffffff".into(),
         panel: "#03060c".into(),
-        panel_alpha: 0.68,
+        panel_alpha: 0.96,
         edge: "#aad7ff".into(),
         edge_alpha: 0.15,
         fade: 0.30,
@@ -3905,7 +3912,7 @@ pub fn p11_blue_violet() -> Theme {
         lit: "#9db4ff".into(),
         hot: "#dde5ff".into(),
         panel: "#03040c".into(),
-        panel_alpha: 0.68,
+        panel_alpha: 0.96,
         edge: "#96afff".into(),
         edge_alpha: 0.15,
         fade: 0.20,
@@ -3920,7 +3927,7 @@ pub fn scope_amber() -> Theme {
         lit: "#ffc766".into(),
         hot: "#ffe9c9".into(),
         panel: "#0c0602".into(),
-        panel_alpha: 0.66,
+        panel_alpha: 0.96,
         edge: "#ffc878".into(),
         edge_alpha: 0.15,
         fade: 0.11,
@@ -3935,7 +3942,7 @@ pub fn scope_white() -> Theme {
         lit: "#f6fbff".into(),
         hot: "#ffffff".into(),
         panel: "#040609".into(),
-        panel_alpha: 0.66,
+        panel_alpha: 0.96,
         edge: "#dceeff".into(),
         edge_alpha: 0.15,
         fade: 0.17,
@@ -4263,7 +4270,7 @@ pub fn vu_cream() -> Theme {
         lit: "#ffe2aa".into(),
         hot: "#ffe6b0".into(),
         panel: "#140e06".into(),
-        panel_alpha: 0.72,
+        panel_alpha: 0.96,
         edge: "#ffc878".into(),
         edge_alpha: 0.16,
         ..vu_base()
@@ -4277,7 +4284,7 @@ pub fn vu_amber() -> Theme {
         lit: "#ffbe6e".into(),
         hot: "#ffcf7a".into(),
         panel: "#160b02".into(),
-        panel_alpha: 0.74,
+        panel_alpha: 0.96,
         edge: "#ffaf50".into(),
         edge_alpha: 0.18,
         ..vu_base()
@@ -4292,7 +4299,7 @@ pub fn vu_ice() -> Theme {
         lit: "#bee6ff".into(),
         hot: "#d8f2ff".into(),
         panel: "#040c14".into(),
-        panel_alpha: 0.74,
+        panel_alpha: 0.96,
         edge: "#a0dcff".into(),
         edge_alpha: 0.18,
         ..vu_base()
@@ -4307,7 +4314,7 @@ pub fn vu_green() -> Theme {
         lit: "#b4ffcd".into(),
         hot: "#c8ffd8".into(),
         panel: "#020e06".into(),
-        panel_alpha: 0.74,
+        panel_alpha: 0.96,
         edge: "#8cffb4".into(),
         edge_alpha: 0.18,
         ..vu_base()
@@ -4322,7 +4329,7 @@ pub fn vu_red() -> Theme {
         lit: "#ffaa9b".into(),
         hot: "#ffb3a6".into(),
         panel: "#140302".into(),
-        panel_alpha: 0.76,
+        panel_alpha: 0.96,
         edge: "#ff826e".into(),
         edge_alpha: 0.18,
         ..vu_base()

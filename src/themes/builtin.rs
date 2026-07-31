@@ -16,11 +16,17 @@ pub fn vfd_ice() -> Theme {
         lit: "#8fe4ff".into(),
         hot: "#e4f8ff".into(),
         panel: "#040a0e".into(),
-        panel_alpha: 0.55,
+        // Must OCCLUDE the widget's own content, not merely tint it. At 0.55 the
+        // white weather text composited to ~45% of 255 and stayed plainly legible
+        // through the panel. The design brief chose "EQ replaces the weather while
+        // playing", not a translucent wash, so the panel has to actually hide it.
+        panel_alpha: 0.96,
         edge: "#96e1ff".into(),
         edge_alpha: 0.13,
         ghost: 0.11,
-        bloom: 9.0,
+        // Generous on purpose - this is a phosphor display and the glow is the
+        // point. Tuned by eye against the real taskbar.
+        bloom: 16.0,
         texture: Texture::Glass,
         ..Theme::default()
     }

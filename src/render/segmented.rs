@@ -9,6 +9,22 @@ const SEG_GAP: i32 = 1;
 const PAD_X: i32 = 5;
 const PAD_Y: i32 = 6;
 
+/// How much brighter than "energy-preserving" the halo is driven. 1.0 would make
+/// a wide radius look identical in intensity to a narrow one - only more spread -
+/// because the box blur normalises by kernel size. Above 1.0 is what actually
+/// reads as phosphor glow. Chosen by eye against the live taskbar.
+const GLOW_GAIN: f32 = 3.4;
+
+/// Couples strength to radius. `Canvas::bloom` is a box blur and normalises by
+/// kernel size, so raising the radius alone makes the halo FAINTER, not stronger -
+/// the opposite of the intent, and a trap for every theme that follows. Scaling by
+/// radius squared cancels the normalisation; GLOW_GAIN then overdrives it.
+fn bloom_strength(bloom: f32) -> f32 {
+    const REF_RADIUS: f32 = 9.0;
+    let r = bloom.max(1.0);
+    ((r / REF_RADIUS).powi(2) * 0.85 * GLOW_GAIN).clamp(0.6, 12.0)
+}
+
 pub struct Segmented;
 
 impl Family for Segmented {
@@ -75,31 +91,45 @@ impl Family for Segmented {
             arr[lo..hi.min(arr.len())].iter().copied().fold(0.0f32, f32::max)
         };
 
-        // 4. dormant ghost grid - zone-coloured when zones are present
-        if t.ghost > 0.0 {
-            for k in 0..nseg {
-                let frac = (k + 1) as f32 / nseg as f32;
-                let col = Rgba::from_hex(t.lit_at(frac), t.ghost);
-                let y = PAD_Y + usable_h - (k + 1) * seg_pitch;
-                for b in 0..nbars {
-                    c.fill_rect(ox + b * pitch, y, BAR_W, SEG_H, col);
-                }
-            }
-        }
-
-        // 5. lit columns - one fill per bar (or per zone), then bloom, then punch
+        // 4. lit columns FIRST, so that only they feed the bloom.
+        let lit_of = |b: i32| (sample(&d.levels, b) * nseg as f32).round() as i32;
         for b in 0..nbars {
-            let lit = (sample(&d.levels, b) * nseg as f32).round() as i32;
-            for k in 0..lit.min(nseg) {
+            for k in 0..lit_of(b).min(nseg) {
                 let frac = (k + 1) as f32 / nseg as f32;
                 let y = PAD_Y + usable_h - (k + 1) * seg_pitch;
                 c.fill_rect(ox + b * pitch, y, BAR_W, SEG_H, Rgba::from_hex(t.lit_at(frac), 1.0));
             }
         }
 
-        c.bloom(t.bloom.round() as i32, 0.85);
+        // 5. bloom - the LIT marks only.
+        //
+        // Radius and strength must be coupled: Canvas::bloom is a box blur and
+        // normalises by kernel size, so a wider radius spreads the same energy over
+        // more pixels and the halo gets FAINTER. Raising `bloom` alone therefore dims
+        // the glow, the opposite of the intent. See bloom_strength().
+        //
+        // And this must happen BEFORE the dormant grid is drawn. Blooming the ghost
+        // grid too drove it to full alpha at these gain levels, so the idle grid glowed
+        // as brightly as a lit segment and the meter read as permanently full.
+        let radius = t.bloom.round().max(0.0) as i32;
+        c.bloom(radius, bloom_strength(t.bloom));
 
-        // 6. hot core: a narrower brighter rect, not a gradient
+        // 6. dormant ghost grid - zone-coloured when zones are present. Drawn after
+        // the bloom so it stays crisp and dim, and only in the UNLIT part of each bar
+        // so it never tints a lit segment.
+        if t.ghost > 0.0 {
+            for b in 0..nbars {
+                let lit = lit_of(b).min(nseg);
+                for k in lit..nseg {
+                    let frac = (k + 1) as f32 / nseg as f32;
+                    let col = Rgba::from_hex(t.lit_at(frac), t.ghost);
+                    let y = PAD_Y + usable_h - (k + 1) * seg_pitch;
+                    c.fill_rect(ox + b * pitch, y, BAR_W, SEG_H, col);
+                }
+            }
+        }
+
+        // 7. hot core: a narrower brighter rect, not a gradient
         if t.zones.is_empty() {
             for b in 0..nbars {
                 let lit = (sample(&d.levels, b) * nseg as f32).round() as i32;
@@ -117,12 +147,12 @@ impl Family for Segmented {
             }
         }
 
-        // 7. punch the segment gaps back out
+        // 8. punch the segment gaps back out
         for k in 1..=nseg {
             c.punch_row(PAD_Y + usable_h - k * seg_pitch + SEG_H, SEG_GAP);
         }
 
-        // 8. peak-hold caps
+        // 9. peak-hold caps
         for b in 0..nbars {
             let pk = (sample(&d.peaks, b) * nseg as f32).round() as i32;
             if pk <= 0 {
@@ -138,7 +168,7 @@ impl Family for Segmented {
             );
         }
 
-        // 9. bezel
+        // 10. bezel
         let e = Rgba::from_hex(&t.edge, t.edge_alpha);
         c.fill_rect(1, 2, w - 2, 1, e);
         c.fill_rect(1, h - 3, w - 2, 1, e);
@@ -153,6 +183,13 @@ mod tests {
     use crate::dsp::bands::NUM_BANDS;
     use crate::render::golden::canvas_to_ascii;
     use crate::themes::builtin;
+
+    /// Perceived brightness. Use this rather than the alpha channel: the panel is
+    /// ~0.96 opaque, so alpha is near-saturated everywhere on it and an alpha
+    /// assertion silently measures the panel instead of the mark.
+    fn lum(p: crate::render::canvas::Rgba) -> f32 {
+        0.2126 * p.r as f32 + 0.7152 * p.g as f32 + 0.0722 * p.b as f32
+    }
 
     fn frame(level: f32) -> FrameData {
         FrameData {
@@ -198,7 +235,7 @@ mod tests {
         let mut c = Canvas::new(190, 60);
         Segmented.draw(&mut c, &builtin::vfd_ice(), &frame(1.0));
         let top = c.get(first_bar_x() + 2, PAD_Y + 1);
-        assert!(top.a > 200, "top segment should be lit at full level");
+        assert!(lum(top) > 150.0, "top segment should be lit at full level");
     }
 
     #[test]
@@ -207,8 +244,16 @@ mod tests {
         Segmented.draw(&mut c, &builtin::vfd_ice(), &frame(0.5));
         let bottom = c.get(first_bar_x() + 2, 60 - PAD_Y - 2);
         let top = c.get(first_bar_x() + 2, PAD_Y + 1);
-        assert!(bottom.a > 150, "bottom must be lit");
-        assert!(top.a < bottom.a, "top must be dimmer than bottom at half level");
+        // Assert on BRIGHTNESS, not alpha. The panel is 0.96 opaque, so every pixel
+        // on it has alpha ~245 whether or not a segment is lit - an alpha-based
+        // assertion here passes on the panel alone and tests nothing.
+        assert!(lum(bottom) > 120.0, "bottom must be lit, got lum {}", lum(bottom));
+        assert!(
+            lum(top) < lum(bottom) * 0.5,
+            "top must be clearly dimmer than bottom at half level (top {}, bottom {})",
+            lum(top),
+            lum(bottom)
+        );
     }
 
     #[test]
@@ -218,11 +263,15 @@ mod tests {
         // Walk a lit column and confirm the luminance is not monotonic - the
         // gaps must interrupt it. This is what distinguishes a segmented meter
         // from a solid bar.
-        let x = PAD_X + 2;
+        // Must sample inside a real bar. The geometry CENTRES the bars, so the
+        // first one starts at first_bar_x() (8 at 190px wide), not at PAD_X - and
+        // PAD_X + 2 lands in the left margin, where the column is uniform and this
+        // test silently measures nothing.
+        let x = first_bar_x() + 2;
         let mut transitions = 0;
-        let mut prev = c.get(x, PAD_Y).a > 128;
+        let mut prev = lum(c.get(x, PAD_Y)) > 90.0;
         for y in PAD_Y..(60 - PAD_Y) {
-            let now = c.get(x, y).a > 128;
+            let now = lum(c.get(x, y)) > 90.0;
             if now != prev {
                 transitions += 1;
             }

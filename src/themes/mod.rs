@@ -64,11 +64,14 @@ impl Default for Theme {
             lit: "#8fe4ff".into(),
             hot: "#e4f8ff".into(),
             panel: "#040a0e".into(),
-            panel_alpha: 0.55,
+            // >= 0.92 is a hard requirement, not a preference: the panel must
+            // occlude the Widgets button's own icon and text. 0.55 left the
+            // weather plainly legible through it.
+            panel_alpha: 0.96,
             edge: "#96e1ff".into(),
             edge_alpha: 0.13,
             ghost: 0.11,
-            bloom: 9.0,
+            bloom: 16.0,
             fade: 0.30,
             texture: Texture::Glass,
             ballistics: Ballistics::default(),
