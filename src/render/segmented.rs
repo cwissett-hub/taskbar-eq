@@ -101,7 +101,27 @@ impl Family for Segmented {
             }
         }
 
-        // 5. bloom - the LIT marks only.
+        // 5. punch the segment gaps out of the lit marks BEFORE the bloom, not
+        // after.
+        //
+        // The gaps must be punched before `bloom` runs, not after: `bloom` only
+        // sees whatever is on the canvas at the moment it runs, so blooming the
+        // *unbroken* lit columns and only then punching the gaps back out
+        // erases the halo in precisely the rows between segments - the punch
+        // (`punch_row`) zeroes alpha across the FULL WIDTH for each gap row,
+        // which destroys any glow that landed there. That produced a
+        // hard-edged, glow-less meter where the segmentation should have been
+        // visible in the halo too.
+        //
+        // Punching first means `bloom` blurs the already-segmented shape, so
+        // the halo it produces wraps each lit segment individually and bleeds
+        // a little into the gaps - which is the point: a real phosphor
+        // segment's glow does not stop dead at the segment's physical edge.
+        for k in 1..=nseg {
+            c.punch_row(PAD_Y + usable_h - k * seg_pitch + SEG_H, SEG_GAP);
+        }
+
+        // 6. bloom - the now-segmented lit marks only.
         //
         // Radius and strength must be coupled: Canvas::bloom is a box blur and
         // normalises by kernel size, so a wider radius spreads the same energy over
@@ -114,7 +134,23 @@ impl Family for Segmented {
         let radius = t.bloom.round().max(0.0) as i32;
         c.bloom(radius, bloom_strength(t.bloom));
 
-        // 6. dormant ghost grid - zone-coloured when zones are present. Drawn after
+        // 7. clip the halo to the panel interior.
+        //
+        // The panel (step 1) is only inset 1-2px from the canvas edge, but the
+        // bloom above can spread up to `radius` pixels in every direction -
+        // far past that thin margin - so without this the glow spills onto
+        // the bare taskbar outside the rounded panel and reads as a bright
+        // blue/white edge sitting outside the display. `Canvas::bloom` itself
+        // only clips at the canvas boundary, not the panel's, so this must be
+        // its own step, run immediately after `bloom` and before anything else
+        // is drawn (the later layers are already confined to the panel
+        // interior by construction, so nothing after this can reintroduce the
+        // leak). `clip_to_rounded_rect` shares `rounded_rect`'s own corner
+        // math, so this respects the rounded corners exactly rather than just
+        // clipping to the bounding box.
+        c.clip_to_rounded_rect(1, 2, w - 2, h - 4, 4);
+
+        // 8. dormant ghost grid - zone-coloured when zones are present. Drawn after
         // the bloom so it stays crisp and dim, and only in the UNLIT part of each bar
         // so it never tints a lit segment.
         if t.ghost > 0.0 {
@@ -129,7 +165,11 @@ impl Family for Segmented {
             }
         }
 
-        // 7. hot core: a narrower brighter rect, not a gradient
+        // 9. hot core: a narrower brighter rect, not a gradient. Drawn as one
+        // continuous rect per bar (not per segment) rather than a gradient, so
+        // it needs its own re-punch below to stay segmented.
+        let hot_x = (BAR_W as f32 * 0.28) as i32;
+        let hot_w = (BAR_W as f32 * 0.44).ceil() as i32;
         if t.zones.is_empty() {
             for b in 0..nbars {
                 let lit = (sample(&d.levels, b) * nseg as f32).round() as i32;
@@ -138,21 +178,47 @@ impl Family for Segmented {
                 }
                 let hh = lit.min(nseg) * seg_pitch - SEG_GAP;
                 c.fill_rect(
-                    ox + b * pitch + (BAR_W as f32 * 0.28) as i32,
+                    ox + b * pitch + hot_x,
                     PAD_Y + usable_h - hh,
-                    (BAR_W as f32 * 0.44).ceil() as i32,
+                    hot_w,
                     hh,
                     Rgba::from_hex(&t.hot, 0.55),
                 );
             }
         }
 
-        // 8. punch the segment gaps back out
-        for k in 1..=nseg {
-            c.punch_row(PAD_Y + usable_h - k * seg_pitch + SEG_H, SEG_GAP);
+        // 10. re-cut the hot core's own gaps.
+        //
+        // The hot core above is drawn as ONE continuous rect per bar, so it
+        // now paints straight across the segment gaps the bloom was made to
+        // glow in at step 5 - the middle path promised there. A second
+        // full-width punch (like step 5's, or the original single punch this
+        // fix replaced) would fix the hot core but also re-erase the halo
+        // that step 5 + bloom deliberately left glowing at the bar's edges
+        // and in the margins between bars, undoing the fix for fault 2.
+        //
+        // So this punch is narrower, not just later: `punch_rect` (unlike
+        // `punch_row`) is bounded in x to only the hot core's own column,
+        // leaving the glow either side of it untouched. Net look per gap
+        // row: the centre (where the hot core would have bridged the gap)
+        // goes dark again, exactly like a real segment's gap, while the
+        // edges of the bar keep glowing - which is what "a slight, authentic
+        // bleed into the gaps" should mean, rather than the gap vanishing
+        // into a slab of continuous hot core.
+        if t.zones.is_empty() {
+            for b in 0..nbars {
+                for k in 1..=nseg {
+                    c.punch_rect(
+                        ox + b * pitch + hot_x,
+                        PAD_Y + usable_h - k * seg_pitch + SEG_H,
+                        hot_w,
+                        SEG_GAP,
+                    );
+                }
+            }
         }
 
-        // 9. peak-hold caps
+        // 11. peak-hold caps
         for b in 0..nbars {
             let pk = (sample(&d.peaks, b) * nseg as f32).round() as i32;
             if pk <= 0 {
@@ -168,7 +234,7 @@ impl Family for Segmented {
             );
         }
 
-        // 10. bezel
+        // 12. bezel
         let e = Rgba::from_hex(&t.edge, t.edge_alpha);
         c.fill_rect(1, 2, w - 2, 1, e);
         c.fill_rect(1, h - 3, w - 2, 1, e);
@@ -278,6 +344,55 @@ mod tests {
             prev = now;
         }
         assert!(transitions >= 6, "expected several segment gaps, saw {transitions}");
+    }
+
+    #[test]
+    fn segment_gaps_glow_instead_of_going_dark() {
+        let mut c = Canvas::new(190, 60);
+        Segmented.draw(&mut c, &builtin::vfd_ice(), &frame(0.5));
+        // Sample the EDGE of the first bar (offset 0 of its 5px width), which
+        // sits outside the hot core's narrower highlight strip - measuring
+        // the halo the bloom leaves behind, not the hot core's flat colour.
+        let x = first_bar_x();
+        let usable_h = 60 - PAD_Y * 2;
+        let seg_pitch = SEG_H + SEG_GAP;
+        // k=2: a gap deep inside the lit region (this mirrors `draw`'s own
+        // gap-row formula, `PAD_Y + usable_h - k * seg_pitch + SEG_H`), far
+        // from both the panel edge and the lit/unlit boundary, so this is
+        // unambiguously "between two lit segments", not an edge case.
+        let gap_y = PAD_Y + usable_h - 2 * seg_pitch + SEG_H;
+        let seg_y = gap_y - 2; // inside the solid segment band just below it
+        let gap_lum = lum(c.get(x, gap_y));
+        let seg_lum = lum(c.get(x, seg_y));
+        // Bug: punching the gaps AFTER bloom zeroed them outright (lum 0).
+        // Fix: the gap must show a real glow - clearly brighter than the
+        // near-black bare panel (lum ~9 for #040a0e at 0.96 alpha).
+        assert!(gap_lum > 100.0, "gap row should glow, got lum {gap_lum}");
+        // And the two rows must still read as distinct bands - a real
+        // segment gap, not a uniform smear that erased the segmentation.
+        assert!(
+            (gap_lum - seg_lum).abs() > 15.0,
+            "gap and segment rows should be visibly different, got gap {gap_lum} vs segment {seg_lum}"
+        );
+    }
+
+    #[test]
+    fn nothing_glows_outside_the_panel_rect() {
+        // The panel (step 1) occupies x in [1, w-2) and y in [2, h-4) - see
+        // the rounded_rect call in `draw`. Bloom radius is up to 16px, far
+        // more than that 1-2px margin, so without clipping the halo spills
+        // onto the bare taskbar and reads as a bright edge outside the
+        // display. Checked at full level, where the halo is strongest.
+        let mut c = Canvas::new(190, 60);
+        Segmented.draw(&mut c, &builtin::vfd_ice(), &frame(1.0));
+        for x in 0..190 {
+            assert_eq!(c.get(x, 0), Rgba::TRANSPARENT, "row 0 is above the panel, x={x}");
+            assert_eq!(c.get(x, 59), Rgba::TRANSPARENT, "row 59 is below the panel, x={x}");
+        }
+        for y in 0..60 {
+            assert_eq!(c.get(0, y), Rgba::TRANSPARENT, "column 0 is left of the panel, y={y}");
+            assert_eq!(c.get(189, y), Rgba::TRANSPARENT, "column 189 is right of the panel, y={y}");
+        }
     }
 
     #[test]

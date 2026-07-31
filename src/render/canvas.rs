@@ -163,9 +163,69 @@ impl Canvas {
         }
     }
 
-    pub fn punch_row(&mut self, y: i32, h: i32) {
-        for yy in y.max(0)..(y + h).min(self.h) {
+    /// Zeroes every pixel that falls OUTSIDE the given rounded rect, leaving
+    /// pixels inside untouched. This is `rounded_rect`'s own corner math run
+    /// in reverse, so the clipped region exactly matches what `rounded_rect`
+    /// would have drawn for the same `(x, y, w, h, r)` - not just its bounding
+    /// box. Intended to run right after an operation (like `bloom`) that can
+    /// spread pixels beyond a shape drawn earlier, e.g. so a glow halo cannot
+    /// leak past the panel it is supposed to be contained behind.
+    pub fn clip_to_rounded_rect(&mut self, x: i32, y: i32, w: i32, h: i32, r: i32) {
+        // Degenerate rect: nothing is "inside", so clip everything. Mirrors
+        // rounded_rect's own guard - w.min(h) / 2 can go negative and
+        // i32::clamp's min <= max assert is unconditional, panicking in
+        // release too, so this must be checked before computing `r` below.
+        if w <= 0 || h <= 0 {
+            self.clear();
+            return;
+        }
+        let r = r.max(0).min(w.min(h) / 2);
+        for yy in 0..self.h {
+            let ly = yy - y;
+            if ly < 0 || ly >= h {
+                // Fully outside the rect vertically: the whole row is clipped.
+                for xx in 0..self.w {
+                    self.px[(yy * self.w + xx) as usize] = 0;
+                }
+                continue;
+            }
+            // Same corner-rounding distance as rounded_rect: shrink the
+            // in-bounds span near the top and bottom edges.
+            let dy = if ly < r {
+                r - ly
+            } else if ly >= h - r {
+                ly - (h - r - 1)
+            } else {
+                0
+            };
+            let inset = if dy > 0 {
+                let f = (r * r - dy * dy).max(0) as f32;
+                r - f.sqrt().round() as i32
+            } else {
+                0
+            };
+            let lo = x + inset;
+            let hi = x + w - inset;
             for xx in 0..self.w {
+                if xx < lo || xx >= hi {
+                    self.px[(yy * self.w + xx) as usize] = 0;
+                }
+            }
+        }
+    }
+
+    pub fn punch_row(&mut self, y: i32, h: i32) {
+        self.punch_rect(0, y, self.w, h);
+    }
+
+    /// Like `punch_row`, but bounded in x too instead of always spanning the
+    /// full canvas width. Needed where only a narrow column - not an entire
+    /// row - should be erased, e.g. re-cutting a segment gap through a
+    /// narrow "hot core" highlight without also erasing a bloom halo that
+    /// has since spread into the same row further out in x.
+    pub fn punch_rect(&mut self, x: i32, y: i32, w: i32, h: i32) {
+        for yy in y.max(0)..(y + h).min(self.h) {
+            for xx in x.max(0)..(x + w).min(self.w) {
                 self.px[(yy * self.w + xx) as usize] = 0;
             }
         }
@@ -302,6 +362,18 @@ mod tests {
     }
 
     #[test]
+    fn punch_rect_only_clears_its_own_columns() {
+        let mut c = Canvas::new(10, 10);
+        c.fill_rect(0, 0, 10, 10, Rgba::new(255, 255, 255, 255));
+        c.punch_rect(3, 4, 2, 2);
+        assert_eq!(c.get(3, 4), Rgba::TRANSPARENT);
+        assert_eq!(c.get(4, 5), Rgba::TRANSPARENT);
+        assert_eq!(c.get(2, 4), Rgba::new(255, 255, 255, 255), "left of the punched rect survives");
+        assert_eq!(c.get(5, 4), Rgba::new(255, 255, 255, 255), "right of the punched rect survives");
+        assert_eq!(c.get(3, 3), Rgba::new(255, 255, 255, 255), "above the punched rect survives");
+    }
+
+    #[test]
     fn punch_row_clears_a_full_width_band() {
         let mut c = Canvas::new(10, 10);
         c.fill_rect(0, 0, 10, 10, Rgba::new(255, 255, 255, 255));
@@ -331,6 +403,41 @@ mod tests {
         c.rounded_rect(0, 0, -4, 190, 5, Rgba::new(255, 255, 255, 255));
         c.rounded_rect(0, 0, 0, 0, 5, Rgba::new(255, 255, 255, 255));
         assert!(c.bits().iter().all(|&p| p == 0), "no pixels drawn");
+    }
+
+    #[test]
+    fn clip_to_rounded_rect_erases_everything_outside_the_shape() {
+        let mut c = Canvas::new(20, 20);
+        c.fill_rect(0, 0, 20, 20, Rgba::new(255, 255, 255, 255));
+        c.clip_to_rounded_rect(2, 2, 16, 16, 4);
+        assert_eq!(c.get(0, 0), Rgba::TRANSPARENT, "outside the rect entirely");
+        assert_eq!(c.get(2, 2), Rgba::TRANSPARENT, "corner must be cut, matching rounded_rect");
+        assert_eq!(c.get(10, 10), Rgba::new(255, 255, 255, 255), "centre survives");
+        assert_eq!(c.get(2, 10), Rgba::new(255, 255, 255, 255), "left edge (not a corner) survives");
+    }
+
+    #[test]
+    fn clip_to_rounded_rect_matches_what_rounded_rect_would_have_drawn() {
+        // The clip and the draw share the same corner math, so clipping a
+        // fully-lit canvas to (x,y,w,h,r) must reproduce exactly the pixels
+        // rounded_rect(x,y,w,h,r) would have drawn from a blank canvas.
+        let (x, y, w, h, r) = (1, 2, 190 - 2, 60 - 4, 4);
+        let mut drawn = Canvas::new(190, 60);
+        drawn.rounded_rect(x, y, w, h, r, Rgba::new(255, 255, 255, 255));
+
+        let mut clipped = Canvas::new(190, 60);
+        clipped.fill_rect(0, 0, 190, 60, Rgba::new(255, 255, 255, 255));
+        clipped.clip_to_rounded_rect(x, y, w, h, r);
+
+        assert_eq!(drawn.bits(), clipped.bits());
+    }
+
+    #[test]
+    fn clip_to_rounded_rect_on_degenerate_rect_clears_everything() {
+        let mut c = Canvas::new(10, 10);
+        c.fill_rect(0, 0, 10, 10, Rgba::new(255, 255, 255, 255));
+        c.clip_to_rounded_rect(0, 0, -4, 190, 5);
+        assert!(c.bits().iter().all(|&p| p == 0), "degenerate rect clips everything");
     }
 
     #[test]
