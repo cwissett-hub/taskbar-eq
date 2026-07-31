@@ -382,6 +382,20 @@ impl Canvas {
     /// building each scanline's crossing list (they contribute nothing to
     /// parity), and each edge's y-range is treated half-open `[low, high)` so
     /// a vertex shared between two edges is never counted twice.
+    ///
+    /// Consequence of the half-open range: the row at the polygon's lowest y
+    /// (its topmost vertex) is always inclusive, but the row at its highest y
+    /// (its bottommost vertex) is always exclusive - the same "inclusive near
+    /// edge, exclusive far edge" convention `fill_rect(x, y, w, h)` already
+    /// uses (which stops at row `y + h - 1`, not `y + h`). This is why
+    /// `fill_poly` reproduces `fill_rect` pixel-for-pixel when a rectangle is
+    /// authored with corners `(x, y)`..`(x + w, y + h)`: both conventions
+    /// exclude the far edge in the same place. A caller closing a ground fill
+    /// down to the literal bottom of the canvas must therefore place that
+    /// bottom edge at `y = height` (one past the last row), exactly as they
+    /// would size a `fill_rect`'s `h` - placing it at `height - 1` leaves the
+    /// last row unfilled. See
+    /// `fill_poly_flat_bottom_must_close_one_past_the_last_desired_row` below.
     // No production consumer yet - see `line`'s note above.
     #[allow(dead_code)]
     pub fn fill_poly(&mut self, points: &[(i32, i32)], c: Rgba) {
@@ -604,7 +618,10 @@ impl Canvas {
             return;
         }
         for dy in dy0..=dy1 {
-            let half = ((r * r - dy * dy).max(0) as f32).sqrt().round() as i32;
+            // Cast to f32 before squaring - r*r/dy*dy as native i32 multiplication
+            // overflows for |r| beyond roughly 46,340 (sqrt(i32::MAX)). Same class
+            // of bug as radial_gradient's (px - cx) overflow; fixed the same way.
+            let half = ((r as f32 * r as f32 - dy as f32 * dy as f32).max(0.0)).sqrt().round() as i32;
             self.fill_rect(cx - half, cy + dy, half * 2 + 1, 1, c);
         }
     }
@@ -990,6 +1007,32 @@ mod tests {
         assert!(near_base > near_apex, "must be wider near the base ({near_base}) than near the apex ({near_apex})");
     }
 
+    #[test]
+    fn fill_poly_flat_bottom_row_at_the_literal_max_y_is_excluded_matching_fill_rect() {
+        // Documents the half-open convention explicitly: a flat-bottomed
+        // polygon whose bottom vertices sit AT the last row you want filled
+        // (rather than one past it) leaves that literal row unfilled - the
+        // same "exclusive far edge" fill_rect(x, y, w, h) already has (it
+        // stops at row y + h - 1, not y + h). This is not a bug: it is what
+        // makes fill_poly reproduce fill_rect exactly on a rectangle-shaped
+        // polygon (see the test above), which the brief calls out as the
+        // strongest correctness check available for this primitive.
+        let white = Rgba::new(255, 255, 255, 255);
+        let width_at = |c: &Canvas, y: i32| (0..12).filter(|&x| c.get(x, y) == white).count();
+
+        // Base vertices AT y=5 (the last row of a 6-row canvas): row 5 is
+        // excluded, exactly like fill_rect(_, _, _, h=5) would exclude it.
+        let mut at_last_row = Canvas::new(12, 6);
+        at_last_row.fill_poly(&[(0, 5), (10, 5), (5, 0)], white);
+        assert_eq!(width_at(&at_last_row, 5), 0, "the literal max-y row is excluded, same as fill_rect's far edge");
+
+        // Base vertices AT y=6 (one PAST the last desired row): now row 5
+        // is filled, because it is no longer the polygon's own max-y row.
+        let mut one_past = Canvas::new(12, 6);
+        one_past.fill_poly(&[(0, 6), (10, 6), (5, 0)], white);
+        assert!(width_at(&one_past, 5) > 0, "closing one row past the target, like fill_rect's h, fills the target row");
+    }
+
     // ---- vertical_gradient ----
 
     #[test]
@@ -1142,6 +1185,20 @@ mod tests {
         let mut c = Canvas::new(10, 10);
         c.fill_circle(-1_000_000, -1_000_000, 50, white);
         assert!(c.bits().iter().all(|&p| p == 0));
+    }
+
+    #[test]
+    fn fill_circle_huge_radius_does_not_overflow() {
+        // r*r as native i32 multiplication overflows above ~46,340 (sqrt(i32::MAX));
+        // this must go through f32 before squaring, mirroring radial_gradient's
+        // (px - cx) overflow fix. Must not panic, on-canvas rows must still fill.
+        // (fill_circle_rows loops dy over -r..=r, so r itself must stay small enough
+        // to run in a unit test - the point here is exercising the r*r multiply
+        // above the i32 overflow threshold, not an astronomically large radius.)
+        let white = Rgba::new(255, 255, 255, 255);
+        let mut c = Canvas::new(10, 10);
+        c.fill_circle(5, 5, 50_000, white);
+        assert_eq!(c.get(5, 5), white, "centre still filled despite the huge radius");
     }
 
     // ---- clip_outside_rect ----
