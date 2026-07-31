@@ -430,4 +430,36 @@ mod tests {
         Segmented.draw(&mut c, &builtin::vfd_ice(), &frame(0.5));
         std::fs::write("tests/golden/vfd-ice.txt", canvas_to_ascii(&c)).unwrap();
     }
+
+    #[test]
+    fn golden_classic_three_colour_at_high_level() {
+        let mut c = Canvas::new(190, 60);
+        // 0.9 so all three colour zones are lit and visible in the golden.
+        Segmented.draw(&mut c, &crate::themes::builtin::classic_three_colour(), &frame(0.9));
+        let actual = canvas_to_ascii(&c);
+        let expected = include_str!("../../tests/golden/classic-three-colour.txt");
+        assert_eq!(actual, expected, "golden mismatch - regenerate and eyeball the diff");
+    }
+
+    #[test]
+    fn zoned_themes_skip_the_hot_core() {
+        // Real coloured LEDs are flat; a hot core would wash out the zone colour.
+        let mut c = Canvas::new(190, 60);
+        let t = crate::themes::builtin::classic_three_colour();
+        Segmented.draw(&mut c, &t, &frame(1.0));
+        let centre = c.get(first_bar_x() + 2, 20);
+        let edge = c.get(first_bar_x(), 20);
+        assert!(
+            centre.r.abs_diff(edge.r) < 40,
+            "zoned bars must be flat across their width, got centre {centre:?} edge {edge:?}"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn regenerate_classic_golden() {
+        let mut c = Canvas::new(190, 60);
+        Segmented.draw(&mut c, &crate::themes::builtin::classic_three_colour(), &frame(0.9));
+        std::fs::write("tests/golden/classic-three-colour.txt", canvas_to_ascii(&c)).unwrap();
+    }
 }
