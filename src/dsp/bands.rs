@@ -13,6 +13,24 @@ pub const HOP: usize = 512;
 const F_LOW: f32 = 40.0;
 const F_HIGH: f32 = 16_000.0;
 
+// A spectrum display must scale in decibels, not linearly. A full-scale
+// PURE SINE at one bin reads 1.0 under the linear normalisation below, but
+// real music spreads energy across the spectrum, so no bin gets anywhere
+// near full scale - and treble commonly sits 20-40dB below bass for the
+// same perceived loudness. A linear factor cannot claw back tens of dB, so
+// the fix maps magnitude to dB the way a real spectrum analyser does.
+//
+// Anything at or below this floor (dBFS, i.e. relative to the 0dB == full
+// scale reference `norm` establishes) maps to 0.0; 0dB maps to 1.0.
+const DB_FLOOR: f32 = -70.0;
+// Bass-compensating tilt, applied as a dB OFFSET (not a linear multiplier -
+// see above: a linear multiplier can't recover tens of dB of deficit).
+// Music's natural spectral rolloff means bass energy dominates and the
+// treble end of the display would otherwise stay permanently dark even at
+// a realistic listening level. ~0.30dB per band index, over NUM_BANDS - 1
+// = 63 steps, is about +19dB of lift at the top band.
+const TILT_DB_PER_BAND: f32 = 0.30;
+
 pub struct BandMapper {
     fft: Arc<dyn Fft<f32>>,
     window: Vec<f32>,
@@ -75,19 +93,39 @@ impl BandMapper {
         self.fft.process_with_scratch(&mut self.scratch, &mut self.fft_scratch);
 
         // Hann coherent gain is 0.5, so a full-scale sine yields FFT_SIZE/4.
+        // `norm` is chosen so a full-scale, bin-aligned sine reads mag ==
+        // 1.0, i.e. 0dBFS - the reference the dB mapping below is built on.
         let norm = 4.0 / FFT_SIZE as f32;
 
         for b in 0..NUM_BANDS {
             let (lo, hi) = (self.edges[b], self.edges[b + 1]);
-            let mut peak = 0.0f32;
+            let mut mag = 0.0f32;
             for bin in lo..hi.max(lo + 1) {
-                peak = peak.max(self.scratch[bin].norm() * norm);
+                mag = mag.max(self.scratch[bin].norm() * norm);
             }
-            // Bass-weighted tilt: without it low-frequency energy dominates and
-            // the top two-thirds of the display barely moves.
-            let t = b as f32 / (NUM_BANDS - 1) as f32;
-            let tilt = 1.0 + 2.2 * t;
-            out[b] = (peak * tilt).clamp(0.0, 1.0);
+
+            // mag == 0.0 (silence, or a bin with no energy) is handled
+            // explicitly: log10(0) is -inf, and letting that literal -inf
+            // flow into the tilt addition and division below would still
+            // work out to -inf (never NaN), but doing it explicitly makes
+            // the silence case obvious rather than relying on IEEE-754
+            // infinity arithmetic to happen to do the right thing.
+            let db = if mag > 0.0 { 20.0 * mag.log10() } else { f32::NEG_INFINITY };
+
+            // dB-offset bass tilt (see TILT_DB_PER_BAND above) - band 0 gets
+            // +0dB (no offset), the top band gets ~+19dB.
+            let tilted_db = db + TILT_DB_PER_BAND * b as f32;
+
+            // Map [DB_FLOOR, 0dB] onto [0.0, 1.0]. Guard NaN/inf explicitly:
+            // a non-finite value reaching the ballistics smoother poisons
+            // its state permanently (see ballistics.rs::Smoother::update),
+            // so silence (-inf) and any other non-finite result must map to
+            // exactly 0.0, never propagate.
+            out[b] = if tilted_db.is_finite() {
+                ((tilted_db - DB_FLOOR) / -DB_FLOOR).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
         }
         let _ = self.sample_rate;
     }
@@ -161,18 +199,19 @@ mod tests {
         // against a no-op `process` that leaves a zero-initialised `out`
         // untouched, since 0.0 is inside 0.0..=1.0. Exercise the brief's
         // actual normalisation claim so a broken/empty implementation is
-        // caught: band 0 always has tilt == 1.0 (t = 0 / (NUM_BANDS - 1)),
-        // so a full-scale sine placed exactly on band 0's first bin is
-        // untouched by the bass tilt and should read out at very close to
-        // the Hann-coherent-gain-derived amplitude of 1.0 (norm = 4 /
-        // FFT_SIZE is chosen to exactly compensate a Hann window's 0.5
-        // coherent gain for a bin-aligned full-scale sine).
+        // caught: band 0 always gets a 0dB tilt offset (TILT_DB_PER_BAND *
+        // 0 == 0), so a full-scale sine placed exactly on band 0's first
+        // bin is untouched by the bass tilt and should read out at very
+        // close to 1.0 - it sits at 0dBFS (norm = 4 / FFT_SIZE is chosen to
+        // exactly compensate a Hann window's 0.5 coherent gain for a
+        // bin-aligned full-scale sine, so mag == 1.0 there), and 0dBFS maps
+        // to the top of the DB_FLOOR..=0dB range, i.e. 1.0.
         let bin_hz = 48_000.0 / FFT_SIZE as f32;
         let bin_aligned_bin0_freq = m.edges[0] as f32 * bin_hz;
         m.process(&sine(bin_aligned_bin0_freq, 48_000.0, FFT_SIZE), &mut out);
         assert!(
             out[0] > 0.9,
-            "a full-scale, bin-aligned tone in band 0 (tilt == 1.0 there) \
+            "a full-scale, bin-aligned tone in band 0 (0dB tilt offset there) \
              should normalise to close to 1.0; got {}, full output {out:?}",
             out[0]
         );
@@ -195,5 +234,46 @@ mod tests {
         m.process(&sine(1000.0, 44_100.0, FFT_SIZE), &mut out);
         let peak = out.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).unwrap().0;
         assert!(peak.abs_diff(band_of(1000.0)) <= 2);
+    }
+
+    #[test]
+    fn realistic_broadband_music_lights_the_treble_bands() {
+        // Real music isn't one bin-aligned test tone: it spreads energy
+        // across many partials, and treble sits far below bass in level.
+        // Simulate that with several tones spanning bass to treble, scaled
+        // to a realistic listening RMS (0.1 - well below full scale, unlike
+        // the single full-scale sines the other tests use). Linear scaling
+        // (the old, buggy behaviour) cannot make a signal this quiet visible
+        // in the upper bands: a ~20dB-down treble partial needs a ~20dB
+        // (10x) boost, and no linear multiplier in the old code got close
+        // to that. This is the regression test for the measured bug: on
+        // real music the display reached only ~35% height and only the
+        // bottom third of the bars ever lit.
+        let rate = 48_000.0;
+        let freqs = [100.0, 300.0, 1000.0, 3000.0, 8000.0];
+        let mut mix = vec![0.0f32; FFT_SIZE];
+        for &f in &freqs {
+            for (i, s) in mix.iter_mut().enumerate() {
+                *s += (i as f32 / rate * f * std::f32::consts::TAU).sin();
+            }
+        }
+        let rms = (mix.iter().map(|x| x * x).sum::<f32>() / mix.len() as f32).sqrt();
+        let target_rms = 0.1;
+        let scale = target_rms / rms;
+        for s in mix.iter_mut() {
+            *s *= scale;
+        }
+
+        let mut m = BandMapper::new(rate);
+        let mut out = [0.0f32; NUM_BANDS];
+        m.process(&mix, &mut out);
+
+        let treble_max = out[41..].iter().cloned().fold(0.0f32, f32::max);
+        assert!(
+            treble_max > 0.25,
+            "a realistic broadband mix (RMS {target_rms}) should light some band \
+             above index 40 to at least 0.25 - got max {treble_max} in {:?}",
+            &out[41..]
+        );
     }
 }
