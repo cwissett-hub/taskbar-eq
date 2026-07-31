@@ -130,6 +130,16 @@ impl Family for Scope {
             c.draw_over(&glow);
         }
 
+        // The panel above is only inset 1-2px from the canvas edge, but
+        // `Canvas::bloom` only clips at the canvas boundary, not the panel's,
+        // so the halo just composited via `draw_over` can spread past that
+        // thin margin onto the bare transparent/acrylic background outside
+        // the rounded "screen" - exactly the bug already fixed once for
+        // `segmented.rs` (see its own step 7 and `fix-bloom-containment-report.md`).
+        // Must run after the trail/trace composite and before the edge bezel
+        // below, mirroring segmented.rs's fix.
+        c.clip_to_rounded_rect(1, 2, w - 2, h - 4, 4);
+
         let e = Rgba::from_hex(&t.edge, t.edge_alpha);
         c.fill_rect(1, 2, w - 2, 1, e);
         c.fill_rect(1, h - 3, w - 2, 1, e);
@@ -243,6 +253,72 @@ mod tests {
         let mut s2 = Scope::default();
         s2.draw(&mut c, &builtin::p1_green(), &wave(0.5));
         assert!(s2.trail.is_none(), "single-layer phosphors must not allocate a trail");
+    }
+
+    #[test]
+    fn bloom_halo_does_not_leak_outside_the_panel_bezel() {
+        // The panel is `rounded_rect(1, 2, w-2, h-4, 4, ...)`, so its row range
+        // is 2..=57 on a 60px-tall canvas; rows 0-1 and 58-59 sit outside it,
+        // on the bare transparent background. A high bloom radius (p7-dual's
+        // 8) composited with a full-amplitude wave without a clip-back spreads
+        // a visible halo into those rows - the same containment bug fixed once
+        // already for `segmented.rs`. Assert those rows stay fully transparent.
+        let mut s = Scope::default();
+        let mut c = Canvas::new(190, 60);
+        s.draw(&mut c, &builtin::p7_dual(), &wave(1.0));
+        for y in [0, 1, 58, 59] {
+            for x in 0..190 {
+                let p = c.get(x, y);
+                assert_eq!(
+                    p.a, 0,
+                    "row {y} col {x} must stay blank outside the panel bezel, got {p:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn p7_trail_colour_is_distinct_from_its_trace() {
+        // The task requires the trail to be "genuinely distinct" from the
+        // trace, not just present as a second buffer. Read the private
+        // buffers directly (this test module already does so via
+        // `p7_uses_two_buffers_and_the_others_use_one`) and check hue, not
+        // just that both are lit.
+        let mut s = Scope::default();
+        let mut c = Canvas::new(190, 60);
+        s.draw(&mut c, &builtin::p7_dual(), &wave(1.0));
+
+        let trace = s.trace.as_ref().expect("trace buffer must exist");
+        let trail = s.trail.as_ref().expect("P7 must allocate a trail buffer");
+
+        let lit = |buf: &Canvas| -> Option<Rgba> {
+            (0..buf.height())
+                .flat_map(|y| (0..buf.width()).map(move |x| (x, y)))
+                .map(|(x, y)| buf.get(x, y))
+                .find(|p| p.a > 40)
+        };
+
+        let trace_px = lit(trace).expect("trace must have a lit pixel");
+        let trail_px = lit(trail).expect("trail must have a lit pixel");
+
+        // trace is #e8f4ff (blue-white: b >= g >= r); trail is #cfe86a
+        // (yellow-green: g > b > r-ish, definitely g > b). These are cheap,
+        // hue-shape checks rather than exact-value checks, so they survive
+        // small colour tweaks while still catching "trail is just the trace
+        // colour again" (which would fail the trail's `g > b` check).
+        assert!(
+            trace_px.b >= trace_px.g && trace_px.g >= trace_px.r,
+            "trace pixel should read blue-white, got {trace_px:?}"
+        );
+        assert!(
+            trail_px.g > trail_px.b,
+            "trail pixel should read yellow-green (g > b), got {trail_px:?}"
+        );
+        assert_ne!(
+            (trace_px.r, trace_px.g, trace_px.b),
+            (trail_px.r, trail_px.g, trail_px.b),
+            "trail must be a genuinely different colour from the trace"
+        );
     }
 
     #[test]
