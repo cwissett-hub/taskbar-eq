@@ -41,7 +41,11 @@ impl Smoother {
     }
     pub fn update(&mut self, target: &[f32; NUM_BANDS]) {
         for i in 0..NUM_BANDS {
-            let t = target[i].clamp(0.0, 1.0);
+            // f32::clamp does not sanitise NaN (NaN < min and NaN > max are both
+            // false, so clamp returns NaN unchanged). A single non-finite sample
+            // would otherwise poison `levels[i]` permanently, since NaN + x = NaN
+            // and clamp(NaN) = NaN on every subsequent frame.
+            let t = if target[i].is_finite() { target[i] } else { 0.0 }.clamp(0.0, 1.0);
             // Asymmetric one-pole: snap up, ease down.
             let rate = if t > self.levels[i] { self.b.attack } else { self.b.decay };
             self.levels[i] = (self.levels[i] + (t - self.levels[i]) * rate).clamp(0.0, 1.0);
@@ -137,5 +141,29 @@ mod tests {
             s.update(&flat(0.9));
         }
         assert!(s.peaks()[0] > low + 0.4, "peak must track a new maximum");
+    }
+
+    #[test]
+    fn a_single_nan_sample_does_not_poison_the_level_forever() {
+        let mut s = Smoother::new(Ballistics::default());
+        s.update(&flat(0.5));
+        s.update(&flat(f32::NAN));
+        assert!(
+            s.levels().iter().all(|v| v.is_finite()),
+            "a NaN target must not leave levels non-finite, got {:?}",
+            s.levels()
+        );
+        assert!(
+            s.peaks().iter().all(|v| v.is_finite()),
+            "a NaN target must not leave peaks non-finite, got {:?}",
+            s.peaks()
+        );
+
+        // Confirm the poisoning doesn't linger: subsequent normal samples must
+        // still converge, not stay NaN forever.
+        for _ in 0..80 {
+            s.update(&flat(0.7));
+        }
+        assert!((s.levels()[0] - 0.7).abs() < 0.01, "got {}", s.levels()[0]);
     }
 }
