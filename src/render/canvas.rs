@@ -315,11 +315,332 @@ impl Canvas {
             self.px[i] = Self::blend_over(scaled, src[i]);
         }
     }
+
+    /// Shared per-pixel source-over blend for primitives (the line and the
+    /// gradients) that vary colour pixel-by-pixel rather than filling a whole
+    /// span at once with `fill_rect`. Out-of-bounds coordinates are silently
+    /// dropped via `idx`, matching every other primitive's clip-don't-panic
+    /// behaviour.
+    fn blend_px(&mut self, x: i32, y: i32, c: Rgba) {
+        if c.a == 0 {
+            return;
+        }
+        if let Some(i) = self.idx(x, y) {
+            let packed = Self::pack(c);
+            self.px[i] = if c.a == 255 { packed } else { Self::blend_over(self.px[i], packed) };
+        }
+    }
+
+    /// 1px Bresenham line, deliberately without anti-aliasing: the grid
+    /// family snaps coordinates to get crisp lines, and an anti-aliased 1px
+    /// diagonal at 60px tall reads as grey mush. Clips to the canvas rather
+    /// than wrapping - every plotted point goes through `blend_px`'s bounds
+    /// check, so endpoints (or the whole segment) may sit entirely
+    /// off-canvas without panicking.
+    //
+    // No production consumer yet - this is a primitive for the vaporwave
+    // grid family (docs/superpowers/specs/2026-07-31-vaporwave-grid-family-design.md),
+    // which is separate work and must not be wired in here. Exercised by the
+    // unit tests below.
+    #[allow(dead_code)]
+    pub fn line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, c: Rgba) {
+        if c.a == 0 {
+            return;
+        }
+        // i64 for the deltas: x1-x0 can approach i32's full range, and
+        // doubling it for the Bresenham step (2*err) would overflow i32.
+        let (mut x, mut y) = (x0 as i64, y0 as i64);
+        let (x1, y1) = (x1 as i64, y1 as i64);
+        let dx = (x1 - x).abs();
+        let dy = (y1 - y).abs();
+        let sx: i64 = if x1 >= x { 1 } else { -1 };
+        let sy: i64 = if y1 >= y { 1 } else { -1 };
+        let mut err = dx - dy;
+        loop {
+            self.blend_px(x as i32, y as i32, c);
+            if x == x1 && y == y1 {
+                break;
+            }
+            let e2 = 2 * err;
+            if e2 > -dy {
+                err -= dy;
+                x += sx;
+            }
+            if e2 < dx {
+                err += dx;
+                y += sy;
+            }
+        }
+    }
+
+    /// Scanline fill of a closed polygon - the edge from the last point back
+    /// to the first is implicit, so callers do not repeat the first point.
+    /// Uses even-odd parity: everything this ever fills (hidden-line ground
+    /// fills, the sun's body) is a simple, non-self-intersecting polygon, for
+    /// which even-odd and non-zero winding agree, and even-odd is the
+    /// simpler scanline to get right. Horizontal edges are skipped when
+    /// building each scanline's crossing list (they contribute nothing to
+    /// parity), and each edge's y-range is treated half-open `[low, high)` so
+    /// a vertex shared between two edges is never counted twice.
+    // No production consumer yet - see `line`'s note above.
+    #[allow(dead_code)]
+    pub fn fill_poly(&mut self, points: &[(i32, i32)], c: Rgba) {
+        if points.len() < 3 || c.a == 0 {
+            return;
+        }
+        let n = points.len();
+        let miny = points.iter().map(|p| p.1).min().unwrap();
+        let maxy = points.iter().map(|p| p.1).max().unwrap();
+        let y0 = miny.max(0);
+        let y1 = maxy.min(self.h - 1);
+        let mut xs: Vec<i32> = Vec::new();
+        for y in y0..=y1 {
+            xs.clear();
+            for i in 0..n {
+                let (ax, ay) = points[i];
+                let (bx, by) = points[(i + 1) % n];
+                if ay == by {
+                    continue; // horizontal edge: no parity contribution
+                }
+                let (lo, hi, lo_x, hi_x) =
+                    if ay < by { (ay, by, ax, bx) } else { (by, ay, bx, ax) };
+                if y < lo || y >= hi {
+                    continue;
+                }
+                let t = (y - lo) as f32 / (hi - lo) as f32;
+                xs.push((lo_x as f32 + t * (hi_x - lo_x) as f32).round() as i32);
+            }
+            xs.sort_unstable();
+            let mut i = 0;
+            while i + 1 < xs.len() {
+                let x = xs[i];
+                let w = xs[i + 1] - x;
+                if w > 0 {
+                    self.fill_rect(x, y, w, 1, c);
+                }
+                i += 2;
+            }
+        }
+    }
+
+    /// 4x4 Bayer matrix (values 0..16) used to spread quantisation rounding
+    /// across a spatial pattern instead of always rounding the same way.
+    const BAYER_4X4: [[u8; 4]; 4] =
+        [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+
+    /// Per-pixel rounding threshold in (0, 1). With dithering off this is a
+    /// flat 0.5 (plain round-to-nearest); with it on, a 4x4 tile of the Bayer
+    /// matrix gives each pixel its own threshold so a run of pixels that
+    /// would otherwise all quantise to the same flat value instead spreads
+    /// the rounding error into a stipple.
+    fn dither_threshold(ordered_dither: bool, x: i32, y: i32) -> f32 {
+        if !ordered_dither {
+            return 0.5;
+        }
+        let bx = x.rem_euclid(4) as usize;
+        let by = y.rem_euclid(4) as usize;
+        (Self::BAYER_4X4[by][bx] as f32 + 0.5) / 16.0
+    }
+
+    /// Rounds a straight 0.0..=255.0 channel value against `threshold`
+    /// instead of always against 0.5. A value with zero fractional part
+    /// never crosses any threshold in (0, 1), so an exact stop colour is
+    /// unaffected by dithering regardless of this setting - only in-between
+    /// values change.
+    fn quantize_channel(v: f32, threshold: f32) -> u8 {
+        let v = v.clamp(0.0, 255.0);
+        let base = v.floor();
+        let frac = v - base;
+        (if frac >= threshold { base + 1.0 } else { base }).min(255.0) as u8
+    }
+
+    /// Straight-colour-space interpolation across `stops` (positions assumed
+    /// sorted ascending) at `t`, extrapolated flat beyond the first/last
+    /// stop. Returns straight (non-premultiplied) channels as f32 so callers
+    /// can dither before rounding and premultiplying on store - interpolating
+    /// already-premultiplied values would darken the midpoints, since a
+    /// translucent stop's colour would bleed toward black as its own alpha
+    /// shrinks, rather than staying the same hue and fading.
+    fn sample_stops(stops: &[(f32, Rgba)], t: f32) -> (f32, f32, f32, f32) {
+        let as_f32 = |c: Rgba| (c.r as f32, c.g as f32, c.b as f32, c.a as f32);
+        if stops.is_empty() {
+            return (0.0, 0.0, 0.0, 0.0);
+        }
+        if stops.len() == 1 || t <= stops[0].0 {
+            return as_f32(stops[0].1);
+        }
+        let last = stops.len() - 1;
+        if t >= stops[last].0 {
+            return as_f32(stops[last].1);
+        }
+        for i in 0..last {
+            let (p0, c0) = stops[i];
+            let (p1, c1) = stops[i + 1];
+            if t >= p0 && t <= p1 {
+                let (r0, g0, b0, a0) = as_f32(c0);
+                let (r1, g1, b1, a1) = as_f32(c1);
+                let f = (t - p0) / (p1 - p0).max(f32::EPSILON);
+                return (r0 + (r1 - r0) * f, g0 + (g1 - g0) * f, b0 + (b1 - b0) * f, a0 + (a1 - a0) * f);
+            }
+        }
+        as_f32(stops[last].1)
+    }
+
+    /// Fills `[x, x+w) x [y, y+h)` with a vertical gradient through `stops`.
+    /// Interpolated in straight colour space per scanline (see
+    /// `sample_stops`), then premultiplied on store via `blend_px`.
+    ///
+    /// `ordered_dither` breaks up flat quantisation bands with a 4x4 Bayer
+    /// pattern - needed because the vaporwave sky is only ~29px tall across
+    /// 3 stops, which is few enough rows that plain rounding can flatten
+    /// several consecutive rows to the exact same colour (see
+    /// `vertical_gradient_ordered_dither_breaks_up_a_flat_quantisation_band`).
+    // No production consumer yet - see `line`'s note above.
+    #[allow(dead_code)]
+    pub fn vertical_gradient(&mut self, x: i32, y: i32, w: i32, h: i32, stops: &[(f32, Rgba)], ordered_dither: bool) {
+        if w <= 0 || h <= 0 || stops.is_empty() {
+            return;
+        }
+        for row in 0..h {
+            let t = if h == 1 { 0.0 } else { row as f32 / (h - 1) as f32 };
+            let (r, g, b, a) = Self::sample_stops(stops, t);
+            let py = y + row;
+            for col in 0..w {
+                let px = x + col;
+                let th = Self::dither_threshold(ordered_dither, px, py);
+                self.blend_px(
+                    px,
+                    py,
+                    Rgba::new(
+                        Self::quantize_channel(r, th),
+                        Self::quantize_channel(g, th),
+                        Self::quantize_channel(b, th),
+                        Self::quantize_channel(a, th),
+                    ),
+                );
+            }
+        }
+    }
+
+    /// Radial gradient centred at `(cx, cy)`. Pixels at or inside `r_inner`
+    /// take `stops`' first colour exactly; pixels beyond `r_outer` are left
+    /// untouched entirely - not filled with the last stop - so a halo
+    /// genuinely fades to nothing rather than filling its bounding box.
+    /// Between the two radii, position 0.0..=1.0 maps linearly across the
+    /// annulus and is looked up the same way `vertical_gradient` looks up
+    /// `stops`.
+    // No production consumer yet - see `line`'s note above.
+    #[allow(dead_code)]
+    pub fn radial_gradient(&mut self, cx: i32, cy: i32, r_inner: i32, r_outer: i32, stops: &[(f32, Rgba)]) {
+        if r_outer <= 0 || stops.is_empty() {
+            return;
+        }
+        let r_inner = r_inner.max(0) as f32;
+        let r_outer = r_outer as f32;
+        let span = (r_outer - r_inner).max(f32::EPSILON);
+        // `as i32` on a float is a saturating cast (stable since Rust 1.45),
+        // so a centre at an extreme like i32::MIN cannot panic here even
+        // though `cx as f32 - r_outer` may itself be far outside i32's range.
+        let x0 = (cx as f32 - r_outer).floor().max(0.0) as i32;
+        let x1 = ((cx as f32 + r_outer).ceil() as i32).min(self.w - 1);
+        let y0 = (cy as f32 - r_outer).floor().max(0.0) as i32;
+        let y1 = ((cy as f32 + r_outer).ceil() as i32).min(self.h - 1);
+        if x0 > x1 || y0 > y1 {
+            return;
+        }
+        for py in y0..=y1 {
+            for px in x0..=x1 {
+                // Cast to f32 before subtracting, not after: `px - cx` as an
+                // i32 subtraction overflows and panics when cx is near
+                // i32::MIN (0 - i32::MIN does not fit in i32), which a
+                // far-off-canvas centre can genuinely produce.
+                let dx = px as f32 - cx as f32;
+                let dy = py as f32 - cy as f32;
+                let dist = (dx * dx + dy * dy).sqrt();
+                if dist > r_outer {
+                    continue;
+                }
+                let (r, g, b, a) = if dist <= r_inner {
+                    let c = stops[0].1;
+                    (c.r as f32, c.g as f32, c.b as f32, c.a as f32)
+                } else {
+                    Self::sample_stops(stops, ((dist - r_inner) / span).clamp(0.0, 1.0))
+                };
+                self.blend_px(
+                    px,
+                    py,
+                    Rgba::new(
+                        r.clamp(0.0, 255.0).round() as u8,
+                        g.clamp(0.0, 255.0).round() as u8,
+                        b.clamp(0.0, 255.0).round() as u8,
+                        a.clamp(0.0, 255.0).round() as u8,
+                    ),
+                );
+            }
+        }
+    }
+
+    /// Scanline fill of a full disc. `r <= 0` draws nothing; a centre far
+    /// off-canvas draws nothing but does not panic, since each row still
+    /// goes through `fill_rect`'s own clipping.
+    // No production consumer yet - see `line`'s note above.
+    #[allow(dead_code)]
+    pub fn fill_circle(&mut self, cx: i32, cy: i32, r: i32, c: Rgba) {
+        self.fill_circle_rows(cx, cy, r, c, -r, r);
+    }
+
+    /// Scanline fill of the UPPER half only (rows `cy - r ..= cy`), i.e. a
+    /// dome sitting on the horizontal line through the centre. This is the
+    /// shape the sun actually needs, since it sits on the horizon rather
+    /// than floating as a full circle.
+    // No production consumer yet - see `line`'s note above.
+    #[allow(dead_code)]
+    pub fn fill_semicircle_upper(&mut self, cx: i32, cy: i32, r: i32, c: Rgba) {
+        self.fill_circle_rows(cx, cy, r, c, -r, 0);
+    }
+
+    fn fill_circle_rows(&mut self, cx: i32, cy: i32, r: i32, c: Rgba, dy0: i32, dy1: i32) {
+        if r <= 0 {
+            return;
+        }
+        for dy in dy0..=dy1 {
+            let half = ((r * r - dy * dy).max(0) as f32).sqrt().round() as i32;
+            self.fill_rect(cx - half, cy + dy, half * 2 + 1, 1, c);
+        }
+    }
+
+    /// Zeroes everything OUTSIDE the given plain (non-rounded) rect - the
+    /// grid family needs to confine its sky/ground backdrop to the panel.
+    /// Delegates to `clip_to_rounded_rect` at `r = 0`: that function's corner
+    /// inset is only non-zero within `r` rows of the top/bottom edge, so at
+    /// `r = 0` it is always zero and the rounded clip degenerates exactly to
+    /// a plain rect clip - sharing the loop instead of re-deriving it avoids
+    /// the trap `clip_to_rounded_rect` itself exists to prevent: a clip
+    /// shape that doesn't exactly match what was drawn.
+    // No production consumer yet - see `line`'s note above.
+    #[allow(dead_code)]
+    pub fn clip_outside_rect(&mut self, x: i32, y: i32, w: i32, h: i32) {
+        self.clip_to_rounded_rect(x, y, w, h, 0);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Checks the premultiplied invariant against the *stored* (packed)
+    /// pixels via `bits()`, not `get()` - `get()` deliberately unpacks back
+    /// to straight colour (so e.g. 50% white round-trips to r=255, not 128),
+    /// and straight colour has no r<=a relationship to preserve.
+    fn assert_invariant(c: &Canvas, label: &str) {
+        for &p in c.bits() {
+            let (a, r, g, b) = (p >> 24, (p >> 16) & 0xff, (p >> 8) & 0xff, p & 0xff);
+            assert!(
+                r <= a && g <= a && b <= a,
+                "{label} broke the premultiplied invariant: a={a} r={r} g={g} b={b}"
+            );
+        }
+    }
 
     #[test]
     fn new_canvas_is_fully_transparent() {
@@ -507,5 +828,409 @@ mod tests {
         assert!(c.get(10, 10).a > 200, "source stays bright");
         assert!(c.get(12, 10).a > 0, "light spread sideways");
         assert_eq!(c.get(20, 20).a, 0, "but not across the whole canvas");
+    }
+
+    // ---- line ----
+
+    #[test]
+    fn line_draws_a_horizontal_segment() {
+        let mut c = Canvas::new(10, 10);
+        let red = Rgba::new(255, 0, 0, 255);
+        c.line(1, 5, 6, 5, red);
+        for x in 1..=6 {
+            assert_eq!(c.get(x, 5), red, "x={x}");
+        }
+        assert_eq!(c.get(0, 5), Rgba::TRANSPARENT, "left of the segment");
+        assert_eq!(c.get(7, 5), Rgba::TRANSPARENT, "right of the segment");
+    }
+
+    #[test]
+    fn line_draws_a_vertical_segment() {
+        let mut c = Canvas::new(10, 10);
+        let red = Rgba::new(255, 0, 0, 255);
+        c.line(4, 1, 4, 6, red);
+        for y in 1..=6 {
+            assert_eq!(c.get(4, y), red, "y={y}");
+        }
+        assert_eq!(c.get(4, 0), Rgba::TRANSPARENT);
+        assert_eq!(c.get(4, 7), Rgba::TRANSPARENT);
+    }
+
+    #[test]
+    fn line_draws_both_diagonal_directions() {
+        let mut c = Canvas::new(10, 10);
+        let red = Rgba::new(255, 0, 0, 255);
+        c.line(0, 0, 3, 3, red);
+        for i in 0..=3 {
+            assert_eq!(c.get(i, i), red, "down-right diagonal at {i}");
+        }
+
+        let mut c2 = Canvas::new(10, 10);
+        c2.line(3, 0, 0, 3, red);
+        for i in 0..=3 {
+            assert_eq!(c2.get(3 - i, i), red, "down-left diagonal at {i}");
+        }
+    }
+
+    #[test]
+    fn line_single_point_draws_exactly_one_pixel() {
+        let mut c = Canvas::new(10, 10);
+        let red = Rgba::new(255, 0, 0, 255);
+        c.line(5, 5, 5, 5, red);
+        assert_eq!(c.get(5, 5), red);
+        let lit = c.bits().iter().filter(|&&p| p != 0).count();
+        assert_eq!(lit, 1, "exactly one pixel must be touched");
+    }
+
+    #[test]
+    fn line_clips_a_segment_that_crosses_the_canvas_without_panicking() {
+        let mut c = Canvas::new(10, 10);
+        let red = Rgba::new(255, 0, 0, 255);
+        // Both endpoints are off-canvas but the diagonal passes through it.
+        c.line(-5, -5, 15, 15, red);
+        for i in 0..10 {
+            assert_eq!(c.get(i, i), red, "diagonal should still cross the visible canvas at {i}");
+        }
+    }
+
+    #[test]
+    fn line_entirely_offcanvas_draws_nothing_and_does_not_panic() {
+        let mut c = Canvas::new(10, 10);
+        let red = Rgba::new(255, 0, 0, 255);
+        c.line(-20, -20, -5, -5, red);
+        assert!(c.bits().iter().all(|&p| p == 0), "nothing on-canvas to draw");
+    }
+
+    #[test]
+    fn line_produces_a_connected_run_for_a_shallow_diagonal() {
+        let mut c = Canvas::new(12, 5);
+        let red = Rgba::new(255, 0, 0, 255);
+        c.line(0, 0, 10, 3, red);
+        let mut ys = Vec::new();
+        for x in 0..=10 {
+            let mut hit = None;
+            for y in 0..5 {
+                if c.get(x, y) == red {
+                    assert!(hit.is_none(), "more than one lit pixel in column {x}");
+                    hit = Some(y);
+                }
+            }
+            ys.push(hit.unwrap_or_else(|| panic!("no gap allowed: column {x} has no lit pixel")));
+        }
+        for i in 1..ys.len() {
+            let step = (ys[i] - ys[i - 1]).abs();
+            assert!(step <= 1, "gap between column {} and {}: y jumped by {}", i - 1, i, step);
+        }
+    }
+
+    // ---- fill_poly ----
+
+    #[test]
+    fn fill_poly_matches_fill_rect_on_a_rectangle_shaped_polygon() {
+        let white = Rgba::new(255, 255, 255, 255);
+        let mut drawn = Canvas::new(20, 20);
+        drawn.fill_rect(3, 4, 10, 8, white);
+
+        let mut polyed = Canvas::new(20, 20);
+        polyed.fill_poly(&[(3, 4), (13, 4), (13, 12), (3, 12)], white);
+
+        assert_eq!(drawn.bits(), polyed.bits());
+    }
+
+    #[test]
+    fn fill_poly_with_fewer_than_three_points_draws_nothing() {
+        let white = Rgba::new(255, 255, 255, 255);
+        for pts in [vec![], vec![(1, 1)], vec![(1, 1), (5, 5)]] {
+            let mut c = Canvas::new(10, 10);
+            c.fill_poly(&pts, white);
+            assert!(c.bits().iter().all(|&p| p == 0), "{} points must draw nothing", pts.len());
+        }
+    }
+
+    #[test]
+    fn fill_poly_fills_a_concave_l_shape_correctly() {
+        // (0,0)-(6,0)-(6,3)-(3,3)-(3,6)-(0,6): an L, concave at (3,3).
+        let white = Rgba::new(255, 255, 255, 255);
+        let mut c = Canvas::new(10, 10);
+        c.fill_poly(&[(0, 0), (6, 0), (6, 3), (3, 3), (3, 6), (0, 6)], white);
+        assert_eq!(c.get(5, 1), white, "inside the bottom bar of the L");
+        assert_eq!(c.get(1, 4), white, "inside the left bar of the L");
+        assert_eq!(c.get(5, 4), Rgba::TRANSPARENT, "inside the notch - must stay empty");
+    }
+
+    #[test]
+    fn fill_poly_entirely_offcanvas_does_not_panic() {
+        let white = Rgba::new(255, 255, 255, 255);
+        let mut c = Canvas::new(10, 10);
+        c.fill_poly(&[(-50, -50), (-40, -50), (-40, -40), (-50, -40)], white);
+        assert!(c.bits().iter().all(|&p| p == 0));
+    }
+
+    #[test]
+    fn fill_poly_clips_a_polygon_that_straddles_the_canvas_edge() {
+        let white = Rgba::new(255, 255, 255, 255);
+        let mut c = Canvas::new(10, 10);
+        c.fill_poly(&[(-5, -5), (5, -5), (5, 5), (-5, 5)], white);
+        assert_eq!(c.get(0, 0), white, "the overlapping corner is filled");
+        assert_eq!(c.get(9, 9), Rgba::TRANSPARENT, "far corner is outside the polygon");
+    }
+
+    #[test]
+    fn fill_poly_handles_a_triangle_with_a_horizontal_base_without_double_filling() {
+        // Apex at the top, horizontal base at the bottom - the base edge is
+        // skipped as a crossing, so the fill must come entirely from the two
+        // slanted sides and should narrow strictly toward the apex.
+        let white = Rgba::new(255, 255, 255, 255);
+        let mut c = Canvas::new(12, 6);
+        c.fill_poly(&[(0, 5), (10, 5), (5, 0)], white);
+        let width_at = |c: &Canvas, y: i32| (0..12).filter(|&x| c.get(x, y) == white).count();
+        let near_apex = width_at(&c, 1);
+        let near_base = width_at(&c, 4);
+        assert!(near_apex > 0, "must draw something near the apex");
+        assert!(near_base > near_apex, "must be wider near the base ({near_base}) than near the apex ({near_apex})");
+    }
+
+    // ---- vertical_gradient ----
+
+    #[test]
+    fn vertical_gradient_hits_exact_endpoint_colours() {
+        let top = Rgba::new(0xff, 0xf6, 0xd0, 255);
+        let bottom = Rgba::new(0xff, 0x5f, 0x93, 255);
+        let mut c = Canvas::new(5, 29);
+        c.vertical_gradient(0, 0, 5, 29, &[(0.0, top), (1.0, bottom)], false);
+        assert_eq!(c.get(2, 0), top, "position 0.0 must be exact");
+        assert_eq!(c.get(2, 28), bottom, "position 1.0 must be exact");
+    }
+
+    #[test]
+    fn vertical_gradient_middle_stop_lands_near_its_authored_position() {
+        let top = Rgba::new(0xff, 0xf6, 0xd0, 255);
+        let mid = Rgba::new(0xff, 0xd7, 0x6e, 255);
+        let bottom = Rgba::new(0xff, 0x5f, 0x93, 255);
+        let mut c = Canvas::new(1, 29);
+        c.vertical_gradient(0, 0, 1, 29, &[(0.0, top), (0.35, mid), (1.0, bottom)], false);
+        let row = (0.35f32 * 28.0).round() as i32;
+        let got = c.get(0, row);
+        assert!(
+            (got.g as i32 - mid.g as i32).abs() <= 2,
+            "row {row} (t=0.35) should be close to the middle stop, got {got:?}"
+        );
+    }
+
+    #[test]
+    fn vertical_gradient_respects_bounds_and_leaves_the_rest_transparent() {
+        let mut c = Canvas::new(10, 10);
+        c.vertical_gradient(2, 2, 4, 4, &[(0.0, Rgba::new(255, 255, 255, 255)), (1.0, Rgba::new(0, 0, 0, 255))], false);
+        assert_eq!(c.get(0, 0), Rgba::TRANSPARENT, "outside the rect");
+        assert_eq!(c.get(2, 2), Rgba::new(255, 255, 255, 255));
+    }
+
+    #[test]
+    fn vertical_gradient_ordered_dither_breaks_up_a_flat_quantisation_band() {
+        let stops = [(0.0, Rgba::new(0, 0, 0, 255)), (1.0, Rgba::new(255, 0, 0, 255))];
+
+        let mut flat = Canvas::new(4, 3);
+        flat.vertical_gradient(0, 0, 4, 3, &stops, false);
+        let row: Vec<u8> = (0..4).map(|x| flat.get(x, 1).r).collect();
+        assert_eq!(row, vec![128, 128, 128, 128], "without dithering row 1 quantises flat");
+
+        let mut dithered = Canvas::new(4, 3);
+        dithered.vertical_gradient(0, 0, 4, 3, &stops, true);
+        let row: Vec<u8> = (0..4).map(|x| dithered.get(x, 1).r).collect();
+        assert!(
+            row.iter().any(|&v| v != row[0]),
+            "with dithering row 1 must not be perfectly flat, got {row:?}"
+        );
+    }
+
+    #[test]
+    fn vertical_gradient_never_breaks_the_premultiplied_invariant() {
+        let translucent = Rgba::new(255, 10, 200, 40);
+        let mut c = Canvas::new(20, 20);
+        c.vertical_gradient(-5, -5, 30, 30, &[(0.0, translucent), (1.0, Rgba::new(0, 0, 0, 10))], true);
+        assert_invariant(&c, "vertical_gradient");
+    }
+
+    // ---- radial_gradient ----
+
+    #[test]
+    fn radial_gradient_hits_first_stop_exactly_inside_r_inner() {
+        let inner_c = Rgba::new(255, 255, 200, 255);
+        let outer_c = Rgba::new(50, 0, 0, 255);
+        let mut c = Canvas::new(40, 40);
+        c.radial_gradient(20, 20, 3, 15, &[(0.0, inner_c), (1.0, outer_c)]);
+        assert_eq!(c.get(20, 20), inner_c, "centre is inside r_inner");
+        assert_eq!(c.get(22, 20), inner_c, "distance 2 <= r_inner=3");
+    }
+
+    #[test]
+    fn radial_gradient_hits_last_stop_exactly_at_r_outer() {
+        let inner_c = Rgba::new(255, 255, 200, 255);
+        let outer_c = Rgba::new(50, 0, 0, 255);
+        let mut c = Canvas::new(40, 40);
+        c.radial_gradient(20, 20, 3, 15, &[(0.0, inner_c), (1.0, outer_c)]);
+        assert_eq!(c.get(35, 20), outer_c, "exactly at r_outer along the x axis");
+    }
+
+    #[test]
+    fn radial_gradient_draws_nothing_beyond_r_outer_not_the_last_stop() {
+        let inner_c = Rgba::new(255, 255, 200, 255);
+        let outer_c = Rgba::new(50, 0, 0, 255);
+        let mut c = Canvas::new(40, 40);
+        c.radial_gradient(20, 20, 3, 15, &[(0.0, inner_c), (1.0, outer_c)]);
+        assert_eq!(c.get(39, 39), Rgba::TRANSPARENT, "outside r_outer must stay untouched, not filled with outer_c");
+    }
+
+    #[test]
+    fn radial_gradient_centre_far_offcanvas_does_not_panic() {
+        let mut c = Canvas::new(10, 10);
+        c.radial_gradient(-100_000, -100_000, 3, 15, &[(0.0, Rgba::new(255, 255, 255, 255)), (1.0, Rgba::new(0, 0, 0, 255))]);
+        assert!(c.bits().iter().all(|&p| p == 0), "no overlap with the canvas");
+
+        let mut c2 = Canvas::new(10, 10);
+        c2.radial_gradient(i32::MIN, i32::MIN, 3, i32::MAX, &[(0.0, Rgba::new(255, 255, 255, 255))]);
+        // Must not panic; overlap behaviour is unspecified at this extreme.
+        let _ = c2.bits();
+    }
+
+    #[test]
+    fn radial_gradient_never_breaks_the_premultiplied_invariant() {
+        let translucent = Rgba::new(255, 10, 200, 40);
+        let mut c = Canvas::new(40, 40);
+        c.radial_gradient(20, 20, -10, 100, &[(0.0, translucent), (1.0, Rgba::new(0, 0, 0, 10))]);
+        assert_invariant(&c, "radial_gradient");
+    }
+
+    // ---- fill_circle / fill_semicircle_upper ----
+
+    #[test]
+    fn fill_circle_draws_a_symmetric_disc() {
+        let white = Rgba::new(255, 255, 255, 255);
+        let mut c = Canvas::new(21, 21);
+        c.fill_circle(10, 10, 5, white);
+        assert_eq!(c.get(10, 10), white, "centre");
+        assert_eq!(c.get(10, 5), white, "top of the disc");
+        assert_eq!(c.get(10, 15), white, "bottom of the disc");
+        assert_eq!(c.get(5, 10), white, "left of the disc");
+        assert_eq!(c.get(15, 10), white, "right of the disc");
+        assert_eq!(c.get(10, 0), Rgba::TRANSPARENT, "well outside the disc");
+    }
+
+    #[test]
+    fn fill_circle_non_positive_radius_draws_nothing() {
+        let white = Rgba::new(255, 255, 255, 255);
+        for r in [0, -1, -100] {
+            let mut c = Canvas::new(10, 10);
+            c.fill_circle(5, 5, r, white);
+            assert!(c.bits().iter().all(|&p| p == 0), "r={r} must draw nothing");
+        }
+    }
+
+    #[test]
+    fn fill_semicircle_upper_only_fills_the_top_half() {
+        let white = Rgba::new(255, 255, 255, 255);
+        let mut c = Canvas::new(21, 21);
+        c.fill_semicircle_upper(10, 10, 5, white);
+        assert_eq!(c.get(10, 6), white, "above centre, inside the dome");
+        assert_eq!(c.get(10, 10), white, "the diameter row itself is included");
+        assert_eq!(c.get(10, 14), Rgba::TRANSPARENT, "below centre must stay empty");
+    }
+
+    #[test]
+    fn fill_circle_centre_far_offcanvas_does_not_panic() {
+        let white = Rgba::new(255, 255, 255, 255);
+        let mut c = Canvas::new(10, 10);
+        c.fill_circle(-1_000_000, -1_000_000, 50, white);
+        assert!(c.bits().iter().all(|&p| p == 0));
+    }
+
+    // ---- clip_outside_rect ----
+
+    #[test]
+    fn clip_outside_rect_zeroes_everything_outside_but_keeps_corners() {
+        let white = Rgba::new(255, 255, 255, 255);
+        let mut c = Canvas::new(10, 10);
+        c.fill_rect(0, 0, 10, 10, white);
+        c.clip_outside_rect(2, 2, 4, 4);
+        assert_eq!(c.get(0, 0), Rgba::TRANSPARENT, "outside the rect");
+        assert_eq!(c.get(2, 2), white, "unlike a rounded clip, the plain corner survives");
+        assert_eq!(c.get(5, 5), white, "still inside the rect - x,y in [2,6) x [2,6)");
+        assert_eq!(c.get(6, 6), Rgba::TRANSPARENT, "just past the rect's far edge");
+    }
+
+    #[test]
+    fn clip_outside_rect_matches_what_fill_rect_would_have_drawn() {
+        let white = Rgba::new(255, 255, 255, 255);
+        let (x, y, w, h) = (3, 4, 10, 8);
+        let mut drawn = Canvas::new(20, 20);
+        drawn.fill_rect(x, y, w, h, white);
+
+        let mut clipped = Canvas::new(20, 20);
+        clipped.fill_rect(0, 0, 20, 20, white);
+        clipped.clip_outside_rect(x, y, w, h);
+
+        assert_eq!(drawn.bits(), clipped.bits());
+    }
+
+    // ---- cross-primitive invariant sweep, per the task's "extreme inputs" requirement ----
+
+    #[test]
+    fn every_new_primitive_preserves_the_premultiplied_invariant_at_extreme_inputs() {
+        let translucent = Rgba::new(255, 10, 200, 40);
+
+        let mut c = Canvas::new(40, 40);
+        c.line(-5, -5, 45, 45, translucent);
+        assert_invariant(&c, "line");
+
+        let mut c = Canvas::new(40, 40);
+        c.fill_poly(&[(-5, -5), (45, -5), (45, 45), (-5, 45)], translucent);
+        assert_invariant(&c, "fill_poly");
+
+        let mut c = Canvas::new(40, 40);
+        c.fill_circle(20, 20, 1000, translucent);
+        assert_invariant(&c, "fill_circle");
+
+        let mut c = Canvas::new(40, 40);
+        c.fill_semicircle_upper(20, 20, 1000, translucent);
+        assert_invariant(&c, "fill_semicircle_upper");
+    }
+
+    // Diagnostic only, like `sweep_edge_glow`/`sweep_glow_strength` below in
+    // this crate - not a pinned golden, does not run in `cargo test`. Renders
+    // the real vaporwave-sky shape (3 stops, ~29 rows of a 190-wide, 60-tall
+    // canvas) with and without ordered dithering and dumps both to stdout,
+    // which is how the "is dithering needed at this size" call in the task
+    // report was actually made rather than assumed. Run with
+    // `cargo test canvas::tests::render_sky_gradient_for_visual_inspection -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn render_sky_gradient_for_visual_inspection() {
+        let stops = [
+            (0.0, Rgba::new(0xff, 0xf6, 0xd0, 255)),
+            (0.35, Rgba::new(0xff, 0xd7, 0x6e, 255)),
+            (1.0, Rgba::new(0xff, 0x5f, 0x93, 255)),
+        ];
+        let horizon = (60.0f32 * 0.48).round() as i32; // 29
+        for (label, dither) in [("WITHOUT dithering", false), ("WITH ordered dithering", true)] {
+            let mut c = Canvas::new(190, 60);
+            c.vertical_gradient(0, 0, 190, horizon, &stops, dither);
+            println!("--- sky gradient, {label} ({horizon} rows) ---");
+            print!("{}", super::super::golden::canvas_to_ascii(&c));
+            let mut prev: Option<Rgba> = None;
+            let mut max_run = 1;
+            let mut run = 1;
+            for row in 0..horizon {
+                let p = c.get(0, row);
+                if Some(p) == prev {
+                    run += 1;
+                    max_run = max_run.max(run);
+                } else {
+                    run = 1;
+                }
+                prev = Some(p);
+                println!("row {row:2}: {p:?}");
+            }
+            println!("longest run of identical consecutive rows: {max_run}");
+        }
     }
 }
