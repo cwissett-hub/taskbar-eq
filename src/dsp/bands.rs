@@ -22,14 +22,64 @@ const F_HIGH: f32 = 16_000.0;
 //
 // Anything at or below this floor (dBFS, i.e. relative to the 0dB == full
 // scale reference `norm` establishes) maps to 0.0; 0dB maps to 1.0.
-const DB_FLOOR: f32 = -70.0;
+//
+// Recalibrated (was -70.0): -70dB compressed so much of the usable range
+// into "looks lit" territory that ordinary listening levels already read
+// close to full - measured against synthetic broadband signals at RMS
+// 0.02/0.06/0.2 ("quiet"/"normal"/"loud"), -70dB put "normal"'s median
+// around 0.5-0.55 and "quiet" around 0.3-0.4, nowhere near quiet enough to
+// look quiet. Tightening the floor doesn't change WHEN a band saturates
+// (out reaches 1.0 exactly at tilted_db == 0, regardless of the floor -
+// only TILT_DB_PER_BAND controls that threshold, see below); it changes
+// how much of the display lights up on the way there, so moderate energy
+// no longer looks like a peak. -55dB puts "normal" at a median of ~0.35
+// and "quiet" at ~0.18 - inside the brief's 0.30-0.45 / clearly-lower
+// targets - while a genuinely loud transient can still ride up into
+// 0.9-1.0.
+const DB_FLOOR: f32 = -55.0;
 // Bass-compensating tilt, applied as a dB OFFSET (not a linear multiplier -
 // see above: a linear multiplier can't recover tens of dB of deficit).
 // Music's natural spectral rolloff means bass energy dominates and the
 // treble end of the display would otherwise stay permanently dark even at
-// a realistic listening level. ~0.30dB per band index, over NUM_BANDS - 1
-// = 63 steps, is about +19dB of lift at the top band.
-const TILT_DB_PER_BAND: f32 = 0.30;
+// a realistic listening level.
+//
+// Recalibrated (was 0.30, i.e. ~+19dB of lift at the top band): a band
+// saturates (`db_map` clamps to 1.0) exactly when db >= -TILT_DB_PER_BAND *
+// band, so the tilt alone sets the saturation threshold - independent of
+// DB_FLOOR above. At the old 0.30, band 63 pegged at any -18.9dB (mag >=
+// 0.11), which real broadband/percussive content reaches easily; that's
+// the arithmetic root of the "every band pegged" bug. 0.20 (+12.6dB at the
+// top band, mag >= 0.23 to saturate) still comfortably keeps the treble
+// guard test's mix visible (band 41+ reaches ~0.76, versus the >0.25 the
+// old darkness bug needed to be excluded) while roughly halving how easily
+// the top bands saturate on real broadband energy.
+const TILT_DB_PER_BAND: f32 = 0.20;
+
+/// Magnitude -> dB -> bass-tilted -> normalised 0..=1, for one band.
+fn db_map(mag: f32, band: usize) -> f32 {
+    // mag == 0.0 (silence, or a bin with no energy) is handled explicitly:
+    // log10(0) is -inf, and letting that literal -inf flow into the tilt
+    // addition and division below would still work out to -inf (never
+    // NaN), but doing it explicitly makes the silence case obvious rather
+    // than relying on IEEE-754 infinity arithmetic to happen to do the
+    // right thing.
+    let db = if mag > 0.0 { 20.0 * mag.log10() } else { f32::NEG_INFINITY };
+
+    // dB-offset bass tilt (see TILT_DB_PER_BAND above) - band 0 gets +0dB
+    // (no offset), the top band gets the full tilt.
+    let tilted_db = db + TILT_DB_PER_BAND * band as f32;
+
+    // Map [DB_FLOOR, 0dB] onto [0.0, 1.0]. Guard NaN/inf explicitly: a
+    // non-finite value reaching the ballistics smoother poisons its state
+    // permanently (see ballistics.rs::Smoother::update), so silence
+    // (-inf) and any other non-finite result must map to exactly 0.0,
+    // never propagate.
+    if tilted_db.is_finite() {
+        ((tilted_db - DB_FLOOR) / -DB_FLOOR).clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
 
 pub struct BandMapper {
     fft: Arc<dyn Fft<f32>>,
@@ -85,6 +135,18 @@ impl BandMapper {
     ///
     /// Panics (in both debug and release builds) if `mono.len() != FFT_SIZE`.
     pub fn process(&mut self, mono: &[f32], out: &mut [f32; NUM_BANDS]) {
+        let mags = self.band_magnitudes(mono);
+        for b in 0..NUM_BANDS {
+            out[b] = db_map(mags[b], b);
+        }
+        let _ = self.sample_rate;
+    }
+
+    /// FFT + per-band peak-magnitude extraction only, with no dB mapping.
+    /// Split out from [`Self::process`] so the two concerns (FFT ->
+    /// per-band magnitude, and magnitude -> displayed level) can be
+    /// reasoned about and tested independently.
+    fn band_magnitudes(&mut self, mono: &[f32]) -> [f32; NUM_BANDS] {
         assert_eq!(mono.len(), FFT_SIZE, "BandMapper::process requires exactly FFT_SIZE samples");
 
         for i in 0..FFT_SIZE {
@@ -97,37 +159,16 @@ impl BandMapper {
         // 1.0, i.e. 0dBFS - the reference the dB mapping below is built on.
         let norm = 4.0 / FFT_SIZE as f32;
 
+        let mut mags = [0.0f32; NUM_BANDS];
         for b in 0..NUM_BANDS {
             let (lo, hi) = (self.edges[b], self.edges[b + 1]);
             let mut mag = 0.0f32;
             for bin in lo..hi.max(lo + 1) {
                 mag = mag.max(self.scratch[bin].norm() * norm);
             }
-
-            // mag == 0.0 (silence, or a bin with no energy) is handled
-            // explicitly: log10(0) is -inf, and letting that literal -inf
-            // flow into the tilt addition and division below would still
-            // work out to -inf (never NaN), but doing it explicitly makes
-            // the silence case obvious rather than relying on IEEE-754
-            // infinity arithmetic to happen to do the right thing.
-            let db = if mag > 0.0 { 20.0 * mag.log10() } else { f32::NEG_INFINITY };
-
-            // dB-offset bass tilt (see TILT_DB_PER_BAND above) - band 0 gets
-            // +0dB (no offset), the top band gets ~+19dB.
-            let tilted_db = db + TILT_DB_PER_BAND * b as f32;
-
-            // Map [DB_FLOOR, 0dB] onto [0.0, 1.0]. Guard NaN/inf explicitly:
-            // a non-finite value reaching the ballistics smoother poisons
-            // its state permanently (see ballistics.rs::Smoother::update),
-            // so silence (-inf) and any other non-finite result must map to
-            // exactly 0.0, never propagate.
-            out[b] = if tilted_db.is_finite() {
-                ((tilted_db - DB_FLOOR) / -DB_FLOOR).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
+            mags[b] = mag;
         }
-        let _ = self.sample_rate;
+        mags
     }
 }
 
@@ -234,6 +275,116 @@ mod tests {
         m.process(&sine(1000.0, 44_100.0, FFT_SIZE), &mut out);
         let peak = out.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).unwrap().0;
         assert!(peak.abs_diff(band_of(1000.0)) <= 2);
+    }
+
+    /// Synthesise a broadband signal with a caller-chosen dB/octave tilt
+    /// (dense random-phase partials shaped via an FFT, not a handful of
+    /// bin-aligned test tones) and scale it to a target overall RMS.
+    fn broadband_signal(rate: f32, n: usize, target_rms: f32, db_per_octave: f32, seed: u64) -> Vec<f32> {
+        // Real percussive/broadband content (cymbals, hi-hats, distortion,
+        // brickwall-limited masters) is much closer to filtered NOISE than
+        // to a handful of clean discrete tones: every bin in a band's range
+        // carries its own random amount of energy. That distinction matters
+        // a lot here because `BandMapper::process` takes the MAX bin within
+        // a band's range, not an average or sum - so a wide high band built
+        // from many independently-random bins can produce a much higher
+        // peak than a smooth deterministic envelope would suggest, purely
+        // from picking the max of many samples (an extreme-value effect).
+        // So: shape genuine white noise in the frequency domain (random
+        // magnitude AND phase per bin) rather than summing a few dozen
+        // clean sines, to exercise that max-of-many-bins behaviour
+        // faithfully.
+        let mut state = seed | 1;
+        let mut next_u = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            ((state >> 11) as f64 / (1u64 << 53) as f64) as f32
+        };
+
+        let mut planner = FftPlanner::<f32>::new();
+        let fwd = planner.plan_fft_forward(n);
+        let inv = planner.plan_fft_inverse(n);
+        let scratch_len = fwd.get_inplace_scratch_len().max(inv.get_inplace_scratch_len());
+        let mut scratch = vec![Complex32::new(0.0, 0.0); scratch_len];
+
+        // Gaussian white noise via Box-Muller.
+        let mut buf: Vec<Complex32> = (0..n)
+            .map(|_| {
+                let u1 = next_u().max(1e-9);
+                let u2 = next_u();
+                let r = (-2.0 * u1.ln()).sqrt();
+                Complex32::new(r * (u2 * std::f32::consts::TAU).cos(), 0.0)
+            })
+            .collect();
+        fwd.process_with_scratch(&mut buf, &mut scratch);
+
+        // Shape the spectrum: zero outside the display's frequency range
+        // (real music's energy budget is overwhelmingly inside it too),
+        // apply the caller-chosen dB/octave tilt inside it. Bins above
+        // Nyquist mirror the negative-frequency bin's magnitude, so use the
+        // mirrored frequency for those.
+        let bin_hz = rate / n as f32;
+        for (bin, c) in buf.iter_mut().enumerate() {
+            let f = bin as f32 * bin_hz;
+            let f = if f > rate / 2.0 { rate - f } else { f };
+            let env = if f < F_LOW || f > F_HIGH {
+                0.0
+            } else {
+                let octaves_above_low = (f / F_LOW).log2();
+                10f32.powf(db_per_octave * octaves_above_low / 20.0)
+            };
+            *c *= env;
+        }
+
+        inv.process_with_scratch(&mut buf, &mut scratch);
+        // rustfft's inverse is unnormalised (scales amplitude by n).
+        let mut mix: Vec<f32> = buf.iter().map(|c| c.re / n as f32).collect();
+
+        let rms = (mix.iter().map(|x| x * x).sum::<f32>() / mix.len() as f32).sqrt();
+        let scale = if rms > 0.0 { target_rms / rms } else { 0.0 };
+        for s in mix.iter_mut() {
+            *s *= scale;
+        }
+        mix
+    }
+
+    /// Regression test for the reported bug: a loud, heavily brickwall
+    /// -limited/clipped broadband passage (RMS 1.2, clamped to the valid
+    /// [-1,1] PCM range - this models the "loudness war" mastering that
+    /// routinely clips real commercial tracks on purpose, not an
+    /// impossible signal) must not read as a solid saturated block.
+    ///
+    /// The brief this fix responds to asked for "fewer than a third of the
+    /// bands exceed 0.95". Measurement (see the fix report) shows that
+    /// bound is unreachable by ANY valid-amplitude PCM signal under this
+    /// formula shape - `BandMapper` takes the peak bin within each band's
+    /// range, and Parseval's theorem caps how much per-bin magnitude a
+    /// bounded signal can spread across the hundreds of bins the upper
+    /// bands span; even driving this exact signal into much heavier
+    /// clipping never crosses ~10-12 of 64 bands. So this test uses the
+    /// strongest bound that is actually achievable and still discriminates
+    /// the bug: the old constants (DB_FLOOR = -70.0, TILT_DB_PER_BAND =
+    /// 0.30) peg 8 of 64 bands on this exact signal; the recalibrated
+    /// constants peg 0, with wide margin even at higher RMS. `NUM_BANDS /
+    /// 8` keeps that margin as a round, generous number rather than
+    /// hard-coding the measured "0".
+    #[test]
+    fn loud_broadband_signal_does_not_peg_the_display() {
+        let rate = 48_000.0;
+        let raw = broadband_signal(rate, FFT_SIZE, 1.2, 0.0, 0xBEEF);
+        let sig: Vec<f32> = raw.iter().map(|&s| s.clamp(-1.0, 1.0)).collect();
+
+        let mut m = BandMapper::new(rate);
+        let mut out = [0.0f32; NUM_BANDS];
+        m.process(&sig, &mut out);
+
+        let pegged = out.iter().filter(|&&v| v >= 0.95).count();
+        assert!(
+            pegged < NUM_BANDS / 8,
+            "a loud broadband passage should not read as a solid block of pegged \
+             bands - got {pegged}/{NUM_BANDS} bands >= 0.95: {out:?}"
+        );
     }
 
     #[test]
