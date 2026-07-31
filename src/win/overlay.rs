@@ -21,6 +21,22 @@ pub struct Overlay {
     hwnd: HWND,
 }
 
+/// Guarantees `DeleteDC` runs exactly once no matter which path `show()`
+/// exits through, including an early `?` return from `CreateDIBSection`
+/// that happens before the DIB/UpdateLayeredWindow cleanup block below.
+/// Without this, a failing `CreateDIBSection` call leaks one GDI HDC per
+/// `show()` call - `show()` runs every display tick, so this compounds
+/// toward the ~10,000-handle per-process GDI quota.
+struct DcGuard(HDC);
+
+impl Drop for DcGuard {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = DeleteDC(self.0);
+        }
+    }
+}
+
 impl Overlay {
     pub fn new() -> Result<Self> {
         unsafe {
@@ -60,6 +76,10 @@ impl Overlay {
         unsafe {
             let screen_dc = HDC::default();
             let mem_dc = CreateCompatibleDC(Some(screen_dc));
+            // Owns DeleteDC(mem_dc) for the rest of this function. Declared
+            // before anything fallible below so its Drop still runs when the
+            // CreateDIBSection `?` bails out early.
+            let _mem_dc_guard = DcGuard(mem_dc);
 
             let bi = BITMAPINFO {
                 bmiHeader: BITMAPINFOHEADER {
@@ -129,7 +149,9 @@ impl Overlay {
 
             SelectObject(mem_dc, old);
             let _ = DeleteObject(dib.into());
-            let _ = DeleteDC(mem_dc);
+            // mem_dc itself is deleted by `_mem_dc_guard`'s Drop below, which
+            // runs on this return and on the CreateDIBSection early-return
+            // above alike.
             r?;
             Ok(())
         }
