@@ -18,7 +18,11 @@ impl Rgba {
     /// are user-authored and must never crash the app.
     pub fn from_hex(hex: &str, alpha: f32) -> Self {
         let h = hex.trim_start_matches('#');
-        if h.len() != 6 {
+        // Require ASCII before trusting byte-offset slicing below: len() is a
+        // byte count, and a non-ASCII (multi-byte UTF-8) string could have
+        // exactly 6 bytes while landing the h[i..i+2] slices off a char
+        // boundary, which panics rather than falling through to TRANSPARENT.
+        if !h.is_ascii() || h.len() != 6 {
             return Rgba::TRANSPARENT;
         }
         let p = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).ok();
@@ -126,7 +130,14 @@ impl Canvas {
     }
 
     pub fn rounded_rect(&mut self, x: i32, y: i32, w: i32, h: i32, r: i32, c: Rgba) {
-        let r = r.clamp(0, w.min(h) / 2);
+        // Degrade gracefully on non-positive dimensions instead of handing
+        // i32::clamp a negative upper bound: w.min(h) / 2 can be negative
+        // (e.g. w=190, h=-4 -> -2), and clamp's min <= max assert is
+        // unconditional (not debug-only), so it panics in release too.
+        if w <= 0 || h <= 0 {
+            return;
+        }
+        let r = r.max(0).min(w.min(h) / 2);
         for yy in 0..h {
             // Shrink the span near the top and bottom to round the corners.
             let dy = if yy < r {
@@ -226,7 +237,17 @@ mod tests {
     #[test]
     fn hex_parsing_never_panics_on_bad_input() {
         // Theme files are user-authored; malformed colour must degrade, not crash.
-        for bad in ["", "#", "#12345", "#gggggg", "not a colour", "#1234567"] {
+        for bad in [
+            "",
+            "#",
+            "#12345",
+            "#gggggg",
+            "not a colour",
+            "#1234567",
+            // 6 bytes but only 5 chars ('a','ü','a','a','a') - byte offset 2
+            // lands inside the 2-byte 'ü', which must not panic on the slice.
+            "a\u{FC}aaa",
+        ] {
             assert_eq!(Rgba::from_hex(bad, 1.0), Rgba::TRANSPARENT, "input {bad:?}");
         }
     }
@@ -292,6 +313,18 @@ mod tests {
         assert_eq!(c.get(0, 0), Rgba::TRANSPARENT, "corner must be cut");
         assert_eq!(c.get(10, 10), Rgba::new(255, 255, 255, 255), "centre filled");
         assert_eq!(c.get(10, 0), Rgba::new(255, 255, 255, 255), "top edge filled");
+    }
+
+    #[test]
+    fn rounded_rect_does_not_panic_on_negative_dimensions() {
+        // w.min(h) / 2 can go negative (e.g. w=190, h=-4 -> -2), which must
+        // not be handed to i32::clamp as an upper bound - clamp's min <= max
+        // assert is unconditional and panics in release builds too.
+        let mut c = Canvas::new(200, 60);
+        c.rounded_rect(0, 0, 190, -4, 5, Rgba::new(255, 255, 255, 255));
+        c.rounded_rect(0, 0, -4, 190, 5, Rgba::new(255, 255, 255, 255));
+        c.rounded_rect(0, 0, 0, 0, 5, Rgba::new(255, 255, 255, 255));
+        assert!(c.bits().iter().all(|&p| p == 0), "no pixels drawn");
     }
 
     #[test]
