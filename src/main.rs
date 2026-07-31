@@ -1,3 +1,4 @@
+mod config;
 mod dsp;
 mod geom;
 mod render;
@@ -5,11 +6,13 @@ mod themes;
 mod win;
 
 use anyhow::Result;
+use config::Config;
 use dsp::ballistics::Smoother;
-use dsp::gate::{Gate, GateConfig};
+use dsp::gate::Gate;
 use render::canvas::Canvas;
 use render::FrameData;
 use win::capture::Frame;
+use win::tray::{Tray, TrayEvent};
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 
 fn main() -> Result<()> {
@@ -22,11 +25,25 @@ fn main() -> Result<()> {
         eprintln!("CoInitializeEx failed: {e}");
     }
 
-    let theme = themes::builtin::vfd_ice();
+    let mut cfg = Config::load();
+    let all_themes = themes::builtin::all();
+    let theme_menu: Vec<(String, String)> = all_themes
+        .iter()
+        .map(|t| (t.id.clone(), t.name.clone()))
+        .collect();
+
+    let mut theme = all_themes
+        .iter()
+        .find(|t| t.id == cfg.theme)
+        .cloned()
+        .unwrap_or_else(themes::builtin::vfd_ice);
     let mut family = render::family_for(&theme.family);
     let mut smoother = Smoother::new(theme.ballistics);
-    let mut gate = Gate::new(GateConfig::default());
+    let mut gate = Gate::new(cfg.gate_config());
     let overlay = win::overlay::Overlay::new()?;
+    // The tray icon is not decoration: when nothing is playing the overlay
+    // does not exist, so this is the only way to quit the app.
+    let mut tray = Tray::new(&theme_menu)?;
     let rx = win::capture::start();
 
     let mut latest = Frame::default();
@@ -36,6 +53,41 @@ fn main() -> Result<()> {
     loop {
         while let Ok(f) = rx.try_recv() {
             latest = f;
+        }
+
+        // poll() never synthesises Quit - it only records that a right-click
+        // happened. The menu is caller-driven, and Quit comes only from the
+        // menu returning ID_QUIT (see win::tray's module docs).
+        tray.poll();
+        if tray.take_right_click() {
+            let chosen = tray.show_menu(win::autostart::is_enabled(), &theme.id);
+            match chosen {
+                Some(TrayEvent::Quit) => break,
+                Some(TrayEvent::SelectTheme(id)) => {
+                    if let Some(t) = all_themes.iter().find(|t| t.id == id) {
+                        theme = t.clone();
+                        family = render::family_for(&theme.family);
+                        smoother = Smoother::new(theme.ballistics);
+                        cfg.theme = theme.id.clone();
+                        if let Err(e) = cfg.save() {
+                            eprintln!("config save failed: {e}");
+                        }
+                    }
+                }
+                Some(TrayEvent::ToggleAutostart) => {
+                    let want = !win::autostart::is_enabled();
+                    match win::autostart::set(want) {
+                        Ok(()) => {
+                            cfg.autostart = want;
+                            if let Err(e) = cfg.save() {
+                                eprintln!("config save failed: {e}");
+                            }
+                        }
+                        Err(e) => eprintln!("autostart toggle failed: {e}"),
+                    }
+                }
+                None => {}
+            }
         }
 
         // Re-discover the rect once a second - it moves with the weather text.
@@ -73,4 +125,6 @@ fn main() -> Result<()> {
         overlay.pump_messages();
         std::thread::sleep(std::time::Duration::from_millis(16));
     }
+
+    Ok(())
 }
