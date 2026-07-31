@@ -22,13 +22,16 @@ pub fn vfd_ice() -> Theme {
         // white weather text composited to ~45% of 255 and stayed plainly legible
         // through the panel. The design brief chose "EQ replaces the weather while
         // playing", not a translucent wash, so the panel has to actually hide it.
-        panel_alpha: 0.96,
+        panel_alpha: 1.0,
         edge: "#96e1ff".into(),
         edge_alpha: 0.13,
         ghost: 0.11,
-        // Generous on purpose - this is a phosphor display and the glow is the
-        // point. Tuned by eye against the real taskbar.
-        bloom: 16.0,
+        // Radius, not intensity - see Theme::default. Measured against the live
+        // taskbar: at 16 the halos of adjacent bars merged into one wash sitting
+        // behind the segments; at 4 each segment keeps its own halo.
+        bloom: 4.0,
+        glow_strength: 0.35,
+        edge_glow: 4.0,
         texture: Texture::Glass,
         ..Theme::default()
     }
@@ -41,7 +44,7 @@ pub fn matrix_green() -> Theme {
         lit: "#35ff6e".into(),
         hot: "#ccffdb".into(),
         panel: "#000903".into(),
-        panel_alpha: 0.70,
+        panel_alpha: 1.0,
         edge: "#3cff78".into(),
         edge_alpha: 0.14,
         ghost: 0.17,
@@ -63,7 +66,7 @@ pub fn neon_pink() -> Theme {
         lit: "#ff4fb0".into(),
         hot: "#ffd9ee".into(),
         panel: "#0d020b".into(),
-        panel_alpha: 0.62,
+        panel_alpha: 1.0,
         edge: "#ff4fb0".into(),
         edge_alpha: 0.22,
         ghost: 0.09,
@@ -85,7 +88,7 @@ pub fn vac_tube_orange() -> Theme {
         lit: "#ff9a2e".into(),
         hot: "#ffe9c9".into(),
         panel: "#0f0602".into(),
-        panel_alpha: 0.64,
+        panel_alpha: 1.0,
         edge: "#ff9632".into(),
         edge_alpha: 0.16,
         ghost: 0.13,
@@ -108,7 +111,7 @@ pub fn classic_three_colour() -> Theme {
         lit: "#3ddc5a".into(),
         hot: "#b6ffc6".into(),
         panel: "#060708".into(),
-        panel_alpha: 0.66,
+        panel_alpha: 1.0,
         edge: "#c8d2d7".into(),
         edge_alpha: 0.12,
         ghost: 0.13,
@@ -180,9 +183,12 @@ mod tests {
 
     #[test]
     fn every_panel_alpha_meets_the_floor() {
-        // Below 0.55 the wallpaper-tinted acrylic washes the theme out.
+        // Below ~0.92 the Widgets button's own weather text shows through the panel.
+        // This test asserted 0.55 and so failed to catch four colourways shipping at
+        // 0.62-0.70 - the exact user-visible bug that had already been fixed once for
+        // vfd-ice. The briefs for those tasks had been generated before that fix.
         for t in all() {
-            assert!(t.panel_alpha >= 0.55, "{} has panel_alpha {}", t.id, t.panel_alpha);
+            assert!(t.panel_alpha >= 0.92, "{} has panel_alpha {}", t.id, t.panel_alpha);
         }
     }
 

@@ -42,6 +42,14 @@ pub struct Theme {
     pub edge_alpha: f32,
     pub ghost: f32,
     pub bloom: f32,
+    /// Halo intensity, independent of `bloom` (which is the radius). Kept separate
+    /// because the two are not interchangeable: the radius must stay small relative
+    /// to the bar pitch or adjacent halos merge at ANY strength, so brightness has
+    /// to come from here.
+    pub glow_strength: f32,
+    /// Strength of the dim halo confined to the display's edge ring, as a fraction
+    /// of `glow_strength`.
+    pub edge_glow: f32,
     // Cross-fade duration for switching themes at runtime (Task 11+); the
     // segmented renderer draws every frame from scratch and has no
     // transition state to feed it yet.
@@ -64,14 +72,21 @@ impl Default for Theme {
             lit: "#8fe4ff".into(),
             hot: "#e4f8ff".into(),
             panel: "#040a0e".into(),
-            // >= 0.92 is a hard requirement, not a preference: the panel must
-            // occlude the Widgets button's own icon and text. 0.55 left the
-            // weather plainly legible through it.
-            panel_alpha: 0.96,
+            // FULLY opaque. Not a preference: the panel must occlude the Widgets
+            // button's own icon and text. 0.55 left the weather plainly legible; even
+            // 0.96 transmitted 4% of it, which is invisible against a lit bar but
+            // clearly visible against the dark segment gaps and the dormant grid.
+            panel_alpha: 1.0,
             edge: "#96e1ff".into(),
             edge_alpha: 0.13,
             ghost: 0.11,
-            bloom: 16.0,
+            // Radius, NOT intensity. Must stay small relative to the bar pitch or
+            // adjacent halos merge into one wash behind the segments.
+            bloom: 4.0,
+            glow_strength: 0.35,
+            // 0.30 was not merely too dim, it was NEGATIVE - the ring measured darker
+            // than the panel it sat on. 4.0 puts it ~60 luminance above.
+            edge_glow: 4.0,
             fade: 0.30,
             texture: Texture::Glass,
             ballistics: Ballistics::default(),

@@ -35,6 +35,7 @@ impl Rgba {
     }
 }
 
+#[derive(Clone)]
 pub struct Canvas {
     w: i32,
     h: i32,
@@ -214,6 +215,11 @@ impl Canvas {
         }
     }
 
+    /// Zeroes alpha across the FULL canvas width. Kept as a primitive, but note
+    /// the trap it caused: using it for segment gaps erased the panel too, leaving
+    /// transparent stripes with the taskbar showing through. Punch within a mark's
+    /// own width via `punch_rect` unless you really do mean the whole row.
+    #[allow(dead_code)]
     pub fn punch_row(&mut self, y: i32, h: i32) {
         self.punch_rect(0, y, self.w, h);
     }
@@ -233,6 +239,24 @@ impl Canvas {
 
     /// Separable box blur of the current contents, composited *under* the
     /// original so lit elements keep their crisp edge and gain a halo.
+    /// Composites `src` OVER self, source-over. Needed because `bloom` blends its
+    /// halo UNDER whatever is already on the canvas - which means an opaque panel
+    /// hides the halo completely. Blooming the lit marks on their own transparent
+    /// layer and then compositing that layer over the panel is the only way to get a
+    /// halo that is actually visible on an opaque background.
+    pub fn draw_over(&mut self, src: &Canvas) {
+        debug_assert_eq!(self.w, src.w);
+        debug_assert_eq!(self.h, src.h);
+        let n = self.px.len().min(src.px.len());
+        for i in 0..n {
+            let s = src.px[i];
+            if s >> 24 == 0 {
+                continue;
+            }
+            self.px[i] = Self::blend_over(self.px[i], s);
+        }
+    }
+
     pub fn bloom(&mut self, radius: i32, strength: f32) {
         if radius <= 0 || strength <= 0.0 {
             return;
@@ -270,11 +294,24 @@ impl Canvas {
 
         for i in 0..self.px.len() {
             let hp = halo[i];
-            let scale = |v: u32| ((v as f32 * strength).min(255.0)) as u32;
-            let scaled = (scale(hp >> 24) << 24)
-                | (scale((hp >> 16) & 0xff) << 16)
-                | (scale((hp >> 8) & 0xff) << 8)
-                | scale(hp & 0xff);
+            // Scale while PRESERVING the premultiplied invariant (r,g,b <= a).
+            //
+            // Scaling the four channels independently and clamping each at 255 breaks
+            // it: for any real pixel alpha is the largest channel, so alpha saturates
+            // FIRST while r,g,b are still below 255. The result is an opaque pixel with
+            // dark colour - i.e. a black wash wherever the halo is strongest, which is
+            // exactly the "black box around everything" this produced. Clamp by the
+            // single limiting factor instead, so the colour keeps its hue and only its
+            // brightness changes.
+            let (ha, hr, hg, hb) = (hp >> 24, (hp >> 16) & 0xff, (hp >> 8) & 0xff, hp & 0xff);
+            let peak = ha.max(hr).max(hg).max(hb) as f32;
+            let k = if peak * strength > 255.0 && peak > 0.0 {
+                255.0 / peak
+            } else {
+                strength
+            };
+            let scale = |v: u32| ((v as f32 * k).round().min(255.0)) as u32;
+            let scaled = (scale(ha) << 24) | (scale(hr) << 16) | (scale(hg) << 8) | scale(hb);
             self.px[i] = Self::blend_over(scaled, src[i]);
         }
     }
@@ -438,6 +475,28 @@ mod tests {
         c.fill_rect(0, 0, 10, 10, Rgba::new(255, 255, 255, 255));
         c.clip_to_rounded_rect(0, 0, -4, 190, 5);
         assert!(c.bits().iter().all(|&p| p == 0), "degenerate rect clips everything");
+    }
+
+    #[test]
+    fn bloom_never_breaks_the_premultiplied_invariant() {
+        // Scaling alpha past r/g/b produces opaque dark pixels - a black wash. Any
+        // strength, however extreme, must keep r,g,b <= a.
+        for strength in [0.5f32, 2.0, 8.0, 40.0] {
+            let mut c = Canvas::new(21, 21);
+            c.fill_rect(9, 9, 3, 3, Rgba::new(0x8f, 0xe4, 0xff, 255));
+            c.bloom(6, strength);
+            for y in 0..21 {
+                for x in 0..21 {
+                    let i = (y * 21 + x) as usize;
+                    let p = c.bits()[i];
+                    let (a, r, g, b) = (p >> 24, (p >> 16) & 0xff, (p >> 8) & 0xff, p & 0xff);
+                    assert!(
+                        r <= a && g <= a && b <= a,
+                        "premultiplied invariant broken at ({x},{y}) strength {strength}:                          a={a} r={r} g={g} b={b} - this is what makes a halo go black"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

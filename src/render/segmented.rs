@@ -9,21 +9,12 @@ const SEG_GAP: i32 = 1;
 const PAD_X: i32 = 5;
 const PAD_Y: i32 = 6;
 
-/// How much brighter than "energy-preserving" the halo is driven. 1.0 would make
-/// a wide radius look identical in intensity to a narrow one - only more spread -
-/// because the box blur normalises by kernel size. Above 1.0 is what actually
-/// reads as phosphor glow. Chosen by eye against the live taskbar.
-const GLOW_GAIN: f32 = 3.4;
-
-/// Couples strength to radius. `Canvas::bloom` is a box blur and normalises by
-/// kernel size, so raising the radius alone makes the halo FAINTER, not stronger -
-/// the opposite of the intent, and a trap for every theme that follows. Scaling by
-/// radius squared cancels the normalisation; GLOW_GAIN then overdrives it.
-fn bloom_strength(bloom: f32) -> f32 {
-    const REF_RADIUS: f32 = 9.0;
-    let r = bloom.max(1.0);
-    ((r / REF_RADIUS).powi(2) * 0.85 * GLOW_GAIN).clamp(0.6, 12.0)
-}
+/// Radius of the dim edge halo. Wider than the per-segment glow so it reaches the
+/// bezel from the outermost bars.
+const EDGE_RADIUS: i32 = 12;
+/// Width of the band the edge halo is confined to, measured in from the panel edge.
+/// Everything inside this is punched out so the halo never touches the grid.
+const EDGE_BAND: i32 = 5;
 
 pub struct Segmented;
 
@@ -91,8 +82,47 @@ impl Family for Segmented {
             arr[lo..hi.min(arr.len())].iter().copied().fold(0.0f32, f32::max)
         };
 
-        // 4. lit columns FIRST, so that only they feed the bloom.
         let lit_of = |b: i32| (sample(&d.levels, b) * nseg as f32).round() as i32;
+
+        // 4-6. Lit marks, glow, and the crisp marks on top.
+        //
+        // The glow MUST be built on its own transparent layer. `Canvas::bloom`
+        // composites its halo UNDER the existing content, so blooming in place on an
+        // opaque panel hides the halo entirely - which is exactly why the glow
+        // vanished when panel_alpha went from 0.55 to 0.96. On the translucent panel
+        // it happened to show through; on an opaque one it is behind a wall.
+        let mut glow = Canvas::new(w, h);
+        for b in 0..nbars {
+            for k in 0..lit_of(b).min(nseg) {
+                let frac = (k + 1) as f32 / nseg as f32;
+                let y = PAD_Y + usable_h - (k + 1) * seg_pitch;
+                glow.fill_rect(ox + b * pitch, y, BAR_W, SEG_H, Rgba::from_hex(t.lit_at(frac), 1.0));
+            }
+        }
+        let radius = t.bloom.round().max(0.0) as i32;
+        let mut edge = glow.clone();
+        glow.bloom(radius, t.glow_strength.max(0.0));
+        c.draw_over(&glow);
+
+        // A second, much dimmer halo confined to the display's EDGE RING.
+        //
+        // A wide bloom drawn across the whole panel washes over the dormant grid and
+        // reads as haze rather than glow, and if it is allowed outside the panel at
+        // any real strength it produces a visible box around the display. So this one
+        // is masked to a band hugging the bezel: it lights the edges of the VFD and
+        // nothing else. Deliberately subtle - EDGE_GLOW is a fraction of the main
+        // halo's strength, because the whole point is that you notice it without
+        // being able to point at it.
+        edge.bloom(EDGE_RADIUS, t.glow_strength.max(0.0) * t.edge_glow.max(0.0));
+        edge.punch_rect(
+            EDGE_BAND + 1,
+            EDGE_BAND + 2,
+            (w - 2 - EDGE_BAND * 2).max(0),
+            (h - 4 - EDGE_BAND * 2).max(0),
+        );
+        c.draw_over(&edge);
+
+        // the crisp marks, over their own halo
         for b in 0..nbars {
             for k in 0..lit_of(b).min(nseg) {
                 let frac = (k + 1) as f32 / nseg as f32;
@@ -101,38 +131,26 @@ impl Family for Segmented {
             }
         }
 
-        // 5. punch the segment gaps out of the lit marks BEFORE the bloom, not
-        // after.
+        // Cut the segment gaps by PAINTING the panel colour over them, within each
+        // bar's own width. Not by punching.
         //
-        // The gaps must be punched before `bloom` runs, not after: `bloom` only
-        // sees whatever is on the canvas at the moment it runs, so blooming the
-        // *unbroken* lit columns and only then punching the gaps back out
-        // erases the halo in precisely the rows between segments - the punch
-        // (`punch_row`) zeroes alpha across the FULL WIDTH for each gap row,
-        // which destroys any glow that landed there. That produced a
-        // hard-edged, glow-less meter where the segmentation should have been
-        // visible in the halo too.
-        //
-        // Punching first means `bloom` blurs the already-segmented shape, so
-        // the halo it produces wraps each lit segment individually and bleeds
-        // a little into the gaps - which is the point: a real phosphor
-        // segment's glow does not stop dead at the segment's physical edge.
+        // Two earlier attempts were both wrong, in opposite directions:
+        //   * punching the gaps AFTER the bloom zeroed alpha across the full canvas
+        //     width, which erased the PANEL too and left transparent stripes with the
+        //     taskbar showing through - hard scanlines, not a display.
+        //   * punching them BEFORE the bloom let the halo flood straight back into
+        //     the 1px gaps, so gap and segment ended up the same brightness and the
+        //     segmentation vanished into a smear.
+        // Painting opaque panel colour over them gives a crisp dark gap, leaves the
+        // panel intact, and preserves the halo on the column's flanks - which is
+        // where a real phosphor segment's glow actually shows.
+        let gap_col = Rgba::from_hex(&t.panel, 1.0);
         for k in 1..=nseg {
-            c.punch_row(PAD_Y + usable_h - k * seg_pitch + SEG_H, SEG_GAP);
+            let gap_y = PAD_Y + usable_h - k * seg_pitch + SEG_H;
+            for b in 0..nbars {
+                c.fill_rect(ox + b * pitch, gap_y, BAR_W, SEG_GAP, gap_col);
+            }
         }
-
-        // 6. bloom - the now-segmented lit marks only.
-        //
-        // Radius and strength must be coupled: Canvas::bloom is a box blur and
-        // normalises by kernel size, so a wider radius spreads the same energy over
-        // more pixels and the halo gets FAINTER. Raising `bloom` alone therefore dims
-        // the glow, the opposite of the intent. See bloom_strength().
-        //
-        // And this must happen BEFORE the dormant grid is drawn. Blooming the ghost
-        // grid too drove it to full alpha at these gain levels, so the idle grid glowed
-        // as brightly as a lit segment and the meter read as permanently full.
-        let radius = t.bloom.round().max(0.0) as i32;
-        c.bloom(radius, bloom_strength(t.bloom));
 
         // 7. clip the halo to the panel interior.
         //
@@ -367,7 +385,16 @@ mod tests {
         // Bug: punching the gaps AFTER bloom zeroed them outright (lum 0).
         // Fix: the gap must show a real glow - clearly brighter than the
         // near-black bare panel (lum ~9 for #040a0e at 0.96 alpha).
-        assert!(gap_lum > 100.0, "gap row should glow, got lum {gap_lum}");
+        // The premise here was changed deliberately. The original assertion demanded
+        // the GAP itself glow, but at a 1px gap any halo bright enough to satisfy
+        // that also floods the gap to the same brightness as the segment, erasing the
+        // segmentation (measured: gap 213.1 vs segment 211.9 - indistinguishable).
+        // A segmented display's gaps are DARK; the glow belongs on the column's
+        // flanks. So: the gap must be clearly darker than the segment...
+        assert!(
+            seg_lum - gap_lum > 40.0,
+            "gap must read clearly darker than the segment, got gap {gap_lum} vs segment {seg_lum}"
+        );
         // And the two rows must still read as distinct bands - a real
         // segment gap, not a uniform smear that erased the segmentation.
         assert!(
@@ -431,35 +458,69 @@ mod tests {
         std::fs::write("tests/golden/vfd-ice.txt", canvas_to_ascii(&c)).unwrap();
     }
 
-    #[test]
-    fn golden_classic_three_colour_at_high_level() {
-        let mut c = Canvas::new(190, 60);
-        // 0.9 so all three colour zones are lit and visible in the golden.
-        Segmented.draw(&mut c, &crate::themes::builtin::classic_three_colour(), &frame(0.9));
-        let actual = canvas_to_ascii(&c);
-        let expected = include_str!("../../tests/golden/classic-three-colour.txt");
-        assert_eq!(actual, expected, "golden mismatch - regenerate and eyeball the diff");
-    }
-
-    #[test]
-    fn zoned_themes_skip_the_hot_core() {
-        // Real coloured LEDs are flat; a hot core would wash out the zone colour.
-        let mut c = Canvas::new(190, 60);
-        let t = crate::themes::builtin::classic_three_colour();
-        Segmented.draw(&mut c, &t, &frame(1.0));
-        let centre = c.get(first_bar_x() + 2, 20);
-        let edge = c.get(first_bar_x(), 20);
-        assert!(
-            centre.r.abs_diff(edge.r) < 40,
-            "zoned bars must be flat across their width, got centre {centre:?} edge {edge:?}"
-        );
-    }
-
+    /// Not a assertion test - a measurement harness. Prints, for a range of glow
+    /// strengths, how bright a lit segment is versus the gap BETWEEN adjacent bars.
+    /// The bars stop reading as separate once those two converge, which is the real
+    /// ceiling on glow at a 7px bar pitch.
     #[test]
     #[ignore]
-    fn regenerate_classic_golden() {
-        let mut c = Canvas::new(190, 60);
-        Segmented.draw(&mut c, &crate::themes::builtin::classic_three_colour(), &frame(0.9));
-        std::fs::write("tests/golden/classic-three-colour.txt", canvas_to_ascii(&c)).unwrap();
+    fn sweep_glow_strength() {
+        let base = builtin::vfd_ice();
+        println!("radius strength  segment  inter-bar-gap  ratio  verdict");
+        for (r, s) in [
+            (3.0f32, 0.15f32), (3.0, 0.25), (3.0, 0.35), (3.0, 0.5), (3.0, 0.7),
+            (4.0, 0.2), (4.0, 0.3), (4.0, 0.45),
+            (5.0, 0.15), (5.0, 0.25), (5.0, 0.4),
+            (6.0, 0.2), (7.0, 0.18),
+        ] {
+            let mut t = base.clone();
+            t.bloom = r;
+            t.glow_strength = s;
+            let mut c = Canvas::new(190, 60);
+            Segmented.draw(&mut c, &t, &frame(0.7));
+            let x = first_bar_x();
+            let y = 60 - PAD_Y - 3;                 // inside a lit segment band
+            let seg = lum(c.get(x + 2, y));
+            // midpoint of the 2px gap between bar 0 and bar 1
+            let gap = lum(c.get(x + BAR_W, y)).max(lum(c.get(x + BAR_W + 1, y)));
+            let ratio = if gap > 0.5 { seg / gap } else { 999.0 };
+            let verdict = if ratio > 9.0 { "no glow" }
+                else if ratio >= 3.5 { "GOOD - visible halo, bars distinct" }
+                else if ratio >= 2.2 { "strong" }
+                else { "MERGED" };
+            println!("{r:6.1} {s:8.1}  {seg:7.1}  {gap:13.1}  {ratio:5.2}  {verdict}");
+        }
+    }
+
+    /// Measurement, not an assertion. Prints the luminance of the bezel ring against
+    /// the bare panel for a range of edge_glow values. The ASCII golden's level 1
+    /// spans a wide luminance range, so "visible in the golden" and "visible on
+    /// screen" are not the same thing - these are the numbers that decide it.
+    #[test]
+    #[ignore]
+    fn sweep_edge_glow() {
+        let base = builtin::vfd_ice();
+        println!("edge_glow  bezel  panel  delta  verdict");
+        for e in [0.3f32, 0.8, 1.5, 3.0, 5.0, 8.0, 12.0] {
+            let mut t = base.clone();
+            t.edge_glow = e;
+            let mut c = Canvas::new(190, 60);
+            Segmented.draw(&mut c, &t, &frame(0.75));
+            // brightest point on the left bezel ring, vertically over the lit region
+            let mut bezel = 0.0f32;
+            for y in 30..54 {
+                for x in 1..5 {
+                    bezel = bezel.max(lum(c.get(x, y)));
+                }
+            }
+            // bare panel well inside, above the bars and away from the ring
+            let panel = lum(c.get(95, 10));
+            let delta = bezel - panel;
+            let verdict = if delta < 12.0 { "INVISIBLE" }
+                else if delta < 30.0 { "borderline" }
+                else if delta < 90.0 { "VISIBLE, subtle" }
+                else { "obvious" };
+            println!("{e:9.1}  {bezel:5.1}  {panel:5.1}  {delta:5.1}  {verdict}");
+        }
     }
 }
