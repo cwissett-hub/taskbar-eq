@@ -59,7 +59,21 @@ fn main() -> Result<()> {
         // happened. The menu is caller-driven, and Quit comes only from the
         // menu returning ID_QUIT (see win::tray's module docs).
         tray.poll();
-        if tray.take_right_click() {
+
+        // The overlay itself is clickable while it is up. Right-click opens the same
+        // menu as the tray icon (one implementation, two entry points); left-click
+        // sends Win+W, because the overlay is covering the Widgets button and without
+        // it the weather would simply be unreachable while music plays.
+        let overlay_click = overlay.take_event();
+        if overlay_click == Some(win::overlay::OverlayEvent::LeftClick) {
+            if let Err(e) = win::overlay::open_widgets_panel() {
+                eprintln!("could not open the widgets panel: {e}");
+            }
+        }
+        let want_menu =
+            tray.take_right_click() || overlay_click == Some(win::overlay::OverlayEvent::RightClick);
+
+        if want_menu {
             let chosen = tray.show_menu(win::autostart::is_enabled(), &theme.id);
             match chosen {
                 Some(TrayEvent::Quit) => break,

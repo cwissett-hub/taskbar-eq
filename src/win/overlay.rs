@@ -10,12 +10,34 @@ use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, SelectObject, AC_SRC_ALPHA,
     AC_SRC_OVER, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, BI_RGB, DIB_RGB_COLORS, HBITMAP, HDC,
 };
+use std::sync::atomic::{AtomicU8, Ordering};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_LWIN,
+    VK_W,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, PeekMessageW, RegisterClassW, SetWindowPos,
     ShowWindow, TranslateMessage, UpdateLayeredWindow, HWND_TOPMOST, MSG, PM_REMOVE,
     SWP_NOACTIVATE, SWP_NOSIZE, SW_HIDE, SW_SHOWNA, ULW_ALPHA, WNDCLASSW, WS_EX_LAYERED,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    WM_LBUTTONUP, WM_RBUTTONUP, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
+
+/// What the user did on the overlay itself. The window keeps WS_EX_NOACTIVATE so a
+/// click never steals focus from whatever you are working in, but it deliberately
+/// does NOT set WS_EX_TRANSPARENT - that would pass every click through and there
+/// would be nothing to handle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlayEvent {
+    LeftClick,
+    RightClick,
+}
+
+// The window procedure is a plain fn with no access to `self`, so the pending click
+// lives in a static. One overlay exists per process, so this is not a shared-state
+// problem in practice.
+static PENDING: AtomicU8 = AtomicU8::new(0);
+const P_LEFT: u8 = 1;
+const P_RIGHT: u8 = 2;
 
 pub struct Overlay {
     hwnd: HWND,
@@ -157,6 +179,15 @@ impl Overlay {
         }
     }
 
+    /// Consumes the most recent click on the overlay, if any.
+    pub fn take_event(&self) -> Option<OverlayEvent> {
+        match PENDING.swap(0, Ordering::Relaxed) {
+            P_LEFT => Some(OverlayEvent::LeftClick),
+            P_RIGHT => Some(OverlayEvent::RightClick),
+            _ => None,
+        }
+    }
+
     pub fn hide(&self) -> Result<()> {
         unsafe {
             let _ = ShowWindow(self.hwnd, SW_HIDE);
@@ -177,13 +208,51 @@ impl Overlay {
     }
 }
 
+/// Synthesises Win+W to open the Widgets panel. The overlay covers the Widgets
+/// button while audio plays, so without this a left-click would simply do nothing
+/// and the weather would be unreachable. Sending the hotkey is far more robust than
+/// trying to forward a click to a window we are deliberately covering.
+pub fn open_widgets_panel() -> Result<()> {
+    let key = |vk: VIRTUAL_KEY, up: bool| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk,
+                dwFlags: if up { KEYEVENTF_KEYUP } else { Default::default() },
+                ..Default::default()
+            },
+        },
+    };
+    let seq = [
+        key(VK_LWIN, false),
+        key(VK_W, false),
+        key(VK_W, true),
+        key(VK_LWIN, true),
+    ];
+    let sent = unsafe { SendInput(&seq, std::mem::size_of::<INPUT>() as i32) };
+    if sent as usize != seq.len() {
+        return Err(anyhow!("SendInput sent {sent} of {} events", seq.len()));
+    }
+    Ok(())
+}
+
 unsafe extern "system" fn wndproc(
     hwnd: HWND,
     msg: u32,
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> windows::Win32::Foundation::LRESULT {
-    unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+    match msg {
+        WM_LBUTTONUP => {
+            PENDING.store(P_LEFT, Ordering::Relaxed);
+            windows::Win32::Foundation::LRESULT(0)
+        }
+        WM_RBUTTONUP => {
+            PENDING.store(P_RIGHT, Ordering::Relaxed);
+            windows::Win32::Foundation::LRESULT(0)
+        }
+        _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+    }
 }
 
 #[cfg(test)]
