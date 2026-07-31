@@ -17,6 +17,7 @@ pub struct BandMapper {
     fft: Arc<dyn Fft<f32>>,
     window: Vec<f32>,
     scratch: Vec<Complex32>,
+    fft_scratch: Vec<Complex32>,
     edges: Vec<usize>,
     sample_rate: f32,
 }
@@ -48,23 +49,30 @@ impl BandMapper {
             last = *edges.last().unwrap();
         }
 
+        let fft_scratch_len = fft.get_inplace_scratch_len();
+
         BandMapper {
             fft,
             window,
             scratch: vec![Complex32::new(0.0, 0.0); FFT_SIZE],
+            fft_scratch: vec![Complex32::new(0.0, 0.0); fft_scratch_len],
             edges,
             sample_rate,
         }
     }
 
     /// `mono` must be exactly FFT_SIZE samples. Writes normalised 0.0..=1.0 levels.
+    ///
+    /// # Panics
+    ///
+    /// Panics (in both debug and release builds) if `mono.len() != FFT_SIZE`.
     pub fn process(&mut self, mono: &[f32], out: &mut [f32; NUM_BANDS]) {
-        debug_assert_eq!(mono.len(), FFT_SIZE);
+        assert_eq!(mono.len(), FFT_SIZE, "BandMapper::process requires exactly FFT_SIZE samples");
 
         for i in 0..FFT_SIZE {
             self.scratch[i] = Complex32::new(mono[i] * self.window[i], 0.0);
         }
-        self.fft.process(&mut self.scratch);
+        self.fft.process_with_scratch(&mut self.scratch, &mut self.fft_scratch);
 
         // Hann coherent gain is 0.5, so a full-scale sine yields FFT_SIZE/4.
         let norm = 4.0 / FFT_SIZE as f32;
@@ -148,6 +156,26 @@ mod tests {
         // Full-scale sine - the loudest realistic input.
         m.process(&sine(500.0, 48_000.0, FFT_SIZE), &mut out);
         assert!(out.iter().all(|&v| (0.0..=1.0).contains(&v)), "got {out:?}");
+
+        // The bound above can never fail on its own: it would even pass
+        // against a no-op `process` that leaves a zero-initialised `out`
+        // untouched, since 0.0 is inside 0.0..=1.0. Exercise the brief's
+        // actual normalisation claim so a broken/empty implementation is
+        // caught: band 0 always has tilt == 1.0 (t = 0 / (NUM_BANDS - 1)),
+        // so a full-scale sine placed exactly on band 0's first bin is
+        // untouched by the bass tilt and should read out at very close to
+        // the Hann-coherent-gain-derived amplitude of 1.0 (norm = 4 /
+        // FFT_SIZE is chosen to exactly compensate a Hann window's 0.5
+        // coherent gain for a bin-aligned full-scale sine).
+        let bin_hz = 48_000.0 / FFT_SIZE as f32;
+        let bin_aligned_bin0_freq = m.edges[0] as f32 * bin_hz;
+        m.process(&sine(bin_aligned_bin0_freq, 48_000.0, FFT_SIZE), &mut out);
+        assert!(
+            out[0] > 0.9,
+            "a full-scale, bin-aligned tone in band 0 (tilt == 1.0 there) \
+             should normalise to close to 1.0; got {}, full output {out:?}",
+            out[0]
+        );
     }
 
     #[test]
