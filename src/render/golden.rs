@@ -41,6 +41,25 @@ pub fn canvas_to_ascii(c: &Canvas) -> String {
     s
 }
 
+/// Compares a rendered canvas against a committed golden, tolerant of line
+/// endings.
+///
+/// Ported from `main` (commit 6029a6a, "fix: golden line-ending fragility")
+/// which this branch had not yet picked up: `canvas_to_ascii` emits LF, but
+/// git can hand back CRLF on Windows depending on `core.autocrlf` and how the
+/// file was last written - which genuinely broke every golden test once
+/// already during a branch merge, with byte-identical content. A golden
+/// failing over invisible whitespace teaches nobody anything, so this
+/// normalises both sides before comparing. Paired with `.gitattributes`
+/// pinning `tests/golden/*.txt` to `eol=lf` (belt and braces).
+#[allow(dead_code)]
+pub fn matches_golden(c: &Canvas, golden: &str) -> bool {
+    fn lf(s: &str) -> String {
+        s.replace("\r\n", "\n")
+    }
+    lf(&canvas_to_ascii(c)) == lf(golden)
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::canvas::{Canvas, Rgba};

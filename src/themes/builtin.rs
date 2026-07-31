@@ -7,6 +7,11 @@ pub fn all() -> Vec<Theme> {
         neon_pink(),
         vac_tube_orange(),
         classic_three_colour(),
+        p1_green(),
+        p7_dual(),
+        p11_blue_violet(),
+        scope_amber(),
+        scope_white(),
     ]
 }
 
@@ -133,6 +138,105 @@ pub fn classic_three_colour() -> Theme {
             peak_fall: 0.0045,
         },
         ..vfd_ice()
+    }
+}
+
+fn scope_base() -> Theme {
+    Theme {
+        family: "scope".into(),
+        texture: Texture::None_,
+        ghost: 0.0,
+        bloom: 6.0,
+        ..Theme::default()
+    }
+}
+
+pub fn p1_green() -> Theme {
+    Theme {
+        id: "p1-green".into(),
+        name: "P1 green".into(),
+        lit: "#5cff9a".into(),
+        hot: "#ccffdd".into(),
+        panel: "#020805".into(),
+        panel_alpha: 1.0,
+        edge: "#78ffb4".into(),
+        edge_alpha: 0.14,
+        fade: 0.14,
+        // Distinct from the other four scope blooms below - see
+        // `each_colourway_has_a_distinct_texture_or_bloom`, which checks
+        // (texture, bloom) pairs across every theme in `all()`. All five
+        // phosphors share `Texture::None_`, so bloom is the only thing that
+        // can tell them apart for that guard; the brief left every phosphor
+        // at the same inherited bloom (6.0), which collided.
+        bloom: 5.0,
+        ..scope_base()
+    }
+}
+
+pub fn p7_dual() -> Theme {
+    Theme {
+        id: "p7-dual".into(),
+        name: "P7 dual-layer".into(),
+        lit: "#e8f4ff".into(),
+        hot: "#ffffff".into(),
+        panel: "#03060c".into(),
+        panel_alpha: 1.0,
+        edge: "#aad7ff".into(),
+        edge_alpha: 0.15,
+        fade: 0.30,
+        // The real P7 is two phosphor layers: a blue-white flash over a slow
+        // yellow-green tail. The trail fades far more slowly than the trace.
+        dual: Some(("#cfe86a".into(), 0.055)),
+        bloom: 8.0,
+        ..scope_base()
+    }
+}
+
+pub fn p11_blue_violet() -> Theme {
+    Theme {
+        id: "p11-blue-violet".into(),
+        name: "P11 blue-violet".into(),
+        lit: "#9db4ff".into(),
+        hot: "#dde5ff".into(),
+        panel: "#03040c".into(),
+        panel_alpha: 1.0,
+        edge: "#96afff".into(),
+        edge_alpha: 0.15,
+        fade: 0.20,
+        bloom: 6.0,
+        ..scope_base()
+    }
+}
+
+pub fn scope_amber() -> Theme {
+    Theme {
+        id: "scope-amber".into(),
+        name: "Amber".into(),
+        lit: "#ffc766".into(),
+        hot: "#ffe9c9".into(),
+        panel: "#0c0602".into(),
+        panel_alpha: 1.0,
+        edge: "#ffc878".into(),
+        edge_alpha: 0.15,
+        fade: 0.11,
+        bloom: 7.0,
+        ..scope_base()
+    }
+}
+
+pub fn scope_white() -> Theme {
+    Theme {
+        id: "scope-white".into(),
+        name: "White-hot".into(),
+        lit: "#f6fbff".into(),
+        hot: "#ffffff".into(),
+        panel: "#040609".into(),
+        panel_alpha: 1.0,
+        edge: "#dceeff".into(),
+        edge_alpha: 0.15,
+        fade: 0.17,
+        bloom: 9.0,
+        ..scope_base()
     }
 }
 
