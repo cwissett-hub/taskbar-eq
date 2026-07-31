@@ -6,8 +6,17 @@ is playing, and hands the weather back when it stops.
 Single portable `taskbar-eq.exe` — no installer, no admin, no runtime. Copy it to any Windows
 machine and run it.
 
-**Status:** design approved, implementation not started. See
-[the design spec](docs/superpowers/specs/2026-07-30-taskbar-eq-design.md).
+## Just run it
+
+A prebuilt binary is committed at **[`dist/taskbar-eq.exe`](dist/taskbar-eq.exe)** so you can
+clone (or download it directly) and run without a Rust toolchain.
+
+Quit from the tray icon. That is deliberately the only quit path: when nothing is playing the
+overlay does not exist, so the tray icon is the only thing left to click.
+
+**Status:** working, with five colourways. See [HANDOVER.md](HANDOVER.md) for exactly what is
+built, what is not, and — importantly — which claims are backed by measurement and which are
+not. Design docs are in [docs/superpowers/specs/](docs/superpowers/specs/).
 
 ---
 

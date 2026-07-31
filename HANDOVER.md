@@ -1,144 +1,147 @@
-# Taskbar EQ — handover
+# Taskbar EQ — status and handover
 
-**As of 2026-07-31.** Branch `feat/taskbar-eq-implementation`. Written because a session
-limit was approaching mid-run; this is the resume map.
+A real-time audio visualiser that overlays the Windows 11 Widgets (weather) button while
+audio is playing, and hands the weather back when it stops.
 
-## Where it stands
+Single portable `taskbar-eq.exe` — no installer, no admin, no runtime.
 
-**10 of 16 plan tasks complete. 65 tests pass. Release build is warning-free.**
+---
 
-The app builds and does the core job with one theme: it finds the Widgets button, captures
-system audio, and draws a VFD-ice segmented meter over the weather while audio plays.
+## What works
 
-| Task | What | State |
-|---|---|---|
-| 1 | Scaffold, DPI awareness | done, review clean |
-| 2 | `geom::Rect`, visibility rules | done, review clean |
-| 3 | Widget rect discovery (UI Automation) | done, review clean, 3 minors deferred |
-| 4 | Canvas rasteriser (premultiplied BGRA, bloom) | done, review clean |
-| 5 | Layered overlay window | done, review clean — **pixel-verified** |
-| 6 | FFT + log band mapping | done, review clean |
-| 7 | Ballistics + peak hold | done, review clean |
-| 8 | Reveal/hide gate | done, review clean, 0 fix rounds |
-| 9 | WASAPI loopback capture | done, review clean — **live-audio verified** |
-| 10 | Segmented family + VFD Ice | committed `e1d918b`, **review not yet run** |
-| 11 | Tray icon, config, autostart, quit | not started |
-| 12 | Remaining 4 segmented colourways | not started |
-| 13 | Scope family + 5 phosphors | not started |
-| 14 | VU family + 5 backlights | not started |
-| 15 | External TOML colourways + schema | not started |
-| 16 | Hot reload, theme menu, Win+W | not started |
+**Twelve of sixteen planned tasks, plus a substantial round of visual fixes.**
+102 tests pass; release builds are warning-free.
 
-## What is verified, and how
+- Finds the Widgets button by UI Automation and tracks it — the rect genuinely moves as the
+  weather text changes width, so it is re-probed every second.
+- Falls back to anchoring beside the tray's overflow chevron when there is no Widgets
+  button, which is what makes it work on Windows 10.
+- Captures system audio via WASAPI loopback, follows default-device changes.
+- 2048-point FFT, 64 log-spaced bands, dB-scaled with a bass-compensating tilt.
+- Appears 400 ms after audio starts and hides 2 s after it stops, so notification dings do
+  not blank the weather and it does not strobe between tracks.
+- **Five colourways**: VFD Ice, Matrix Green, Neon Pink, Vac Tube Orange, Classic
+  Three-Colour. Right-click the equaliser or the tray icon to switch; the choice persists.
+- Left-click sends `Win+W` so the weather stays reachable while covered.
+- Tray icon with theme menu, start-with-Windows, and quit.
+
+## Not built yet
+
+| Task | What |
+|---|---|
+| 13 | Oscilloscope family (5 phosphor colourways) — persistence-trace renderer |
+| 14 | Analogue VU family (5 dial backlights) — twin needles, ~300 ms ballistics |
+| 15 | External TOML colourways with a versioned schema |
+| 16 | Hot reload of theme files |
+| — | Vaporwave grid family — [specced](docs/superpowers/specs/2026-07-31-vaporwave-grid-family-design.md) with tuned parameters, needs 6 new Canvas primitives |
+
+## Verified vs unverified
 
 Distinguishing measured evidence from assumption, because they are not the same thing.
 
-**Objectively verified against real output:**
+**Measured against real output:**
 
-- **The overlay genuinely composites over your Widgets button.** Confirmed twice by
-  independent code. My throwaway spike self-reported 3120 ice-blue pixels (exactly
-  26 bars x 5px x 24px — zero blend loss). Task 5's own self-check reported 960 pixels,
-  again an exact match for its bar area, with 818 distinct colours ruling out the
-  locked-session false negative.
-- **WASAPI loopback reads real audio.** `rms=0.0000` while silent, then 0.0242 → 0.0823 →
-  0.1211 with distinct L/R channels and `maxband` tracking. Not a loop that compiles and
-  reads silence.
-- **The widget rect really does move.** Observed at X=1385, 1416 and 1425 in one
-  afternoon, always W=190 H=60. The per-second re-discovery is load-bearing.
-- **The VFD-ice golden depicts what it should.** 190x60, 25 evenly spaced bars, dormant
-  ghost grid above the lit region, blank rows where segment gaps were punched, and the
-  `#%%%#` profile showing the dimmer edge with the brighter inset hot core.
+- The overlay composites over the widget. Confirmed twice by independent code sampling its
+  own pixels: 3120 and 960 ice-blue pixels, each an exact match for the bars drawn, so no
+  blend loss. 800+ distinct colours in the capture rules out the locked-session false
+  negative (a locked Windows session makes screen capture silently return solid black).
+- WASAPI reads real audio: RMS 0.0000 while silent, then 0.024 → 0.082 → 0.121 with
+  distinct L/R channels.
+- The spectrum no longer pegs. Sampled bar heights went from `[@@@@…]` 26/26 bars at 60/60
+  to `[***++-------:-------:::::.]` peaking at 42–45/60 with bass high and treble present.
+- Every colourway's `lit` colour clears 3:1 contrast against its own panel — computed via
+  WCAG luminance in a test, not eyeballed.
 
-**NOT verified — needs your eyes:**
+**Not verified — needs a human, or hardware I do not have:**
 
-- Whether any of it actually **looks good**. No agent can judge that.
-- Whether the bar ballistics *feel* right against real music.
-- Whether the reveal/hide timings feel right in practice (400ms in, 2s out).
-- Everything in Tasks 11–16, which do not exist yet.
+- Whether any of it actually *looks* good. No automated check substitutes for that.
+- Whether the five colourways read correctly at 190×60.
+- Whether the chevron fallback lands somewhere sensible. The maths is tested; the
+  aesthetics of the resulting position are not.
+- **Anything on Windows 10 or on a second machine.** Reasoning from code, not evidence.
 
-Screen capture returns solid black on a locked session, so anything needing pixels had to
-happen while you were logged in. That is why Task 5's verification was front-loaded.
+## Build and run
 
-## Resume instructions
-
-```bash
-cd C:\Users\cwisset\Documents\projects\taskbar-eq
-git log --oneline | head -5          # confirm HEAD
-git status --short                   # MUST be clean; see "if dirty" below
-cargo test                           # expect 65 passing, 1 ignored
+```
+cargo build --release          # needs the Rust stable MSVC toolchain
+target/release/taskbar-eq.exe
 ```
 
-The ledger at `.superpowers/sdd/2026-07-30-taskbar-eq/progress.md` is the authoritative
-record — trust it and `git log` over anyone's recollection, including mine.
+Quit from the tray icon. There is deliberately no other quit path: when nothing is playing
+the overlay does not exist, so the tray icon is the only thing left to click.
 
-**Next actions in order:**
+## Things that cost real time to discover
 
-1. **Review Task 10.** It is committed but its review never ran. Do not treat it as done.
-   `bash <superpowers>/skills/subagent-driven-development/scripts/review-package \
-      docs/superpowers/plans/2026-07-30-taskbar-eq.md bf4c672 e1d918b`
-2. **Run chunk 3 for the rest.** The workflow scripts are reusable:
-   `Workflow({scriptPath: ".superpowers/sdd/2026-07-30-taskbar-eq/chunk3.js"})` covers
-   Tasks 10–13. Build a `chunk4.js` the same way for 14–16 (copy chunk3.js, swap the
-   `TASKS` array and `meta`). **Strip CR characters and non-ASCII control chars from any
-   assembled script** or the Workflow tool rejects it.
-3. **Final whole-branch review on Opus**, pointed at the deferred-minor list in the ledger.
-4. **Then the things only you can do:** run it with music, cycle the themes, and judge.
-
-**If the working tree is dirty on resume:** an agent died mid-task. Read the diff before
-anything else — that happened once already at Task 4 and the uncommitted work contained two
-genuine panic fixes worth keeping. Do not discard it blind.
-
-## Defects found so far
-
-Recorded because they are the useful output of the review loop, and several were in my own
-plan text rather than in anyone's implementation.
+Kept because they are the useful output, and several were defects in the plan rather than in
+anyone's implementation.
 
 **Would have shipped as working-but-wrong:**
 
-- `QUNS_FULLSCREEN`/`QUNS_PRESENTATION` were transposed (6 and 3; real values are 3 and 4,
-  and 6 is `QUIET_TIME`). The overlay would have hidden during quiet hours and drawn over
-  fullscreen games — exactly backwards, and it compiled and tested fine.
-- A **vacuous test**: `output_is_normalised_within_range` asserted `(0.0..=1.0).contains(&v)`
-  against a function that clamps to exactly that range. It would have passed against a
-  function returning all zeros. Proven vacuous by swapping in a no-op `process()`.
-- `debug_assert_eq!` for the FFT-size precondition — compiled out in release, so unchecked
-  in the shipping binary.
+- `QUNS_FULLSCREEN`/`QUNS_PRESENTATION` were transposed (6 and 3; the real values are 3 and
+  4, and 6 is `QUIET_TIME`). The overlay would have hidden during quiet hours and drawn over
+  fullscreen games. It compiled and tested fine.
+- A **vacuous test** asserting `(0.0..=1.0).contains(&v)` against a function that clamps to
+  exactly that range — it would have passed against a function returning all zeros. Proven
+  vacuous by swapping in a no-op implementation.
+- `debug_assert_eq!` for an FFT-size precondition: compiled out in release, so unchecked in
+  the shipping binary.
+- A test config containing `this is not toml {{{` left behind in `%APPDATA%` by a test,
+  which silently forced default settings on every launch — so theme choices never persisted.
 
 **Crash vectors:**
 
-- `from_hex` panicked instead of degrading: `len()` is a byte count, so a 6-byte non-ASCII
+- `from_hex` panicked rather than degrading: `len()` is a byte count, so a 6-byte non-ASCII
   string passed the length check then sliced across a UTF-8 char boundary. Reachable from a
-  hand-edited theme file — the one input you are meant to author yourself.
-- `rounded_rect` panicked in **release** builds: `w.min(h)/2` goes negative for a negative
-  dimension and `i32::clamp`'s `min <= max` assertion is unconditional, not debug-only.
-- **NaN poisoning** in the ballistics: NaN propagates through a one-pole filter and `clamp`
-  does not sanitise it, so one bad sample freezes the meter permanently.
+  hand-edited theme file.
+- `rounded_rect` panicked in **release**: `w.min(h)/2` goes negative for a negative
+  dimension and `i32::clamp`'s assertion is unconditional, not debug-only.
+- NaN propagates through a one-pole filter and `clamp` does not sanitise it, so one bad
+  sample froze the meter permanently.
 
-**Resource and API:**
+**Rendering, all of which looked plausible and were wrong:**
 
-- A **GDI handle leak** on `Overlay::show`'s error path — per frame at 60fps.
-- An **unbounded capture→render channel** a stalled consumer could grow without limit.
-- A heap allocation per FFT call in the audio hot path (`process()` → `process_with_scratch()`).
+- `Canvas::bloom` composites its halo **under** existing content, so an opaque panel hid the
+  glow entirely. Raising `panel_alpha` to fix weather bleed-through is what killed the glow.
+- It also scaled the four premultiplied channels independently, each clamping at 255. Since
+  RGB ≤ A, alpha saturates first and the result is opaque-but-dark pixels — a black wash
+  wherever the halo was strongest.
+- Bloom radius must stay small relative to the 7px bar pitch or every halo merges into one
+  diffuse mass *behind* the segments. Radius is the wrong lever for "brighter"; strength is.
+- `punch_row` zeroes alpha across the **full canvas width**, so using it for segment gaps
+  erased the panel too and left transparent stripes with the taskbar showing through.
+  Painting the gaps with panel colour is correct; punching them is not.
+- Discarding a known-good widget rect on the first UIA miss hid the overlay for a second and
+  the real weather showed through — which looked exactly like bleed-through but was absence.
 
-**Still outstanding (known, not yet hit):** the plan's Task 11 `Tray::poll()` synthesises
-`TrayEvent::Quit` on right-click, which would quit the app when you right-click the tray
-icon. My ruling is in the ledger and in chunk3.js's Task 11 briefing — poll() must record a
-right-click flag only, and Quit must come solely from the menu returning `ID_QUIT`.
-
-## Verified API facts
-
-Fifteen hard-won facts are in the `GOTCHAS` block of
-`.superpowers/sdd/2026-07-30-taskbar-eq/chunk3.js` and are passed to every agent. The ones
-that cost the most time:
+**Verified API facts:**
 
 1. `AC_SRC_ALPHA`/`AC_SRC_OVER`/`BLENDFUNCTION` are in `Graphics::Gdi`, not
    `UI::WindowsAndMessaging`.
 2. `CoInitializeEx` returns `HRESULT`, not `Result` — `.ok()` is required.
 3. `IMMDevice::Activate` needs the `Win32_System_Com_StructuredStorage` and
-   `Win32_System_Variant` features or it silently does not exist.
-4. `DPI_AWARENESS_CONTEXT` is an opaque `*mut c_void`. A real v2 context read back as
-   `0x22` against a `-4` sentinel, so never compare raw values. `AreDpiAwarenessContextsEqual`
-   *does* discriminate v1 from v2 (measured — contradicting a review that claimed otherwise).
-5. Verify screen output from **inside** the process that drew it. Sampling from a separate
-   PowerShell process produced 12 byte-identical readings because `Add-Type` startup
-   outlasted the overlay's hold window.
+   `Win32_System_Variant` features or the method silently does not exist.
+4. `DPI_AWARENESS_CONTEXT` is an opaque `*mut c_void`; a real per-monitor-v2 context read
+   back as `0x22` against a `-4` sentinel, so never compare raw values.
+5. `WS_EX_NOACTIVATE` does **not** make a window click-through — it still receives mouse
+   messages. `WS_EX_TRANSPARENT` does.
+6. Verify screen output from **inside** the process that drew it. Sampling from a separate
+   process produced twelve byte-identical readings because its startup outlasted the
+   overlay's hold window.
+
+## Layout
+
+| Path | What |
+|---|---|
+| `src/dsp/` | FFT, band mapping, ballistics, the reveal/hide gate — all pure, no Windows deps |
+| `src/render/` | Canvas rasteriser and the family renderers |
+| `src/themes/` | Theme model and the built-in colourways |
+| `src/win/` | The thin Win32 edges: DPI, placement, overlay, capture, tray, autostart |
+| `docs/superpowers/` | Design specs and the implementation plan |
+| `docs/reference/` | Browser mockups that are the reference implementation of each renderer |
+| `tools/probe/` | Read-only scripts for re-measuring the taskbar on another machine |
+| `tests/golden/` | ASCII luminance maps — a visual regression shows up as a readable diff |
+
+Goldens are ASCII rather than PNG on purpose: a 190×60 canvas becomes 60 readable lines, so
+a rendering change is reviewable in a diff and needs no image dependency. The catch is that
+a golden generated from a broken renderer locks the bug in, so any regenerated golden must
+be opened and read before being committed.
