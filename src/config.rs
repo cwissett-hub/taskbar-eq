@@ -72,6 +72,17 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    // Every test below that touches the real Config::path() file (the
+    // round-trip test plus the two load()-against-a-real-file tests added
+    // for the corrupt/missing-file finding) shares that one file on disk.
+    // A plain `cargo test` runs tests in the same binary in parallel by
+    // default, so without serialising them one test's write/restore can
+    // race another's - the exact failure mode already fixed for the
+    // registry in win::autostart::tests. Lock for the duration of any test
+    // that reads or writes Config::path().
+    static CONFIG_FILE_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn defaults_match_the_spec() {
@@ -102,8 +113,66 @@ mod tests {
 
     #[test]
     fn a_corrupt_file_does_not_panic() {
+        // This only pins down that the `toml` crate itself returns `Err` for
+        // garbage input - a property of that crate, not of this codebase's
+        // error handling. It does NOT exercise Config::load() at all; see
+        // `load_falls_back_to_defaults_on_a_real_corrupt_file` below for a
+        // test that actually calls load() against a corrupt file on disk.
         assert!(toml::from_str::<Config>("this is not toml {{{").is_err());
-        // load() swallows that error; proven by defaults_match_the_spec plus this.
+    }
+
+    /// Drives the actual requirement ("a bad config must not stop the app
+    /// starting") through the real function against the real path: writes
+    /// garbage bytes to Config::path(), calls Config::load(), and asserts it
+    /// returns Config::default() without panicking. Self-restoring like
+    /// `save_then_load_round_trips_through_the_real_filesystem`.
+    #[test]
+    fn load_falls_back_to_defaults_on_a_real_corrupt_file() {
+        let _guard = CONFIG_FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let path = Config::path();
+        let backup = std::fs::read_to_string(&path).ok();
+
+        std::fs::create_dir_all(Config::dir()).expect("dir should be creatable");
+        std::fs::write(&path, "this is not toml {{{").expect("writing garbage should succeed");
+
+        assert_eq!(
+            Config::load(),
+            Config::default(),
+            "load() must fall back to defaults instead of panicking on a corrupt file"
+        );
+
+        match backup {
+            Some(original) => {
+                std::fs::write(&path, original).expect("restoring the original config must succeed");
+            }
+            None => {
+                std::fs::remove_file(&path).ok();
+            }
+        }
+    }
+
+    /// Same requirement, missing-file case: delete whatever is at
+    /// Config::path() and confirm load() still returns defaults rather than
+    /// propagating the I/O error.
+    #[test]
+    fn load_falls_back_to_defaults_on_a_missing_file() {
+        let _guard = CONFIG_FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let path = Config::path();
+        let backup = std::fs::read_to_string(&path).ok();
+
+        std::fs::remove_file(&path).ok();
+        assert!(!path.exists(), "precondition: file must actually be gone");
+
+        assert_eq!(
+            Config::load(),
+            Config::default(),
+            "load() must fall back to defaults instead of panicking on a missing file"
+        );
+
+        if let Some(original) = backup {
+            std::fs::create_dir_all(Config::dir()).expect("dir should be creatable");
+            std::fs::write(&path, original).expect("restoring the original config must succeed");
+        }
     }
 
     #[test]
@@ -126,6 +195,7 @@ mod tests {
     /// back up and restore whatever real config was on disk before running.
     #[test]
     fn save_then_load_round_trips_through_the_real_filesystem() {
+        let _guard = CONFIG_FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let path = Config::path();
         let backup = std::fs::read_to_string(&path).ok();
 
