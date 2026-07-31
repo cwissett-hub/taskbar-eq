@@ -19,8 +19,19 @@ fn main() -> Result<()> {
 
     let overlay = win::overlay::Overlay::new()?;
 
+    // The capture thread owns its own COM apartment and runs independently;
+    // drain non-blockingly each tick so a quiet endpoint never stalls the
+    // render loop (the audio thread must never block on rendering, and
+    // rendering must never block on audio either).
+    let rx = win::capture::start();
+    let mut latest = win::capture::Frame::default();
+
     // 15 seconds of a flat VFD-ice panel so it can be looked at and screenshotted.
     for i in 0..150 {
+        while let Ok(f) = rx.try_recv() {
+            latest = f;
+        }
+
         let widget = win::placement::find_widget_rect()?;
         let inputs = win::visibility::Inputs {
             widget,
@@ -36,7 +47,16 @@ fn main() -> Result<()> {
             canvas.bloom(6, 0.8);
             overlay.show(r, &canvas)?;
             if i % 10 == 0 {
-                println!("showing at {r:?}");
+                let bars: String = latest
+                    .bands
+                    .iter()
+                    .step_by(8)
+                    .map(|&v| " .:-=+*#%@".chars().nth((v * 9.0) as usize).unwrap())
+                    .collect();
+                println!(
+                    "showing at {r:?} rms={:.4} L={:.3} R={:.3} [{bars}]",
+                    latest.rms, latest.rms_l, latest.rms_r
+                );
             }
         } else {
             overlay.hide()?;
