@@ -89,6 +89,12 @@ impl Canvas {
         )
     }
 
+    // Pixel read-back has no production consumer yet - `main`'s render loop
+    // only ever writes a Canvas and hands it to the overlay. It is exercised
+    // by the render test suite (including golden-file generation via
+    // `render::golden::canvas_to_ascii`) and is the basis for any future
+    // self-sampling verification, so it stays public rather than test-only.
+    #[allow(dead_code)]
     pub fn get(&self, x: i32, y: i32) -> Rgba {
         match self.idx(x, y) {
             Some(i) => Self::unpack(self.px[i]),

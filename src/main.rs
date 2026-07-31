@@ -1,10 +1,15 @@
 mod dsp;
 mod geom;
 mod render;
+mod themes;
 mod win;
 
 use anyhow::Result;
-use render::canvas::{Canvas, Rgba};
+use dsp::ballistics::Smoother;
+use dsp::gate::{Gate, GateConfig};
+use render::canvas::Canvas;
+use render::FrameData;
+use win::capture::Frame;
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 
 fn main() -> Result<()> {
@@ -17,53 +22,55 @@ fn main() -> Result<()> {
         eprintln!("CoInitializeEx failed: {e}");
     }
 
+    let theme = themes::builtin::vfd_ice();
+    let mut family = render::family_for(&theme.family);
+    let mut smoother = Smoother::new(theme.ballistics);
+    let mut gate = Gate::new(GateConfig::default());
     let overlay = win::overlay::Overlay::new()?;
-
-    // The capture thread owns its own COM apartment and runs independently;
-    // drain non-blockingly each tick so a quiet endpoint never stalls the
-    // render loop (the audio thread must never block on rendering, and
-    // rendering must never block on audio either).
     let rx = win::capture::start();
-    let mut latest = win::capture::Frame::default();
 
-    // 15 seconds of a flat VFD-ice panel so it can be looked at and screenshotted.
-    for i in 0..150 {
+    let mut latest = Frame::default();
+    let mut rect_tick = 0u32;
+    let mut rect = None;
+
+    loop {
         while let Ok(f) = rx.try_recv() {
             latest = f;
         }
 
-        let widget = win::placement::find_widget_rect()?;
+        // Re-discover the rect once a second - it moves with the weather text.
+        if rect_tick == 0 {
+            rect = win::placement::find_widget_rect().unwrap_or(None);
+        }
+        rect_tick = (rect_tick + 1) % 60;
+
         let inputs = win::visibility::Inputs {
-            widget,
+            widget: rect,
             notification_state: win::placement::notification_state(),
             taskbar_visible: win::placement::taskbar_visible(),
         };
 
-        if win::visibility::should_show(&inputs) {
-            let r = inputs.widget.unwrap();
+        let opacity = gate.update(latest.rms, 16);
+        smoother.update(&latest.bands);
+
+        if win::visibility::should_show(&inputs) && gate.is_visible() {
+            let r = rect.unwrap();
             let mut canvas = Canvas::new(r.w, r.h);
-            canvas.rounded_rect(1, 2, r.w - 2, r.h - 4, 4, Rgba::from_hex("#040a0e", 0.55));
-            canvas.fill_rect(r.w / 2 - 30, r.h / 2 - 8, 60, 16, Rgba::from_hex("#8fe4ff", 1.0));
-            canvas.bloom(6, 0.8);
+            let data = FrameData {
+                levels: *smoother.levels(),
+                peaks: *smoother.peaks(),
+                waveform: latest.waveform,
+                rms_l: latest.rms_l,
+                rms_r: latest.rms_r,
+            };
+            family.draw(&mut canvas, &theme, &data);
+            let _ = opacity; // applied via theme alpha in Task 11
             overlay.show(r, &canvas)?;
-            if i % 10 == 0 {
-                let bars: String = latest
-                    .bands
-                    .iter()
-                    .step_by(8)
-                    .map(|&v| " .:-=+*#%@".chars().nth((v * 9.0) as usize).unwrap())
-                    .collect();
-                println!(
-                    "showing at {r:?} rms={:.4} L={:.3} R={:.3} [{bars}]",
-                    latest.rms, latest.rms_l, latest.rms_r
-                );
-            }
         } else {
             overlay.hide()?;
         }
 
         overlay.pump_messages();
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        std::thread::sleep(std::time::Duration::from_millis(16));
     }
-    Ok(())
 }
