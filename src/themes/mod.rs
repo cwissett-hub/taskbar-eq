@@ -1,4 +1,5 @@
 pub mod builtin;
+pub mod schema;
 
 use crate::dsp::ballistics::Ballistics;
 
@@ -124,5 +125,75 @@ impl Theme {
         } else {
             "#ff5a46"
         }
+    }
+}
+
+/// Built-ins first, then `%APPDATA%\taskbar-eq\themes\*.toml`. An external theme
+/// sharing a built-in `id` replaces it; a new `id` is appended.
+pub fn registry() -> (Vec<Theme>, Vec<String>) {
+    let mut themes = builtin::all();
+    let dir = crate::config::Config::dir().join("themes");
+    let (external, warnings) = schema::load_dir(&dir);
+    for ext in external {
+        match themes.iter().position(|t| t.id == ext.id) {
+            Some(i) => themes[i] = ext,
+            None => themes.push(ext),
+        }
+    }
+    (themes, warnings)
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn an_external_theme_overrides_a_builtin_of_the_same_id() {
+        let mut themes = builtin::all();
+        let (external, _) = schema::load_dir(Path::new("tests/themes"));
+        let before = themes.len();
+        for ext in external {
+            match themes.iter().position(|t| t.id == ext.id) {
+                Some(i) => themes[i] = ext,
+                None => themes.push(ext),
+            }
+        }
+        let ice = themes.iter().find(|t| t.id == "vfd-ice").expect("vfd-ice present");
+        assert_eq!(ice.name, "VFD Ice (mine)", "override should replace the built-in");
+        assert_eq!(ice.lit, "#00ffff");
+        assert!(themes.iter().any(|t| t.id == "my-purple"), "new ids are appended");
+        assert!(themes.len() > before, "new themes increase the count");
+        assert_eq!(
+            themes.iter().filter(|t| t.id == "vfd-ice").count(),
+            1,
+            "override must replace, not duplicate"
+        );
+    }
+
+    /// The test above drives the merge logic directly against `tests/themes`,
+    /// bypassing `registry()`'s own `Config::dir().join("themes")` lookup entirely.
+    /// This one exercises `registry()` itself against the real, environment-derived
+    /// directory - self-restoring, like `config::tests`' real-filesystem cases.
+    #[test]
+    fn registry_reads_the_real_appdata_themes_directory() {
+        let dir = crate::config::Config::dir().join("themes");
+        std::fs::create_dir_all(&dir).expect("themes dir should be creatable");
+        let marker = dir.join("__registry_test_marker.toml");
+        std::fs::write(
+            &marker,
+            "schema = 1\nid = \"__registry-test-marker\"\nname = \"Marker\"\nfamily = \"segmented\"",
+        )
+        .expect("writing the marker file should succeed");
+
+        let (themes, warnings) = registry();
+
+        std::fs::remove_file(&marker).ok();
+
+        assert!(warnings.is_empty(), "a valid marker file should not warn: {warnings:?}");
+        assert!(
+            themes.iter().any(|t| t.id == "__registry-test-marker"),
+            "registry() must pick up a real file from %APPDATA%\\taskbar-eq\\themes"
+        );
     }
 }

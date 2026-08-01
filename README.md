@@ -78,7 +78,7 @@ overlay does not exist, so the tray icon is all that is left to click.
 
 ## Status
 
-**Last updated: 2026-08-01.** 154 tests passing, release build warning-free.
+**Last updated: 2026-08-01.** 167 tests passing, release build warning-free.
 
 | | Feature | State |
 |---|---|---|
@@ -94,7 +94,7 @@ overlay does not exist, so the tray icon is all that is left to click.
 | ✅ | Right-click equaliser → theme menu; left-click → `Win+W` | working |
 | 🔜 | Oscilloscope family — 5 phosphors, persistence trace | in progress |
 | 🔜 | Analogue VU family — 5 dial backlights, twin needles | in progress |
-| 🔜 | External TOML colourways with a versioned schema | queued |
+| ✅ | External TOML colourways with a versioned schema, override-by-id | working |
 | 🔜 | Hot reload of theme files | queued |
 | ✅ | Canvas primitives for scene families (line, polygon, gradients, circles) | done |
 | 📋 | Vaporwave grid family ([specced](docs/superpowers/specs/2026-07-31-vaporwave-grid-family-design.md)) | ready to build |
@@ -130,8 +130,16 @@ trace) and an **analogue VU** (twin backlit needle dials with ~300 ms ballistics
 
 ### Adding your own
 
-Once the TOML work lands, dropping a `.toml` file in `%APPDATA%\taskbar-eq\themes\` will make
-it appear in the menu, hot-reloaded. Until then colourways live in `src/themes/builtin.rs`.
+Drop a `.toml` file (any filename, `id` inside is what matters) into
+`%APPDATA%\taskbar-eq\themes\` and it appears in the menu the next time the app starts.
+Hot reload — picking it up without a restart — is not wired yet.
+
+A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside
+the 15 built-ins, which are always embedded in the exe regardless of whether that folder
+exists. A malformed file is skipped with a warning printed to the console; it does not
+stop the others from loading. See the schema in the prompt below for the exact file
+format — `schema = 1` plus `[colour]` / `[look]` / `[ballistics]` / optional `[[zone]]`
+tables.
 
 ---
 
@@ -169,16 +177,69 @@ PICK A FAMILY - a renderer with fixed geometry. You cannot invent one in data.
   scope      an oscilloscope trace with a graticule and phosphor persistence
   vu         two analogue needle dials with a printed arc and a red overload zone
 
+FILE FORMAT - one `.toml` file per theme, saved under `%APPDATA%\taskbar-eq\themes\`
+(filename does not matter; `id` inside is the identity, and the override key - a file
+whose `id` matches one of the 15 built-ins REPLACES it, any other `id` is added):
+
+  schema = 1
+  id     = "my-theme"
+  name   = "My Theme"
+  family = "segmented"
+
+  [colour]
+  lit         = "#..."
+  hot         = "#..."
+  panel       = "#..."
+  panel_alpha = 1.0
+  edge        = "#..."
+  edge_alpha  = 0.15
+
+  [look]
+  ghost         = 0.11
+  bloom         = 5.0
+  glow_strength = 0.35
+  edge_glow     = 4.0
+  fade          = 0.30
+  texture       = "glass"
+
+  [ballistics]
+  attack    = 0.55
+  decay     = 0.11
+  peak_fall = 0.005
+
+  # optional, repeatable - see "zones" below
+  [[zone]]
+  upto = 0.5
+  lit  = "#..."
+  hot  = "#..."
+
+  # optional, scope family only - see "dual" below
+  [dual]
+  trail = "#..."
+  fade  = 0.055
+
+Every field below is optional except `schema`/`id`/`name`/`family` - anything you omit
+takes the documented default, so a minimal file is valid. Unknown keys and unknown
+`texture` values are ignored rather than rejected, so a file written for a later
+version of this schema still loads.
+
 FIELDS
-  id            kebab-case, stable, unique. Also the filename.
+  schema        always `1` - the version of this file format. A newer number than the
+                app understands is rejected outright (with a message naming both
+                numbers), not silently reinterpreted.
+  id            kebab-case, stable, unique. Also the override key - see FILE FORMAT.
   name          shown in a context menu, so keep it short.
   family        segmented | scope | vu
+
+  [colour]
   lit           the main emissive colour
   hot           the brighter core. Usually `lit` pushed toward white, not a new hue.
   panel         the display panel. Near-black, tinted toward `lit`'s hue - this is
                 what makes each theme feel like its own device rather than a recolour.
   panel_alpha   1.0. See constraint 2.
   edge          1px bezel line;  edge_alpha  0.10-0.25
+
+  [look]
   ghost         alpha of the unlit dormant grid. 0 hides it; 0.17 is clearly visible.
   bloom         halo RADIUS in px, NOT brightness. Must stay small relative to the 7px
                 bar pitch - at 16 the halos of adjacent bars merged into one wash
@@ -188,14 +249,27 @@ FIELDS
   edge_glow     a dim halo masked to the display's edge ring, as a multiple of
                 glow_strength. ~4.0 reads as the bezel catching light. 0.3 measured
                 DARKER than the panel it sat on, so do not go low.
-  attack/decay  0-1 per frame. decay MUST be lower than attack - fast attack with slow
-                decay is what makes a meter feel right. Never set them equal.
-  peak_fall     how fast peak-hold marks sink. Small = slow.
+  fade          cross-fade duration in seconds when switching to this theme at
+                runtime. 0.30 is the shipped default; unrelated to `[dual].fade` below.
   texture       glass | scanlines | haze | filament | grille | none
                 glass=lit top edge, scanlines=CRT lines, haze=neon radial glow,
                 filament=warm pool along the bottom, grille=fine vertical lines
-  zones         optional, for meters that change colour by height (see the classic
-                three-colour built-in). Ascending, last one >= 1.0.
+
+  [ballistics]
+  attack/decay  0-1 per frame. decay MUST be lower than attack - fast attack with slow
+                decay is what makes a meter feel right. Never set them equal.
+  peak_fall     how fast peak-hold marks sink. Small = slow.
+
+  [[zone]]      optional, repeatable table array, for meters that change colour by
+                height (see the classic three-colour built-in). Each has upto/lit/hot;
+                upto values must ascend and the last one must be >= 1.0.
+
+  [dual]        optional, scope family only - a second, slower-fading phosphor layer
+                behind the trace (real P7 tubes work this way: a blue-white flash over
+                a lingering yellow-green afterglow).
+  trail         hex colour of the afterglow layer.
+  fade          0-1 per frame, how fast the afterglow decays. Small = slow. Distinct
+                from `[look].fade` (the theme cross-fade) above.
 
 MEASURED REFERENCE - the five shipped colourways, so you can anchor your numbers
 rather than guess. "ratio" is the luminance of a lit segment divided by the gap
@@ -224,7 +298,8 @@ WHAT I WANT
   <describe: how many, what mood, which families, any reference hardware>
 
 FOR EACH THEME, TELL ME
-  1. Every field value.
+  1. The finished `.toml` file in the FILE FORMAT above, ready to drop into
+     `%APPDATA%\taskbar-eq\themes\`.
   2. The computed contrast ratio of `lit` against `panel`, as a number.
   3. Which shipped colourway in the table above yours sits closest to, and why you
      departed from it.
@@ -243,7 +318,7 @@ Requires the [Rust stable MSVC toolchain](https://rustup.rs). No other dependenc
 git clone https://github.com/cwissett-hub/taskbar-eq
 cd taskbar-eq
 cargo build --release        # -> target/release/taskbar-eq.exe
-cargo test                   # 102 tests
+cargo test                   # 167 tests
 ```
 
 Building yourself also sidesteps the SmartScreen prompt entirely.

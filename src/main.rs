@@ -26,7 +26,12 @@ fn main() -> Result<()> {
     }
 
     let mut cfg = Config::load();
-    let all_themes = themes::builtin::all();
+    // Built-ins merged with any `%APPDATA%\taskbar-eq\themes\*.toml` overrides. A
+    // malformed external file is skipped, not fatal - it is hand-authored data.
+    let (all_themes, theme_warnings) = themes::registry();
+    for w in &theme_warnings {
+        eprintln!("theme: {w}");
+    }
     let theme_menu: Vec<(String, String)> = all_themes
         .iter()
         .map(|t| (t.id.clone(), t.name.clone()))

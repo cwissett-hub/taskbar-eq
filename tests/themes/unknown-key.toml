@@ -1,0 +1,23 @@
+schema = 1
+id     = "unknown-key-theme"
+name   = "My Purple"
+family = "segmented"
+
+[colour]
+lit         = "#c07fff"
+hot         = "#ecd9ff"
+panel       = "#0a040f"
+panel_alpha = 0.62
+edge        = "#c07fff"
+edge_alpha  = 0.15
+
+[look]
+ghost   = 0.12
+bloom   = 10.0
+texture = "haze"
+sparkle = true
+
+[ballistics]
+attack    = 0.55
+decay     = 0.11
+peak_fall = 0.005

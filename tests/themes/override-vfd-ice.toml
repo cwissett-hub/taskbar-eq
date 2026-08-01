@@ -1,0 +1,10 @@
+schema = 1
+id     = "vfd-ice"
+name   = "VFD Ice (mine)"
+family = "segmented"
+
+[colour]
+lit         = "#00ffff"
+hot         = "#ccffff"
+panel       = "#000508"
+panel_alpha = 1.0

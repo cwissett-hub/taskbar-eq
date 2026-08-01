@@ -1,0 +1,18 @@
+schema = 1
+id     = "my-meter"
+name   = "My Meter"
+family = "segmented"
+
+[colour]
+panel       = "#050505"
+panel_alpha = 1.0
+
+[[zone]]
+upto = 0.5
+lit  = "#40e060"
+hot  = "#c0ffd0"
+
+[[zone]]
+upto = 1.0
+lit  = "#ff4030"
+hot  = "#ffc0b0"
