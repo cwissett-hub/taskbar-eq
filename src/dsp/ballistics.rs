@@ -144,6 +144,27 @@ mod tests {
     }
 
     #[test]
+    fn set_ballistics_changes_the_rates_but_preserves_levels_and_peaks() {
+        // Task 16 relies on this: a hot reload of the SAME theme must not
+        // reset the meter, only adopt new ballistics. `set_ballistics` already
+        // does this (it only assigns `self.b`), but nothing pinned it down
+        // before hot reload started depending on it - this test is a
+        // characterisation test for pre-existing behaviour, not new logic.
+        let mut s = Smoother::new(Ballistics::default());
+        for _ in 0..30 {
+            s.update(&flat(0.8));
+        }
+        let levels_before = *s.levels();
+        let peaks_before = *s.peaks();
+        assert!(levels_before[0] > 0.0, "precondition: the meter must have moved");
+
+        s.set_ballistics(Ballistics { attack: 0.9, decay: 0.02, peak_fall: 0.001 });
+
+        assert_eq!(*s.levels(), levels_before, "levels must survive a ballistics swap");
+        assert_eq!(*s.peaks(), peaks_before, "peaks must survive a ballistics swap");
+    }
+
+    #[test]
     fn a_single_nan_sample_does_not_poison_the_level_forever() {
         let mut s = Smoother::new(Ballistics::default());
         s.update(&flat(0.5));

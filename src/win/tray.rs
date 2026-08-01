@@ -95,11 +95,27 @@ impl Tray {
         }
     }
 
-    /// Shows the context menu and returns the chosen event, if any.
+    /// Shows the context menu and returns the chosen event, if any. Builds the
+    /// theme list from this `Tray`'s own stored snapshot - see `set_themes` for
+    /// how that snapshot is kept live across a hot reload.
     pub fn show_menu(&self, autostart: bool, current_theme: &str) -> Option<TrayEvent> {
+        self.show_menu_for(&self.themes, autostart, current_theme)
+    }
+
+    /// Shows the context menu built from an explicit theme list. This is the
+    /// one Win32 menu implementation shared by both entry points: the tray
+    /// icon's right-click (via `show_menu`, above) and a right-click on the
+    /// equaliser overlay itself, which has no `Tray` state of its own to keep
+    /// in sync and so passes the current registry straight through.
+    pub fn show_menu_for(
+        &self,
+        items: &[(String, String)],
+        autostart: bool,
+        current_theme: &str,
+    ) -> Option<TrayEvent> {
         unsafe {
             let menu: HMENU = CreatePopupMenu().ok()?;
-            for (i, (id, name)) in self.themes.iter().enumerate() {
+            for (i, (id, name)) in items.iter().enumerate() {
                 let flags = if id == current_theme {
                     MF_STRING | MF_CHECKED
                 } else {
@@ -146,13 +162,21 @@ impl Tray {
             } else if id == ID_AUTOSTART {
                 Some(TrayEvent::ToggleAutostart)
             } else if id >= ID_THEME_BASE {
-                self.themes
+                items
                     .get(id - ID_THEME_BASE)
                     .map(|(tid, _)| TrayEvent::SelectTheme(tid.clone()))
             } else {
                 None
             }
         }
+    }
+
+    /// Replaces the stored theme snapshot used by `show_menu`, so a hot reload
+    /// (which can add, remove or rename colourways) is reflected the next time
+    /// either the tray icon or the overlay is right-clicked, without needing a
+    /// restart.
+    pub fn set_themes(&mut self, items: &[(String, String)]) {
+        self.themes = items.to_vec();
     }
 
     /// Pumps this window's message queue. Never produces `TrayEvent::Quit`
@@ -217,6 +241,21 @@ mod tests {
         // Shell_NotifyIconW/NIM_DELETE has no queryable API to assert against
         // from within the same process - absence of a ghost icon is verified
         // by hand (Step 7 of the task brief).
+    }
+
+    #[test]
+    fn set_themes_replaces_the_stored_list_so_a_hot_reload_is_reflected() {
+        let mut tray = Tray::new(&[("old".into(), "Old".into())])
+            .expect("tray icon creation should succeed on a real desktop session");
+        assert_eq!(tray.themes, vec![("old".to_string(), "Old".to_string())]);
+
+        tray.set_themes(&[("new".into(), "New".into()), ("newer".into(), "Newer".into())]);
+
+        assert_eq!(
+            tray.themes,
+            vec![("new".to_string(), "New".to_string()), ("newer".to_string(), "Newer".to_string())],
+            "set_themes must replace the snapshot show_menu reads from"
+        );
     }
 
     #[test]

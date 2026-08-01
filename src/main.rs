@@ -28,7 +28,7 @@ fn main() -> Result<()> {
     let mut cfg = Config::load();
     // Built-ins merged with any `%APPDATA%\taskbar-eq\themes\*.toml` overrides. A
     // malformed external file is skipped, not fatal - it is hand-authored data.
-    let (all_themes, theme_warnings) = themes::registry();
+    let (mut all_themes, theme_warnings) = themes::registry();
     for w in &theme_warnings {
         eprintln!("theme: {w}");
     }
@@ -36,6 +36,12 @@ fn main() -> Result<()> {
         .iter()
         .map(|t| (t.id.clone(), t.name.clone()))
         .collect();
+    // Watches `%APPDATA%\taskbar-eq\themes` and flags a batch of edits so the
+    // loop below can reload without a restart. A watch that could not be
+    // established (e.g. the directory is unwatchable) degrades to
+    // `changed()` always returning false - already warned about inside
+    // `Watcher::new` - rather than crashing the app.
+    let watcher = themes::watch::Watcher::new();
 
     let mut theme = all_themes
         .iter()
@@ -66,6 +72,39 @@ fn main() -> Result<()> {
     loop {
         while let Ok(f) = rx.try_recv() {
             latest = f;
+        }
+
+        // Reload themes when a file under the themes directory changes. Keeps
+        // the current selection if it survives the reload, and never resets
+        // the meter for this - only a deliberate theme switch (below) does
+        // that. `set_themes` pushes the fresh list into the tray so both
+        // right-click entry points see it immediately, without a restart.
+        if watcher.changed() {
+            let (fresh, warnings) = themes::registry();
+            for w in &warnings {
+                eprintln!("themes: {w}");
+            }
+            all_themes = fresh;
+            let resolved = themes::reconcile_reload(&all_themes, &cfg.theme);
+            let selection_changed = resolved.id != cfg.theme;
+            theme = resolved;
+            family = render::family_for(&theme.family);
+            smoother.set_ballistics(theme.ballistics);
+            if selection_changed {
+                // The previously-selected theme's file was deleted - fall back
+                // rather than leaving the app pointing at nothing, and persist
+                // the fallback so a restart does not reselect a ghost id.
+                cfg.theme = theme.id.clone();
+                if let Err(e) = cfg.save() {
+                    eprintln!("config save failed: {e}");
+                }
+            }
+            let live_menu: Vec<(String, String)> = all_themes
+                .iter()
+                .map(|t| (t.id.clone(), t.name.clone()))
+                .collect();
+            tray.set_themes(&live_menu);
+            println!("themes: reloaded {} colourways", all_themes.len());
         }
 
         // poll() never synthesises Quit - it only records that a right-click

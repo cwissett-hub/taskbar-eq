@@ -1,5 +1,6 @@
 pub mod builtin;
 pub mod schema;
+pub mod watch;
 
 use crate::dsp::ballistics::Ballistics;
 
@@ -128,6 +129,21 @@ impl Theme {
     }
 }
 
+/// After a hot reload, decide which theme should now be selected. If `wanted`
+/// still exists in `themes`, keep it - a hot reload of the theme currently on
+/// screen must not silently switch anything. Otherwise fall back to the first
+/// available theme rather than leaving the app pointing at an id that no
+/// longer exists, which happens when the user deletes the file for the theme
+/// that was selected.
+pub fn reconcile_reload(themes: &[Theme], wanted: &str) -> Theme {
+    themes
+        .iter()
+        .find(|t| t.id == wanted)
+        .or_else(|| themes.first())
+        .cloned()
+        .unwrap_or_default()
+}
+
 /// Built-ins first, then `%APPDATA%\taskbar-eq\themes\*.toml`. An external theme
 /// sharing a built-in `id` replaces it; a new `id` is appended.
 pub fn registry() -> (Vec<Theme>, Vec<String>) {
@@ -141,6 +157,39 @@ pub fn registry() -> (Vec<Theme>, Vec<String>) {
         }
     }
     (themes, warnings)
+}
+
+#[cfg(test)]
+mod reconcile_reload_tests {
+    use super::*;
+
+    fn theme(id: &str) -> Theme {
+        Theme { id: id.into(), name: id.into(), ..Theme::default() }
+    }
+
+    #[test]
+    fn keeps_the_current_theme_when_it_still_exists() {
+        // `wanted` is deliberately NOT the first entry, so a stub that always
+        // returns `themes.first()` cannot pass this by accident.
+        let themes = vec![theme("a"), theme("b"), theme("c")];
+        let picked = reconcile_reload(&themes, "b");
+        assert_eq!(picked.id, "b", "the surviving theme must be kept, not swapped");
+    }
+
+    #[test]
+    fn falls_back_to_the_first_theme_when_the_selected_one_is_gone() {
+        let themes = vec![theme("a"), theme("b")];
+        let picked = reconcile_reload(&themes, "deleted-by-the-user");
+        assert_eq!(picked.id, "a", "a vanished theme must fall back rather than pointing at nothing");
+    }
+
+    #[test]
+    fn an_empty_registry_falls_back_to_the_default_theme_rather_than_panicking() {
+        // Defensive only: `registry()` always includes the built-ins, so this
+        // is never hit in practice, but reconcile_reload must not assume it.
+        let picked = reconcile_reload(&[], "anything");
+        assert_eq!(picked.id, Theme::default().id);
+    }
 }
 
 #[cfg(test)]
