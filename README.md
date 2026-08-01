@@ -130,16 +130,28 @@ trace) and an **analogue VU** (twin backlit needle dials with ~300 ms ballistics
 
 ### Adding your own
 
-Drop a `.toml` file (any filename, `id` inside is what matters) into
-`%APPDATA%\taskbar-eq\themes\` and it appears in the menu the next time the app starts.
-Hot reload — picking it up without a restart — is not wired yet.
+Drop a `.toml` file (any filename — the `id` inside is what matters) into
+`%APPDATA%\taskbar-eq\themes\` and it appears in the menu **immediately**. The directory is
+watched, so saving the file updates the live overlay without a restart — edit a colour, hit
+save, and watch the taskbar change.
 
-A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside
-the 15 built-ins, which are always embedded in the exe regardless of whether that folder
-exists. A malformed file is skipped with a warning printed to the console; it does not
-stop the others from loading. See the schema in the prompt below for the exact file
-format — `schema = 1` plus `[colour]` / `[look]` / `[ballistics]` / optional `[[zone]]`
-tables.
+A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 15
+built-ins, which are always embedded in the exe regardless of whether that folder exists.
+
+Failure modes are all deliberately soft, because these files are hand-authored:
+
+- **Malformed TOML** — skipped with a warning naming the file; the others still load.
+- **An unknown key** — warns and is ignored, so a file written for a later build still works.
+- **An unknown `schema` version** — rejected with a message naming both versions.
+- **Deleting the theme you had selected** — falls back to the first available one and remembers
+  that, rather than pointing at nothing.
+
+See the schema in the prompt below for the exact format: `schema = 1` plus `[colour]`,
+`[look]`, `[ballistics]` and optional `[[zone]]` / `[dual]` tables.
+
+One thing worth knowing if you go tuning: **`bloom` is the halo radius, `glow_strength` is its
+brightness.** Raising `bloom` expecting more glow makes it *fainter*, because a wider blur
+kernel spreads the same energy thinner. That caught me out repeatedly.
 
 ---
 
