@@ -11,7 +11,17 @@ impl Watcher {
     /// Watches the themes directory. Creates it if absent so the user has an
     /// obvious place to drop files, and so the watch has something to attach to.
     pub fn new() -> Self {
-        let dir = crate::config::Config::dir().join("themes");
+        Self::for_dir(crate::config::Config::dir().join("themes"))
+    }
+
+    /// Watches an explicit directory.
+    ///
+    /// Split out from `new` purely so the failure path is testable. The original test
+    /// claimed to cover "constructing must never panic even if the watch cannot be
+    /// established" but called `new()` against the real, watchable AppData path - so it
+    /// could not have failed even if the fallback were broken. A test that cannot fail
+    /// is worse than no test, because it reads as coverage.
+    pub fn for_dir(dir: std::path::PathBuf) -> Self {
         let _ = std::fs::create_dir_all(&dir);
 
         let dirty = Arc::new(AtomicBool::new(false));
@@ -62,7 +72,18 @@ mod tests {
 
     #[test]
     fn survives_an_unwatchable_directory() {
-        // Constructing must never panic even if the watch cannot be established.
-        let _ = Watcher::new();
+        // Genuinely exercises the fallback: a path on a drive letter that does not
+        // exist cannot be created and cannot be watched, so `recommended_watcher(..)
+        // .and_then(watch).ok()` must yield None. Construction must still succeed, and
+        // `changed()` must simply never fire, so the app runs with hot reload disabled
+        // rather than dying.
+        let bogus = std::path::PathBuf::from(r"Q:\definitely-no-such-drive\themes");
+        let w = Watcher::for_dir(bogus);
+        assert!(
+            w._inner.is_none(),
+            "an unwatchable path must leave the watcher inert, not half-initialised"
+        );
+        assert!(!w.changed(), "an inert watcher must never report changes");
+        assert!(!w.changed(), "and must stay quiet on repeat calls");
     }
 }

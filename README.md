@@ -78,7 +78,7 @@ overlay does not exist, so the tray icon is all that is left to click.
 
 ## Status
 
-**Last updated: 2026-08-01.** 167 tests passing, release build warning-free.
+**Last updated: 2026-08-01.** 176 tests passing, release build warning-free.
 
 | | Feature | State |
 |---|---|---|
@@ -95,7 +95,7 @@ overlay does not exist, so the tray icon is all that is left to click.
 | 🔜 | Oscilloscope family — 5 phosphors, persistence trace | in progress |
 | 🔜 | Analogue VU family — 5 dial backlights, twin needles | in progress |
 | ✅ | External TOML colourways with a versioned schema, override-by-id | working |
-| 🔜 | Hot reload of theme files | queued |
+| ✅ | **Hot reload** — save a theme file and the taskbar updates, no restart | working |
 | ✅ | Canvas primitives for scene families (line, polygon, gradients, circles) | done |
 | 📋 | Vaporwave grid family ([specced](docs/superpowers/specs/2026-07-31-vaporwave-grid-family-design.md)) | ready to build |
 
@@ -318,7 +318,7 @@ Requires the [Rust stable MSVC toolchain](https://rustup.rs). No other dependenc
 git clone https://github.com/cwissett-hub/taskbar-eq
 cd taskbar-eq
 cargo build --release        # -> target/release/taskbar-eq.exe
-cargo test                   # 167 tests
+cargo test                   # 176 tests
 ```
 
 Building yourself also sidesteps the SmartScreen prompt entirely.

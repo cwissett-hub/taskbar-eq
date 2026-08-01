@@ -4812,6 +4812,12 @@ struct RawColour {
 struct RawLook {
     ghost: Option<f32>,
     bloom: Option<f32>,
+    /// Halo brightness. NOT interchangeable with `bloom`, which is the radius: a theme
+    /// file that raises `bloom` expecting more glow gets LESS, because a wider blur
+    /// kernel spreads the same energy thinner. This is the brightness knob.
+    glow_strength: Option<f32>,
+    /// Dim halo confined to the display's edge ring, as a multiple of glow_strength.
+    edge_glow: Option<f32>,
     fade: Option<f32>,
     texture: Option<String>,
 }
@@ -4894,6 +4900,8 @@ pub fn parse(src: &str) -> Result<Theme, ThemeError> {
         edge_alpha: raw.colour.edge_alpha.unwrap_or(d.edge_alpha),
         ghost: raw.look.ghost.unwrap_or(d.ghost),
         bloom: raw.look.bloom.unwrap_or(d.bloom),
+        glow_strength: raw.look.glow_strength.unwrap_or(d.glow_strength),
+        edge_glow: raw.look.edge_glow.unwrap_or(d.edge_glow),
         fade: raw.look.fade.unwrap_or(d.fade),
         texture: texture_from(raw.look.texture, d.texture),
         ballistics: Ballistics {

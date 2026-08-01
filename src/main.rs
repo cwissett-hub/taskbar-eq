@@ -68,6 +68,11 @@ fn main() -> Result<()> {
     const FALLBACK_GAP: i32 = 4;
     const FALLBACK_WIDTH: i32 = 190;
     let mut rect_misses: u32 = 0;
+    // Hot-reload debounce: wait this long after the last filesystem event before
+    // reparsing, so one save produces one reload.
+    const RELOAD_DEBOUNCE_MS: u64 = 150;
+    let mut reload_pending = false;
+    let mut last_change: Option<std::time::Instant> = None;
 
     loop {
         while let Ok(f) = rx.try_recv() {
@@ -79,7 +84,20 @@ fn main() -> Result<()> {
         // the meter for this - only a deliberate theme switch (below) does
         // that. `set_themes` pushes the fresh list into the tray so both
         // right-click entry points see it immediately, without a restart.
+        // Debounce. The atomic dirty flag already coalesces events within a single
+        // tick, but editors commonly emit two or three filesystem events per save
+        // (write-then-rename), and those can straddle ticks - which would reparse every
+        // theme file two or three times for one Ctrl+S. Cheap to avoid.
         if watcher.changed() {
+            reload_pending = true;
+            last_change = Some(std::time::Instant::now());
+        }
+        let debounce_elapsed = last_change
+            .map(|t| t.elapsed() >= std::time::Duration::from_millis(RELOAD_DEBOUNCE_MS))
+            .unwrap_or(false);
+        if reload_pending && debounce_elapsed {
+            reload_pending = false;
+            last_change = None;
             let (fresh, warnings) = themes::registry();
             for w in &warnings {
                 eprintln!("themes: {w}");
