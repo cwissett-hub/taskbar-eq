@@ -85,3 +85,91 @@ pub fn family_for(id: &str) -> Box<dyn Family> {
         _ => Box::new(segmented::Segmented),
     }
 }
+
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
+    use crate::themes::builtin;
+
+    /// Every shipped colourway must render at every plausible overlay size without panicking.
+    ///
+    /// The overlay canvas is sized from the LIVE Widgets-button rect, which moves and resizes
+    /// as the weather text changes - x positions of 1385, 1416 and 1425 have all been observed
+    /// on one machine, and a different DPI or a Windows 10 chevron fallback gives different
+    /// dimensions again. Each family was only ever eyeballed at 190x60, so this is the guard
+    /// that a user selecting a theme cannot take the process down with an out-of-bounds write
+    /// or a divide-by-zero in geometry that assumed the reference size.
+    #[test]
+    fn every_colourway_renders_at_every_plausible_overlay_size() {
+        let sizes = [
+            (190, 60), // the reference
+            (150, 48), // smaller widget / lower DPI
+            (240, 72), // 150% DPI
+            (456, 60), // the planned wide variant
+            (96, 40),  // an unusually narrow rect
+            (40, 24),  // pathologically small
+            (12, 12),  // degenerate
+            (1, 1),    // the limit case
+        ];
+        let mut d = FrameData::default();
+        for (i, v) in d.levels.iter_mut().enumerate() {
+            *v = (i as f32 / 63.0).min(1.0);
+        }
+        d.peaks = d.levels;
+        for (i, v) in d.waveform.iter_mut().enumerate() {
+            *v = ((i as f32 / 32.0).sin()) * 0.6;
+        }
+        d.rms_l = 0.09;
+        d.rms_r = 0.055;
+
+        for theme in builtin::all() {
+            for (w, h) in sizes {
+                let mut family = family_for(&theme.family);
+                let mut c = Canvas::new(w, h);
+                // Several frames, because the stateful families allocate persistence buffers
+                // on the first frame and reuse them on later ones.
+                for _ in 0..3 {
+                    family.draw(&mut c, &theme, &d);
+                }
+                assert_eq!(
+                    c.bits().len(),
+                    (w.max(0) * h.max(0)) as usize,
+                    "{} at {w}x{h} changed the canvas size",
+                    theme.id
+                );
+            }
+        }
+    }
+
+    /// The same, but at silence and with a poisoned spectrum, since a NaN reaching a geometry
+    /// calculation is how the vaporwave scroll phase was permanently corrupted.
+    #[test]
+    fn every_colourway_survives_silence_and_a_poisoned_spectrum() {
+        for theme in builtin::all() {
+            for spoil in [0usize, 1, 2] {
+                let mut d = FrameData::default();
+                match spoil {
+                    0 => {}
+                    1 => {
+                        d.levels[0] = f32::NAN;
+                        d.peaks[5] = f32::NAN;
+                        d.waveform[10] = f32::NAN;
+                        d.rms_l = f32::NAN;
+                        d.dt_ms = f32::NAN;
+                    }
+                    _ => {
+                        d.levels[3] = f32::INFINITY;
+                        d.waveform[7] = f32::NEG_INFINITY;
+                        d.rms_r = f32::INFINITY;
+                        d.dt_ms = 0.0;
+                    }
+                }
+                let mut family = family_for(&theme.family);
+                let mut c = Canvas::new(190, 60);
+                for _ in 0..4 {
+                    family.draw(&mut c, &theme, &d);
+                }
+            }
+        }
+    }
+}
