@@ -9,6 +9,17 @@ const RAMP: &[u8] = b" .:-=+*#%@";
 
 /// Renders a canvas to an ASCII luminance map so golden diffs are readable in
 /// review. Alpha-weighted, so transparent areas read as blank.
+/// WHAT A GOLDEN CANNOT SEE: opacity.
+///
+/// The luminance below is multiplied by alpha, so a fully TRANSPARENT pixel and an opaque dark
+/// panel pixel collapse to the same character. That is not a nitpick - it is exactly how the
+/// segmented family shipped 825 transparent pixels per frame, punched through its own panel, with
+/// three goldens and two hundred tests green: over the dark taskbar in a screenshot the holes look
+/// like the gaps they were meant to be, and the encoding here cannot tell them apart either. They
+/// were only visible on a real desktop, where the Windows weather widget sits behind them.
+///
+/// Anything about opacity must be asserted on alpha directly - see
+/// `render::opacity::no_family_leaves_a_transparent_pixel_inside_its_panel`.
 pub fn canvas_to_ascii(c: &Canvas) -> String {
     let mut s = String::with_capacity(((c.width() + 1) * c.height()) as usize);
     for y in 0..c.height() {

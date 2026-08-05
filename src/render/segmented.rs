@@ -215,22 +215,41 @@ impl Family for Segmented {
         // that step 5 + bloom deliberately left glowing at the bar's edges
         // and in the margins between bars, undoing the fix for fault 2.
         //
-        // So this punch is narrower, not just later: `punch_rect` (unlike
-        // `punch_row`) is bounded in x to only the hot core's own column,
-        // leaving the glow either side of it untouched. Net look per gap
-        // row: the centre (where the hot core would have bridged the gap)
-        // goes dark again, exactly like a real segment's gap, while the
-        // edges of the bar keep glowing - which is what "a slight, authentic
-        // bleed into the gaps" should mean, rather than the gap vanishing
-        // into a slab of continuous hot core.
+        // So this cut is narrower, not just later: it is bounded in x to only the hot
+        // core's own column, leaving the glow either side of it untouched. Net look
+        // per gap row: the centre (where the hot core would have bridged the gap)
+        // goes dark again, exactly like a real segment's gap, while the edges of the
+        // bar keep glowing - which is what "a slight, authentic bleed into the gaps"
+        // should mean, rather than the gap vanishing into a slab of continuous hot
+        // core.
+        //
+        // PAINTED with the panel colour, not punched. This used `punch_rect`, and
+        // `punch_rect` writes ZERO - a fully transparent pixel, not a dark one. The
+        // overlay is composited with per-pixel alpha over the Windows weather widget,
+        // so every one of those was a hole the weather text showed through. Measured
+        // before the fix: 825 transparent pixels per frame in every segmented
+        // colourway except classic-three-colour, which is exempt only because
+        // `zones` is non-empty for it.
+        //
+        // It read as intermittent - "occasionally, not constantly" - because the holes
+        // are always there and it is the WEATHER that moves: the text only shows
+        // through where a glyph happens to line up with a punched column, and the
+        // forecast wording changes every few minutes.
+        //
+        // This is the same fault, in the same file, as the gap handling at step 5,
+        // whose own comment already says gaps must be painted rather than punched.
+        // That fix was applied to the segment gaps and this one narrower cut was
+        // missed.
         if t.zones.is_empty() {
+            let panel = Rgba::from_hex(&t.panel, t.panel_alpha);
             for b in 0..nbars {
                 for k in 1..=nseg {
-                    c.punch_rect(
+                    c.fill_rect(
                         ox + b * pitch + hot_x,
                         PAD_Y + usable_h - k * seg_pitch + SEG_H,
                         hot_w,
                         SEG_GAP,
+                        panel,
                     );
                 }
             }

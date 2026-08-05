@@ -223,3 +223,70 @@ mod wide_dump {
         println!("wrote 5 wide dumps ({w}x{h}) to {}", dir.display());
     }
 }
+
+#[cfg(test)]
+mod opacity {
+    use super::*;
+    use crate::themes::builtin;
+
+    /// No family may leave a see-through pixel inside its own panel, at any level.
+    ///
+    /// The panel is what stands between the meter and the Windows weather widget underneath it, and
+    /// the overlay is composited with UpdateLayeredWindow using per-pixel alpha - so a pixel with
+    /// alpha < 255 inside the panel is a hole that the weather text shows through. That is not a
+    /// theoretical concern: it shipped twice. First when `panel_alpha` was below 1.0, and then again
+    /// in the segmented family, whose hot-core gap re-cut used `punch_rect` - which writes ZERO,
+    /// not the panel colour - so loud bars punched a scatter of transparent pixels through the
+    /// panel.
+    ///
+    /// Swept across levels precisely because that second bug was LEVEL-DEPENDENT: the hot core only
+    /// exists on a loud bar, so the holes appeared "occasionally, not constantly" and a single-level
+    /// test would have missed them entirely.
+    #[test]
+    fn no_family_leaves_a_transparent_pixel_inside_its_panel() {
+        let (w, h) = (190, 60);
+        let mut worst: Option<(String, f32, i32, i32, u8)> = None;
+        let mut offenders = std::collections::BTreeMap::new();
+
+        for theme in builtin::all() {
+            let mut fam = family_for(&theme.family);
+            for step in 0..=10 {
+                let level = step as f32 / 10.0;
+                let mut d = FrameData::default();
+                // Slightly uneven, so bars differ and the hot core appears on some and not others.
+                for (i, v) in d.levels.iter_mut().enumerate() {
+                    *v = (level * (0.75 + 0.25 * ((i % 7) as f32 / 6.0))).clamp(0.0, 1.0);
+                }
+                d.peaks = d.levels;
+                d.rms_l = level;
+                d.rms_r = level * 0.8;
+                for (i, v) in d.waveform.iter_mut().enumerate() {
+                    *v = level * ((i as f32 / 20.0).sin());
+                }
+                let mut c = Canvas::new(w, h);
+                // Several frames: the stateful families settle, and peak-holds engage.
+                for _ in 0..6 {
+                    fam.draw(&mut c, &theme, &d);
+                }
+                // Inset well clear of the rounded corners and the 1px bezel rows, so this is about
+                // the panel's interior rather than its antialiased edge.
+                for y in 6..(h - 8) {
+                    for x in 6..(w - 6) {
+                        let a = c.get(x, y).a;
+                        if a < 255 {
+                            *offenders.entry(theme.id.clone()).or_insert(0u32) += 1;
+                            if worst.as_ref().map(|q| a < q.4).unwrap_or(true) {
+                                worst = Some((theme.id.clone(), level, x, y, a));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "these colourways leave see-through pixels inside the panel, which the weather widget \
+             shows through: {offenders:?}; worst {worst:?}"
+        );
+    }
+}
