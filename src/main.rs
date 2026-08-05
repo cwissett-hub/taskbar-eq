@@ -179,7 +179,180 @@ fn diagnose() -> Result<()> {
     Ok(())
 }
 
+/// Captures real audio and reports what the DSP actually emits, then exits.
+///
+/// Exists because every audio-to-pixel mapping in this project is calibrated against a claim -
+/// "real music sits at band levels of roughly 0.15-0.65" - that was never measured. It is written
+/// into the comments of the VU needle, the scope gain, the valve response and the vaporwave terrain.
+/// If it is wrong, all four are miscalibrated in the same direction, and the vaporwave grid reading
+/// as unresponsive after three separate fixes is exactly what that would look like.
+fn measure_levels() -> Result<()> {
+    log::init();
+    if let Err(e) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok() {
+        log::write(&format!("CoInitializeEx failed: {e}"));
+    }
+    let rx = win::capture::start();
+    // The VAPORWAVE theme's ballistics, not the defaults. Ballistics are applied upstream per
+    // theme, so measuring with the defaults measures a signal no vapor colourway ever sees: the
+    // first run of this probe did exactly that and reported the lightning trigger firing 0 times in
+    // 8s, while the user was watching it fire on every snare. attack 0.88 against the default 0.55
+    // makes frame-to-frame rises far larger, which is the whole quantity the trigger reads.
+    let vapor_ballistics = themes::builtin::vapor_sunset().ballistics;
+    log::write(&format!(
+        "measuring with the vapor ballistics: attack {:.2} decay {:.2}",
+        vapor_ballistics.attack, vapor_ballistics.decay
+    ));
+    let mut smoother = Smoother::new(vapor_ballistics);
+    let mut samples: Vec<[f32; dsp::bands::NUM_BANDS]> = Vec::new();
+    let mut raw_peak = 0.0f32;
+    let mut raw_frames: Vec<[f32; dsp::bands::NUM_BANDS]> = Vec::new();
+    let mut rms_seen: Vec<f32> = Vec::new();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    while std::time::Instant::now() < deadline {
+        while let Ok(f) = rx.try_recv() {
+            raw_peak = raw_peak.max(f.bands.iter().copied().fold(0.0f32, f32::max));
+            raw_frames.push(f.bands);
+            rms_seen.push(f.rms);
+            smoother.update(&f.bands);
+            samples.push(*smoother.levels());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(8));
+    }
+
+    // Record the RAW per-frame bands to disk as a reusable fixture.
+    //
+    // Real audio is only available while someone is playing music, and every calibration in this
+    // project has so far been done against a synthetic spectrum I invented - which is precisely why
+    // the terrain has now been "fixed" four times. A captured fixture means every future tuning
+    // decision can be measured against real material with no music playing.
+    if !raw_frames.is_empty() {
+        let mut out = String::new();
+        for f in &raw_frames {
+            out.push_str(
+                &f.iter().map(|v| format!("{v:.5}")).collect::<Vec<_>>().join(","),
+            );
+            out.push('\n');
+        }
+        let dst = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/real-music-bands.csv");
+        if let Some(d) = dst.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        match std::fs::write(&dst, out) {
+            Ok(()) => log::write(&format!(
+                "wrote {} raw frames x {} bands to {}",
+                raw_frames.len(),
+                dsp::bands::NUM_BANDS,
+                dst.display()
+            )),
+            Err(e) => log::write(&format!("could not write the fixture: {e}")),
+        }
+    }
+
+    if samples.is_empty() {
+        log::write("no audio frames captured - is anything playing?");
+        return Ok(());
+    }
+
+    // Distribution over every (frame, band) pair, which is what a per-band element actually sees.
+    let mut all: Vec<f32> = samples.iter().flat_map(|s| s.iter().copied()).collect();
+    all.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let q = |p: f32| all[((all.len() - 1) as f32 * p) as usize];
+    // And the per-frame MAX band, which is what the vaporwave auto-ranger normalises against.
+    let mut frame_max: Vec<f32> = samples
+        .iter()
+        .map(|s| s.iter().copied().fold(0.0f32, f32::max))
+        .collect();
+    frame_max.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let fq = |p: f32| frame_max[((frame_max.len() - 1) as f32 * p) as usize];
+    rms_seen.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    log::write(&format!("frames {}, bands {}", samples.len(), dsp::bands::NUM_BANDS));
+    log::write(&format!(
+        "PER-BAND level  p10 {:.4}  p50 {:.4}  p90 {:.4}  p99 {:.4}  max {:.4}",
+        q(0.10), q(0.50), q(0.90), q(0.99), all[all.len() - 1]
+    ));
+    log::write(&format!(
+        "FRAME max band  p10 {:.4}  p50 {:.4}  p90 {:.4}  max {:.4}",
+        fq(0.10), fq(0.50), fq(0.90), frame_max[frame_max.len() - 1]
+    ));
+    log::write(&format!(
+        "rms             p50 {:.4}  p90 {:.4}  max {:.4}",
+        rms_seen[rms_seen.len() / 2],
+        rms_seen[(rms_seen.len() * 9) / 10],
+        rms_seen[rms_seen.len() - 1]
+    ));
+    log::write(&format!("raw (unsmoothed) peak band {raw_peak:.4}"));
+    log::write("--- the assumption written throughout the code is 0.15-0.65 per active band ---");
+
+    // ---- onset behaviour, for the lightning trigger ----
+    //
+    // Measured on three signals, because the bolt currently reads the most smoothed of the three:
+    // the RAW per-frame bands, the DSP-smoothed levels, and the bass mean the detector actually uses.
+    let raws: Vec<[f32; dsp::bands::NUM_BANDS]> = Vec::new();
+    let _ = raws;
+    let bass_of = |b: &[f32]| b[..4].iter().sum::<f32>() / 4.0;
+    let smoothed_bass: Vec<f32> = samples.iter().map(|s| bass_of(s)).collect();
+    let mut rises: Vec<f32> = smoothed_bass
+        .windows(2)
+        .map(|w| (w[1] - w[0]).max(0.0))
+        .collect();
+    // What the shipped condition would do: rise > need AND bass > floor.
+    let need = 0.04 + (1.0 - 0.55) * 0.26;
+    let fires = smoothed_bass
+        .windows(2)
+        .filter(|w| w[1] - w[0] > need && w[1] > 0.35)
+        .count();
+    // Spectral flux: the sum of POSITIVE change across every band, the standard onset measure.
+    let flux: Vec<f32> = samples
+        .windows(2)
+        .map(|w| {
+            w[0].iter()
+                .zip(w[1].iter())
+                .map(|(a, b)| (b - a).max(0.0))
+                .sum::<f32>()
+        })
+        .collect();
+    let mut fs = flux.clone();
+    fs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    rises.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let pick = |v: &Vec<f32>, p: f32| v[((v.len() - 1) as f32 * p) as usize];
+    let secs = samples.len() as f32 / 99.0;
+
+    log::write(&format!(
+        "bass mean       p50 {:.4}  p90 {:.4}  max {:.4}  (BOLT_FLOOR is 0.35)",
+        pick(&smoothed_bass.iter().copied().collect::<Vec<_>>().clone(), 0.5),
+        pick(&{ let mut v = smoothed_bass.clone(); v.sort_by(|a,b| a.partial_cmp(b).unwrap()); v }, 0.9),
+        smoothed_bass.iter().copied().fold(0.0f32, f32::max)
+    ));
+    log::write(&format!(
+        "bass RISE/frame p50 {:.4}  p90 {:.4}  p99 {:.4}  max {:.4}  (needs > {:.3})",
+        pick(&rises, 0.5), pick(&rises, 0.9), pick(&rises, 0.99), rises[rises.len()-1], need
+    ));
+    log::write(&format!(
+        "=> the shipped trigger fired {fires} times in {secs:.1}s  ({:.2}/s)",
+        fires as f32 / secs
+    ));
+    log::write(&format!(
+        "spectral flux   p50 {:.3}  p90 {:.3}  p99 {:.3}  max {:.3}",
+        pick(&fs, 0.5), pick(&fs, 0.9), pick(&fs, 0.99), fs[fs.len()-1]
+    ));
+    for k in [0.90f32, 0.95, 0.97] {
+        let th = pick(&fs, k);
+        let n = flux.windows(3).filter(|w| w[1] > th && w[1] >= w[0] && w[1] >= w[2]).count();
+        log::write(&format!(
+            "   flux peaks above p{:.0}: {n} in {secs:.1}s ({:.2}/s)",
+            k * 100.0, n as f32 / secs
+        ));
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
+    if std::env::args().any(|a| a == "--levels") {
+        return measure_levels();
+    }
     // `--diagnose` prints the whole decision chain and exits. The first NO in its output is the
     // reason the overlay is not on screen.
     if std::env::args().any(|a| a == "--diagnose") {

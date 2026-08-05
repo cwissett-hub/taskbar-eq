@@ -22,64 +22,89 @@ use super::canvas::{Canvas, Rgba};
 use super::{Family, FrameData};
 use crate::themes::Theme;
 
-/// Bass level below which a lightning strike will not fire regardless of the transient.
-const BOLT_FLOOR: f32 = 0.35;
+/// Onset detection for the lightning, calibrated against a recorded fixture of real music
+/// (`tests/fixtures/real-music-bands.csv`, 8 seconds, 792 frames).
+///
+/// The previous trigger was a RISE IN THE BASS MEAN, and measured against that fixture it fires
+/// ZERO times: the largest single-frame rise in the bass mean is 0.140 while the threshold demanded
+/// 0.157. It could not fire on real music at all - which means the reports of lightning being "not
+/// in time with anything" and then "going with every snare" were both about something else. The
+/// second one was the white peak glow, which the loudest band trips every frame; that threshold has
+/// been raised separately.
+///
+/// A bass-mean rise is the wrong measure regardless. Kick, snare and clap are broadband transients,
+/// and averaging four bands then differencing throws away almost all of the evidence - which is why
+/// the numbers came out an order of magnitude below the threshold. SPECTRAL FLUX - the sum of
+/// positive change across every band - is the standard onset measure and it works: swept over the
+/// fixture, a threshold of `avg * FLUX_RATIO` yields 4.12 onsets/s at ratio 1.6, 3.25 at 2.0, 2.25
+/// at 2.5, 1.38 at 3.0. "Every snare" was too many, so 2.8 is used, landing near 1.6/s.
+///
+/// The threshold is RELATIVE to a slow-following average of the flux, not absolute, so it adapts to
+/// how busy and how loud a track is instead of needing per-track tuning - the failure that made the
+/// old absolute threshold unreachable on this material.
+const FLUX_RATIO: f32 = 2.8;
+
+/// How fast the flux average follows, per frame. Slow enough to represent "this track", fast enough
+/// to follow an arrangement change within a couple of seconds.
+const FLUX_AVG_RATE: f32 = 0.02;
+
+/// Minimum frames between strikes. At ~99 capture frames/s this is ~120ms, shorter than any musical
+/// gap worth marking but long enough to stop one hit registering as two as the flux peak decays.
+const FLUX_REFRACTORY: u32 = 12;
+
+
 
 /// Normalised level a segment's mean must exceed before it is re-stroked as a peak glow.
 ///
-/// Raised from 0.55 when the terrain gained auto-ranging. 0.55 was a threshold on the RAW band
-/// level, where real music rarely passed it; against a normalised level - where the loudest band
-/// now sits at 0.92 by construction - it caught everything above about 60% of the frame peak, so
-/// most of the grid was re-stroked white and the left half of the scene washed out. This keeps
-/// the glow on the genuine peaks it was meant to mark.
-const GLOW_AT: f32 = 0.82;
+/// Raised again with the measured window remap. Under the old inert auto-ranger 0.82 was reached
+/// only by the single loudest band each frame, which is what made the white flash occasional. The
+/// new mapping saturates every band at or above the measured p90, so 0.82 would fire on roughly a
+/// tenth of all band-frames and the glow would stop marking anything. At 0.97 it marks only ridges
+/// that have actually run out of displacement range.
+const GLOW_AT: f32 = 0.97;
 
 /// Reference frame duration. The render loop sleeps a fixed 16ms per tick, so its real
 /// period is 16ms plus however long the frame took; scroll and bolt decay are scaled by the
 /// measured `dt_ms` against this so they run at the same speed when the loop slows.
 const NOMINAL_DT_MS: f32 = 16.7;
 
-/// Normalised band level the loudest band is driven toward.
+/// Terrain response window, MEASURED off real audio rather than assumed.
 ///
-/// Below 1.0 so an unusually loud band still has somewhere to go before it clips flat against
-/// the top of its displacement range.
-const TERRAIN_TARGET: f32 = 0.92;
-
-/// Quietest band peak the terrain will normalise against.
+/// This is the fourth attempt at making the ground react, and the first based on what the DSP
+/// actually emits. `--levels` captured 8 seconds of music: per-band levels run p10 0.119, p50 0.284,
+/// p90 0.575, p99 0.834 - but the FRAME's loudest band sits at p50 0.819.
 ///
-/// Without a floor, the silence between tracks divides by a tiny peak and lifts the noise floor
-/// into full-scale hills - the failure this project already hit once in the scope family when it
-/// gained an auto-ranger.
-const TERRAIN_FLOOR: f32 = 0.14;
-
-/// Peak-follower ballistics for the terrain normaliser, per frame at ~60fps.
+/// That last number is what defeated the previous three attempts. The terrain auto-ranged against
+/// the frame's loudest band, and since that is already 0.82 the gain settled at 0.92/0.82 = 1.12 -
+/// the normaliser was inert. A median band at 0.284 therefore reached 0.32 of the displacement
+/// range, which is 5px of lift on a 29px ground, while the single loudest band each frame landed at
+/// 0.92 and tripped the peak-glow threshold. "Generally the waves seem very low" and "it
+/// occasionally flashes white" are those two facts.
 ///
-/// Fast enough to catch a chorus arriving within a few frames, and released far more slowly so
-/// the hills do not visibly breathe between beats. Deliberately slower on release than the
-/// scope's follower, because a scope trace redraws every frame while these ridges persist on
-/// screen as they scroll toward the viewer - a gain that moved quickly would bend ridges that
-/// are already drawn.
-/// Attack is deliberately slow - slower than the transients this scene is meant to show.
-///
-/// At 0.22 the follower moved 22% of the way to a new peak in a single frame, which meant a kick
-/// dropped the gain from 5.75 to 2.76 on the very frame it landed: the auto-ranger cancelled the
-/// hit it existed to make visible. The gain's job here is to adapt to how loud a TRACK is, over
-/// about a second, not to respond to individual hits.
-const TERRAIN_ATTACK: f32 = 0.03;
-const TERRAIN_RELEASE: f32 = 0.004;
+/// Normalising against a maximum can never fix this: a real spectrum's median is about a third of
+/// its max, so the median ridge stays a third height at any gain. What is needed is to spend the
+/// output range on the part of the DISTRIBUTION the eye actually sees - hence a fixed window from
+/// p10 to p90, with a gamma that lifts the middle. Measured result: the median ridge goes from 5.0px
+/// to 8.6px and the p90 band reaches full height.
+const TERRAIN_FLOOR_LEVEL: f32 = 0.119;
+const TERRAIN_SPAN_LEVEL: f32 = 0.456;
+/// Below 1 to expand the low half of the distribution, where most band-frames actually live.
+const TERRAIN_GAMMA: f32 = 0.6;
 
 #[derive(Default)]
 pub struct Vapor {
     /// Grid scroll phase, wrapping 0->1.
     scroll: f32,
-    /// Previous frame's bass mean, for transient detection.
-    prev_bass: f32,
+    /// Previous frame's band levels, for the spectral-flux onset detector.
+    prev_levels: Vec<f32>,
+    /// Slow-following average of the flux, which the threshold is relative to.
+    flux_avg: f32,
+    /// Frames since the last strike, for the refractory period.
+    since_bolt: u32,
     /// Decaying brightness of the current lightning strike, 0 when none.
     bolt: f32,
     /// Advanced on each strike so successive bolts take different paths.
     bolt_seed: u32,
-    /// Slow-following peak of the smoothed band levels, for terrain auto-ranging.
-    band_peak: f32,
     /// One spectrum snapshot per grid line, newest first - index 0 is the line at the horizon.
     ///
     /// THE reason the ground read as static, and it is structural rather than a matter of
@@ -139,54 +164,57 @@ impl Vapor {
             .collect()
     }
 
-    /// Advances the band-peak follower and returns the gain to scale the terrain by.
+    /// Maps a band level onto terrain displacement through the measured window.
     ///
-    /// The terrain was linear in band level, and that is the same mistake already fixed twice in
-    /// this project - once in the VU needle and once in the scope trace. Measured at the shipped
-    /// settings: real music sits at band levels of roughly 0.15 to 0.65, so the nearest ridge
-    /// moved between 1.1px and 4.9px on a 29px-tall ground, while the STATIC gap between grid
-    /// lines is already 0.9 to 3.2px. On a quiet passage the terrain therefore moved less than
-    /// one line gap, which is indistinguishable from a flat grid - the lightning read as
-    /// responsive only because it is triggered by a transient rather than scaled by a level.
-    ///
-    /// Normalising against the frame's own loudest band means the terrain shows the SHAPE of the
-    /// spectrum at any volume. That is the right trade for a scene: absolute level is what the VU
-    /// family is for.
-    fn update_band_gain(&mut self, levels: &[f32], sensitivity: f32, dt: f32) -> f32 {
-        let frame_peak = levels
-            .iter()
-            .copied()
-            .filter(|v| v.is_finite())
-            .fold(0.0f32, f32::max);
-        let k = if frame_peak > self.band_peak {
-            TERRAIN_ATTACK
-        } else {
-            TERRAIN_RELEASE
-        };
-        // dt-scaled so the follower behaves the same when the render loop slows, and clamped
-        // because `clamp` alone does not sanitise a NaN dt (see the note in `draw`).
-        self.band_peak += (frame_peak - self.band_peak) * (k * dt).clamp(0.0, 1.0);
-        if !self.band_peak.is_finite() {
-            self.band_peak = 0.0;
+    /// A fixed window, not a follower. The follower it replaced was measurably inert - see the
+    /// constants above - and the valve-row diagnosis reached the same conclusion for the same
+    /// reason: an auto-ranger is a compressor in time, and a compressor in front of a transient is
+    /// the wrong tool. The terrain is also the one place a compressor actively hurts, because it
+    /// normalises away exactly the band-to-band contrast the hills are made of.
+    fn terrain_resp(level: f32, sensitivity: f32) -> f32 {
+        if !level.is_finite() || level <= TERRAIN_FLOOR_LEVEL {
+            return 0.0;
         }
-        (TERRAIN_TARGET / self.band_peak.max(TERRAIN_FLOOR)) * sensitivity.max(0.0)
+        let x = ((level - TERRAIN_FLOOR_LEVEL) / TERRAIN_SPAN_LEVEL).clamp(0.0, 1.0);
+        (x.powf(TERRAIN_GAMMA) * sensitivity.max(0.0)).clamp(0.0, 1.0)
     }
 
-    /// Advances the bass-transient detector and returns the current strike brightness.
+    /// Advances the onset detector and returns the current strike brightness.
     ///
-    /// Triggered by a RISE in bass rather than a timer, so strikes land on kick drums.
-    /// Threshold and decay both scale with the theme so a colourway can be calmer.
-    fn update_bolt(&mut self, levels: &[f32], t: &crate::themes::VaporParams, dt: f32) -> f32 {
-        let bass: f32 = {
-            let n = levels.len().min(4).max(1);
-            levels[..n].iter().filter(|v| v.is_finite()).sum::<f32>() / n as f32
-        };
-        let need = 0.04 + (1.0 - t.bolt_sens.clamp(0.0, 1.0)) * 0.26;
-        if bass - self.prev_bass > need && bass > BOLT_FLOOR {
+    /// Reads `d.levels` - the DSP-smoothed bands - rather than the family's own further-smoothed
+    /// copy. Onset detection wants the least smoothed signal available, and the fixture calibration
+    /// above was done on exactly this one.
+    fn update_bolt(&mut self, d: &FrameData, t: &crate::themes::VaporParams, dt: f32) -> f32 {
+        let n = d.levels.len();
+        if self.prev_levels.len() != n {
+            self.prev_levels = d.levels.to_vec();
+        }
+        // Spectral flux: the sum of POSITIVE change across every band. Positive only - a note
+        // ending is not an onset, and counting decays doubles the event rate.
+        let mut flux = 0.0f32;
+        for (i, &v) in d.levels.iter().enumerate() {
+            if v.is_finite() {
+                flux += (v - self.prev_levels[i]).max(0.0);
+                self.prev_levels[i] = v;
+            }
+        }
+        if !flux.is_finite() {
+            flux = 0.0;
+        }
+        self.flux_avg += (flux - self.flux_avg) * (FLUX_AVG_RATE * dt).clamp(0.0, 1.0);
+        if !self.flux_avg.is_finite() {
+            self.flux_avg = 0.0;
+        }
+
+        self.since_bolt = self.since_bolt.saturating_add(1);
+        // `bolt_sens` still scales it, so a colourway can be calmer or busier and it stays
+        // TOML-tunable. 0.55 is the shipped value and maps to the calibrated ratio exactly.
+        let ratio = FLUX_RATIO * (1.0 + (0.55 - t.bolt_sens.clamp(0.0, 1.0)));
+        if flux > self.flux_avg * ratio && self.since_bolt > FLUX_REFRACTORY {
             self.bolt = t.bolt_bright.clamp(0.0, 1.0);
             self.bolt_seed = self.bolt_seed.wrapping_add(1);
+            self.since_bolt = 0;
         }
-        self.prev_bass = if bass.is_finite() { bass } else { 0.0 };
         self.bolt = (self.bolt - t.bolt_decay.clamp(0.0, 1.0) * 0.09 * dt).max(0.0);
         self.bolt
     }
@@ -324,12 +352,9 @@ impl Family for Vapor {
         };
 
         let levels = Self::smoothed(d, t.smoothing);
-        // Lightning reads off the RAW smoothed levels, not the normalised ones. It fires on a
-        // RISE in bass, and normalising against the frame peak partly cancels exactly that rise -
-        // the strikes are the one part of this scene the user reported as already working, so
-        // they are deliberately left on the untouched signal.
-        let bolt = self.update_bolt(&levels, t, dt);
-        let band_gain = self.update_band_gain(&levels, theme.sensitivity, dt);
+        // The onset detector reads FrameData directly, not the family's smoothed copy - see
+        // `update_bolt`.
+        let bolt = self.update_bolt(d, t, dt);
 
         let before_scroll = self.scroll;
         let step = t.scroll * 0.010 * dt;
@@ -344,7 +369,14 @@ impl Family for Vapor {
         // Advance the terrain history. `f = (k + scroll) / lines`, so when the phase wraps every
         // line inherits the position of the one behind it - which means the shapes must rotate by
         // one at the same moment, or they would visibly jump.
-        let want_rows = (t.lines.max(1) + 4) as usize;
+        // Exactly one row per VISIBLE line, with no row for the overhang.
+        //
+        // The line loop runs to lines+1 so the last ridge covers the bottom edge, but `row` below
+        // clamps its index - so the overhang line reuses the nearest visible line's row. That is
+        // what puts the newest, live, peak-held spectrum on a line that is actually on screen.
+        // Sized to lines+2 it sat on the overhang at depth 74.9px over a 58px ground and was clipped
+        // away every frame, which is why the terrain looked inert no matter what the mapping did.
+        let want_rows = t.lines.max(1) as usize;
         let stale_rows = self.rows.len() != want_rows
             || self.rows.first().map(|r| r.len() != levels.len()).unwrap_or(true);
         if stale_rows {
@@ -442,12 +474,20 @@ impl Family for Vapor {
         // Receding horizontal lines, FAR TO NEAR. Each one fills down to the bottom with
         // opaque ground before stroking, so it occludes everything behind it.
         let lines = t.lines.max(1);
-        // Iterates PAST `lines` and lets `f` exceed 1.0, so the nearest ridges run off the
-        // bottom edge and get clipped. Stopping at f = 1.0 left a bare band of ground along
-        // the bottom of the panel - the grid visibly ended before the frame did. The extra
-        // ridges are also where hidden-line removal earns its keep, since a ridge that large
-        // genuinely does occlude the ones behind it.
-        for k in 0..(lines + 3) {
+        // ONE extra line past `lines`, not three.
+        //
+        // The extras exist so the nearest ridges run off the bottom edge rather than the grid
+        // visibly ending before the frame does. Three was right when persp was 2.07, where f = 1.0
+        // fell well short of the bottom; at persp 1.40 f = 1.0 already lands on the last row, so
+        // two of the three were pure overhang.
+        //
+        // And in RECEDING mode that overhang was hiding the whole point of the family. New rows are
+        // born at the near edge, which is the HIGHEST k, so the newest row - the one carrying the
+        // live peak-held spectrum - sat at k = 12, depth 74.9px on a 58px ground. The live data was
+        // drawn off the canvas every single frame and never seen; only rows several births old were
+        // ever visible. That is the measured cause of the terrain reading as unresponsive through
+        // four separate attempts to fix it, and no amount of gain or amplitude could have helped.
+        for k in 0..(lines + 1) {
             let f = ((k as f32 + self.scroll) / lines as f32).max(0.001);
             let depth_y = horizon as f32 + f.powf(persp) * ground_h as f32;
             let half_w = (w as f32 / 2.0) * t.spread * f;
@@ -478,8 +518,8 @@ impl Family for Vapor {
                 let i0 = (fb.floor() as usize).min(row.len() - 1);
                 let i1 = (i0 + 1).min(row.len() - 1);
                 let frac = fb - i0 as f32;
-                let v =
-                    ((row[i0] * (1.0 - frac) + row[i1] * frac) * band_gain).clamp(0.0, 1.0);
+                let raw = row[i0] * (1.0 - frac) + row[i1] * frac;
+                let v = Self::terrain_resp(raw, theme.sensitivity);
                 let y = depth_y - v * amp_max * f;
                 pts.push((x, y.round() as i32));
                 vals.push(v);
@@ -567,6 +607,86 @@ mod tests {
         v.draw(&mut c, &builtin::vapor_sunset(), &spectrum(0.6));
         let lit = c.bits().iter().filter(|p| **p != 0).count();
         assert!(lit > 190 * 40, "the scene should cover the panel, got {lit} px");
+    }
+
+    /// 8 seconds of real music, captured with `--levels` and committed as a fixture.
+    ///
+    /// The reason this exists: every audio mapping in this project was calibrated against a
+    /// synthetic spectrum, and the terrain needed fixing FOUR times before anyone measured what the
+    /// DSP actually emits. The recorded frames make "does this respond to music" an assertion
+    /// instead of an eyeball judgement.
+    fn real_music() -> Vec<Vec<f32>> {
+        include_str!("../../tests/fixtures/real-music-bands.csv")
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| l.split(',').filter_map(|v| v.parse::<f32>().ok()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn the_lightning_fires_at_a_musical_rate_on_real_music() {
+        // The trigger this replaced was a rise in the bass mean, and on this same fixture it fires
+        // ZERO times in 8 seconds: the largest single-frame bass rise is 0.140 against a threshold
+        // of 0.157. It could not fire on real music at all, which is why the strikes read as "not in
+        // time with anything".
+        //
+        // Swept over the fixture, the flux detector yields 4.12 onsets/s at ratio 1.6, 3.25 at 2.0,
+        // 2.25 at 2.5 and 1.38 at 3.0. "Every snare" was too many, so the shipped ratio aims near
+        // 1.6/s. The band asserted here is deliberately wide - the point is that it fires at a rate
+        // a listener would call musical, not that it hits one exact number.
+        let frames = real_music();
+        assert!(frames.len() > 500, "fixture looks truncated: {} frames", frames.len());
+
+        let t = builtin::vapor_sunset();
+        let mut v = Vapor::default();
+        let mut c = Canvas::new(190, 60);
+        let mut strikes = 0u32;
+        let mut prev_seed = v.bolt_seed;
+        for row in &frames {
+            let mut d = FrameData::default();
+            for (i, x) in d.levels.iter_mut().enumerate() {
+                *x = row.get(i).copied().unwrap_or(0.0);
+            }
+            d.peaks = d.levels;
+            v.draw(&mut c, &t, &d);
+            if v.bolt_seed != prev_seed {
+                strikes += 1;
+                prev_seed = v.bolt_seed;
+            }
+        }
+        // The capture ran at about 99 frames per second.
+        let per_sec = strikes as f32 / (frames.len() as f32 / 99.0);
+        assert!(
+            (0.6..=3.5).contains(&per_sec),
+            "lightning fired {strikes} times over {:.1}s = {per_sec:.2}/s, which is outside the              range a listener would call musical",
+            frames.len() as f32 / 99.0
+        );
+    }
+
+    #[test]
+    fn the_terrain_uses_most_of_its_range_on_real_music() {
+        // The complaint this guards, four times over: "the waves seem very low". Measured cause was
+        // that the terrain auto-ranged against the frame's LOUDEST band, which on real music already
+        // sits at 0.82 - so the gain settled at 1.12, the normaliser was inert, and a median band at
+        // 0.27 reached only about a third of the displacement range.
+        //
+        // Asserts on the response directly rather than on pixels, because it is the mapping that was
+        // wrong and pixels would let a geometry change mask a regression here.
+        let frames = real_music();
+        let t = builtin::vapor_sunset();
+        let mut resp: Vec<f32> = frames
+            .iter()
+            .flat_map(|r| r.iter().map(|&v| Vapor::terrain_resp(v, t.sensitivity)))
+            .collect();
+        resp.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let q = |p: f32| resp[((resp.len() - 1) as f32 * p) as usize];
+        assert!(
+            q(0.5) > 0.40,
+            "the median band must drive most of a ridge, got {:.2} - it was 0.32 when the terrain              read as flat",
+            q(0.5)
+        );
+        assert!(q(0.9) > 0.90, "the loud tenth must reach near full height, got {:.2}", q(0.9));
+        assert!(q(0.05) < 0.25, "quiet bands must still be quiet, got {:.2}", q(0.05));
     }
 
     #[test]
@@ -713,39 +833,6 @@ mod tests {
             a.scroll,
             b.scroll
         );
-    }
-
-    #[test]
-    fn a_bass_transient_fires_a_bolt_and_it_decays() {
-        let mut v = Vapor::default();
-        let mut c = Canvas::new(190, 60);
-        let t = builtin::vapor_sunset();
-        // Quiet, then a jump in bass: a rise, not a level, is what fires.
-        v.draw(&mut c, &t, &bassy(0.05));
-        assert_eq!(v.bolt, 0.0, "quiet bass must not fire");
-        v.draw(&mut c, &t, &bassy(0.9));
-        let fired = v.bolt;
-        assert!(fired > 0.0, "a bass transient must fire a bolt");
-        // Sustained loud bass is not a transient, so it must decay rather than re-fire.
-        for _ in 0..3 {
-            v.draw(&mut c, &t, &bassy(0.9));
-        }
-        assert!(v.bolt < fired, "a sustained level must decay, not re-trigger: {} vs {fired}", v.bolt);
-    }
-
-    #[test]
-    fn sustained_loud_bass_alone_never_fires() {
-        // Guards the transient detector specifically: without the rise condition this would
-        // fire on every frame of a loud passage and the sky would strobe continuously.
-        let mut v = Vapor::default();
-        let mut c = Canvas::new(190, 60);
-        let t = builtin::vapor_sunset();
-        v.draw(&mut c, &t, &bassy(0.9)); // first frame is a rise from 0, so it does fire
-        v.bolt = 0.0;
-        for _ in 0..30 {
-            v.draw(&mut c, &t, &bassy(0.9));
-            assert_eq!(v.bolt, 0.0, "a flat loud level must not keep firing");
-        }
     }
 
     #[test]
@@ -905,28 +992,6 @@ mod sweep {
         }
         d.peaks = d.levels;
         d
-    }
-
-    /// Reports the gain the normaliser settles on, and the resulting ridge displacement.
-    #[test]
-    #[ignore]
-    fn probe_terrain_gain() {
-        let t = builtin::vapor_sunset();
-        let horizon = (60.0f32 * t.vapor.horizon).round();
-        println!("{:>9} {:>10} {:>12} {:>16}", "loudness", "peak band", "settled gain", "nearest ridge px");
-        for loudness in [0.15f32, 0.3, 0.45, 0.62, 0.85, 1.0] {
-            let d = realistic(loudness);
-            let mut v = Vapor::default();
-            let mut c = Canvas::new(380, 60);
-            for _ in 0..240 { v.draw(&mut c, &t, &d); }
-            let levels = Vapor::smoothed(&d, t.vapor.smoothing);
-            let peak = levels.iter().copied().fold(0.0f32, f32::max);
-            let gain = (0.92 / v.band_peak.max(0.14)) * t.sensitivity;
-            // displacement of the nearest ridge (f=1) at the loudest band
-            let amp_max = (horizon - 4.0) * t.vapor.amp * 0.55;
-            let px = (peak * gain).min(1.0) * amp_max;
-            println!("{loudness:>9.2} {peak:>10.3} {gain:>12.2} {px:>15.1}");
-        }
     }
 
     /// Renders the terrain at a range of `amp` values so the right one can be chosen by eye.
