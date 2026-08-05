@@ -66,6 +66,16 @@ pub trait Family {
 pub const KNOWN_FAMILIES: [&str; 4] = ["segmented", "scope", "vu", "vapor"];
 
 pub fn family_for(id: &str) -> Box<dyn Family> {
+    // Say so when falling back. A theme file with a typo'd or not-yet-implemented family
+    // otherwise renders as a segmented meter with no indication of why, which is a
+    // confusing thing to debug from the outside - and it is a plausible mistake now that
+    // authoring a theme by hand is a supported workflow.
+    if !KNOWN_FAMILIES.contains(&id) {
+        eprintln!(
+            "themes: unknown family {id:?}, falling back to segmented (known: {})",
+            KNOWN_FAMILIES.join(", ")
+        );
+    }
     match id {
         "scope" => Box::new(scope::Scope::default()),
         "vapor" => Box::new(vapor::Vapor::default()),
