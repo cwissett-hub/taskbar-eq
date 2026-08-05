@@ -1,0 +1,23 @@
+# VARIANT D - the classic flying-FORWARD direction, for comparison.
+# Trade: the nearest lines then show what the music did about half a second ago.
+schema = 1
+id     = "vapor-d-forward"
+name   = "D: flows toward you"
+family = "vapor"
+
+[colour]
+lit         = "#ff53c8"
+hot         = "#eafcff"
+panel       = "#0a0416"
+panel_alpha = 1.0
+edge        = "#ff5f93"
+edge_alpha  = 0.18
+
+[look]
+bloom = 3.0
+
+[vaporwave]
+lines  = 9
+scroll = 2.6
+amp    = 1.15
+recede = false

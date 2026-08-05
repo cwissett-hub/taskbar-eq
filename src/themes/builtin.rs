@@ -8,6 +8,8 @@ pub fn all() -> Vec<Theme> {
         neon_pink(),
         vac_tube_orange(),
         classic_three_colour(),
+        hifi_white(),
+        chrome(),
         p1_green(),
         p7_dual(),
         p11_blue_violet(),
@@ -17,6 +19,8 @@ pub fn all() -> Vec<Theme> {
         scope_red(),
         scope_azure(),
         scope_magenta(),
+        tek_teal(),
+        p39_yellow_green(),
         vu_cream(),
         vu_amber(),
         vu_ice(),
@@ -30,11 +34,16 @@ pub fn all() -> Vec<Theme> {
         vapor_outrun(),
         vapor_toxic(),
         vapor_mono(),
+        vapor_tokyo(),
+        vapor_sunrise(),
+        vapor_noir(),
         tube_soviet(),
         tube_steel(),
         tube_mercury(),
         tube_bakelite(),
         tube_nixie_green(),
+        tube_copper(),
+        tube_red_plate(),
     ]
 }
 
@@ -160,6 +169,47 @@ pub fn classic_three_colour() -> Theme {
             decay: 0.11,
             peak_fall: 0.0045,
         },
+        ..vfd_ice()
+    }
+}
+
+/// Neutral white, the modern hi-fi look rather than a phosphor.
+///
+/// `Texture::None_` is the point of it: every other segmented colourway wears a texture, and a
+/// perfectly clean panel is what separates a current amplifier from a vintage one.
+pub fn hifi_white() -> Theme {
+    Theme {
+        id: "hifi-white".into(),
+        name: "Hi-fi white".into(),
+        lit: "#f2f6fa".into(),
+        hot: "#ffffff".into(),
+        panel: "#0a0c0e".into(),
+        panel_alpha: 1.0,
+        edge: "#c8d4e0".into(),
+        edge_alpha: 0.16,
+        texture: Texture::None_,
+        bloom: 3.0,
+        ghost: 0.08,
+        ..vfd_ice()
+    }
+}
+
+/// Brushed chrome: cool grey segments with a bright specular top, no colour cast at all.
+pub fn chrome() -> Theme {
+    Theme {
+        id: "chrome".into(),
+        name: "Chrome".into(),
+        lit: "#c8d8e8".into(),
+        hot: "#f8fcff".into(),
+        panel: "#101418".into(),
+        panel_alpha: 1.0,
+        edge: "#8fa4b8".into(),
+        edge_alpha: 0.20,
+        texture: Texture::Grille,
+        // Distinct from classic-three-colour, which is the other Grille theme, by bloom as well as
+        // colour - the distinctness guard compares (texture, bloom, lit, fade).
+        bloom: 2.0,
+        ghost: 0.14,
         ..vfd_ice()
     }
 }
@@ -352,6 +402,45 @@ pub fn scope_magenta() -> Theme {
         edge: "#bd3399".into(),
         edge_alpha: 0.17,
         fade: 0.27,
+        bloom: 5.0,
+        ..scope_base()
+    }
+}
+
+/// The Tektronix look: a teal-green storage phosphor, colder than P1.
+pub fn tek_teal() -> Theme {
+    Theme {
+        id: "tek-teal".into(),
+        name: "Tek teal".into(),
+        lit: "#22e0c8".into(),
+        hot: "#d4fff8".into(),
+        panel: "#02100e".into(),
+        panel_alpha: 1.0,
+        edge: "#189a8a".into(),
+        edge_alpha: 0.17,
+        fade: 0.24,
+        bloom: 5.0,
+        ..scope_base()
+    }
+}
+
+/// P39, the long-persistence yellow-green.
+///
+/// The slowest fade in the family on purpose - P39's whole character is a tail that hangs. That was
+/// unusable before the sweep was triggered, because a long tail with an untriggered trace smeared
+/// several different waveforms over each other; with the trace standing still the tail reinforces
+/// one shape instead, which is what makes this colourway possible at all.
+pub fn p39_yellow_green() -> Theme {
+    Theme {
+        id: "p39-yellow-green".into(),
+        name: "P39 long-tail".into(),
+        lit: "#c8ff5a".into(),
+        hot: "#f2ffd8".into(),
+        panel: "#070c02".into(),
+        panel_alpha: 1.0,
+        edge: "#8aa838".into(),
+        edge_alpha: 0.17,
+        fade: 0.14,
         bloom: 5.0,
         ..scope_base()
     }
@@ -618,6 +707,88 @@ pub fn vapor_mono() -> Theme {
     }
 }
 
+/// Tokyo at night: deep indigo sky, neon cyan grid, a violet sun.
+pub fn vapor_tokyo() -> Theme {
+    Theme {
+        id: "vapor-tokyo".into(),
+        name: "Tokyo night".into(),
+        lit: "#4de2ff".into(),
+        hot: "#eafcff".into(),
+        panel: "#050a18".into(),
+        panel_alpha: 1.0,
+        edge: "#2f6f9e".into(),
+        edge_alpha: 0.18,
+        vapor: VaporParams {
+            sky_top: "#04081c".into(),
+            sky_horizon: "#6a3fa0".into(),
+            ground: "#050a18".into(),
+            sun_crown: "#ffe8ff".into(),
+            sun_upper: "#ff9ce8".into(),
+            sun_lower: "#a05bd8".into(),
+            sun_base: "#4a2f8f".into(),
+            ..VaporParams::default()
+        },
+        ..vapor_base()
+    }
+}
+
+/// Sunrise rather than sunset: a pale warm sky over a dark warm ground.
+pub fn vapor_sunrise() -> Theme {
+    Theme {
+        id: "vapor-sunrise".into(),
+        name: "Sunrise".into(),
+        lit: "#ff9a4d".into(),
+        hot: "#fff2e0".into(),
+        panel: "#180d06".into(),
+        panel_alpha: 1.0,
+        edge: "#c2703a".into(),
+        edge_alpha: 0.18,
+        vapor: VaporParams {
+            sky_top: "#3a1f0e".into(),
+            sky_horizon: "#ffcf8a".into(),
+            ground: "#180d06".into(),
+            sun_crown: "#fffbe8".into(),
+            sun_upper: "#ffe6a0".into(),
+            sun_lower: "#ffb066".into(),
+            sun_base: "#e8703a".into(),
+            ..VaporParams::default()
+        },
+        ..vapor_base()
+    }
+}
+
+/// Noir: near-black everywhere with a single pink accent.
+///
+/// Distinct from `vapor_mono`, which is greyscale throughout - this one keeps one saturated colour
+/// and desaturates the rest, which reads very differently even though both are described as "dark".
+pub fn vapor_noir() -> Theme {
+    Theme {
+        id: "vapor-noir".into(),
+        name: "Noir".into(),
+        lit: "#ff2f7a".into(),
+        hot: "#ffd0e2".into(),
+        panel: "#050406".into(),
+        panel_alpha: 1.0,
+        edge: "#8f1f4a".into(),
+        edge_alpha: 0.18,
+        vapor: VaporParams {
+            sky_top: "#08070a".into(),
+            sky_horizon: "#2e1a24".into(),
+            ground: "#050406".into(),
+            sun_crown: "#ffe0ec".into(),
+            sun_upper: "#ff7aa8".into(),
+            sun_lower: "#8f2a52".into(),
+            sun_base: "#3a1020".into(),
+            // No lightning: the point of noir is restraint.
+            bolt_bright: 0.0,
+            sky_flash: 0.0,
+            grid_flash: 0.0,
+            ..VaporParams::default()
+        },
+        ..vapor_base()
+    }
+}
+
 fn tube_base() -> Theme {
     Theme {
         family: "tube".into(),
@@ -732,6 +903,56 @@ pub fn tube_nixie_green() -> Theme {
             socket: "#141c16".into(),
             collar: "#7f9a84".into(),
             glass: "#d4ecdc".into(),
+            ..TubeParams::default()
+        },
+        ..tube_base()
+    }
+}
+
+/// Copper and brass: a warm gold-glowing valve on an oxidised chassis.
+pub fn tube_copper() -> Theme {
+    Theme {
+        id: "tube-copper".into(),
+        name: "Copper".into(),
+        lit: "#ffb347".into(),
+        hot: "#ffe6b8".into(),
+        panel: "#241505".into(),
+        panel_alpha: 1.0,
+        edge: "#a06a22".into(),
+        edge_alpha: 0.22,
+        tube: TubeParams {
+            chassis_top: "#4a3218".into(),
+            chassis_bottom: "#160d04".into(),
+            socket: "#2a1a0a".into(),
+            collar: "#d9a441".into(),
+            glass: "#f0e0c0".into(),
+            ..TubeParams::default()
+        },
+        ..tube_base()
+    }
+}
+
+/// Red-plating: a valve being driven past its dissipation limit, anode glowing dull red.
+///
+/// A real fault condition, and the reason it earns a place is that it is the only colourway where
+/// the glow colour is close to the plate's own darkness - which makes the climbing-glow cue carry
+/// almost all of the reading, rather than brightness.
+pub fn tube_red_plate() -> Theme {
+    Theme {
+        id: "tube-red-plate".into(),
+        name: "Red plate".into(),
+        lit: "#ff3b25".into(),
+        hot: "#ffb9a0".into(),
+        panel: "#1a0806".into(),
+        panel_alpha: 1.0,
+        edge: "#8f2a18".into(),
+        edge_alpha: 0.22,
+        tube: TubeParams {
+            chassis_top: "#38201c".into(),
+            chassis_bottom: "#120706".into(),
+            socket: "#20100c".into(),
+            collar: "#8f6a52".into(),
+            glass: "#e8d0c8".into(),
             ..TubeParams::default()
         },
         ..tube_base()

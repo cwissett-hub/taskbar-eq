@@ -1035,3 +1035,50 @@ mod strip {
         println!("wrote strip-0..5 (0 before, 1 = the hit, 2..5 aftermath)");
     }
 }
+
+#[cfg(test)]
+mod flow {
+    use super::*;
+    use crate::themes::builtin;
+
+    /// How much of the terrain actually changes between consecutive frames - a direct proxy for
+    /// whether the grid reads as moving. Run: cargo test --release probe_flow -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn probe_flow() {
+        println!("{:>7} {:>22} {:>22}", "scroll", "px changed / frame", "of the ground");
+        for scroll in [1.24f32, 2.0, 3.0, 4.0, 5.0] {
+            let mut t = builtin::vapor_sunset();
+            t.vapor.scroll = scroll;
+            let mut v = Vapor::default();
+            let mut c = Canvas::new(190, 60);
+            let mut d = FrameData::default();
+            for (i, x) in d.levels.iter_mut().enumerate() {
+                let f = i as f32 / 63.0;
+                *x = 0.18 + 0.42 * (f * 7.0).sin().abs();
+            }
+            for _ in 0..90 {
+                v.draw(&mut c, &t, &d);
+            }
+            let horizon = (60.0 * t.vapor.horizon).round() as i32;
+            let before = c.bits().to_vec();
+            v.draw(&mut c, &t, &d);
+            let after = c.bits().to_vec();
+            let mut changed = 0;
+            let mut total = 0;
+            for y in horizon..58 {
+                for x in 2..188 {
+                    let i = (y * 190 + x) as usize;
+                    total += 1;
+                    if before[i] != after[i] {
+                        changed += 1;
+                    }
+                }
+            }
+            println!(
+                "{scroll:>7.2} {changed:>18} px {:>20.1}%",
+                changed as f32 / total as f32 * 100.0
+            );
+        }
+    }
+}

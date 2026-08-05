@@ -1,0 +1,21 @@
+# VARIANT B - the new shipped default, as a file so it can be compared side by side.
+schema = 1
+id     = "vapor-b-balanced"
+name   = "B: balanced"
+family = "vapor"
+
+[colour]
+lit         = "#ff53c8"
+hot         = "#eafcff"
+panel       = "#0a0416"
+panel_alpha = 1.0
+edge        = "#ff5f93"
+edge_alpha  = 0.18
+
+[look]
+bloom = 3.0
+
+[vaporwave]
+lines  = 9
+scroll = 2.6
+amp    = 1.15

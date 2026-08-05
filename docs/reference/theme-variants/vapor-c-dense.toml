@@ -1,0 +1,22 @@
+# VARIANT C - dense, the original look, but with the flow raised so it does not crawl.
+# Keep this if you prefer the richer mesh and can live with ridges being harder to pick out.
+schema = 1
+id     = "vapor-c-dense"
+name   = "C: dense"
+family = "vapor"
+
+[colour]
+lit         = "#ff53c8"
+hot         = "#eafcff"
+panel       = "#0a0416"
+panel_alpha = 1.0
+edge        = "#ff5f93"
+edge_alpha  = 0.18
+
+[look]
+bloom = 3.0
+
+[vaporwave]
+lines  = 14
+scroll = 2.2
+amp    = 1.00

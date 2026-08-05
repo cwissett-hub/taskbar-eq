@@ -181,9 +181,24 @@ impl Default for VaporParams {
             // its displacement range, so this sets how much relief that buys: ~14.5px, half the
             // visible ground. 1.50 was measurably denser without reading as more responsive.
             amp: 1.15,
-            lines: 12,
+            // 12 lines made the audio unreadable, and the arithmetic says why: at 12 the near-field
+            // gap between lines is 3.4px while the peak displacement is 15.8px, so a ridge crosses
+            // about five lines and stops being distinguishable from the grid's own density. The
+            // terrain became a hatch that jiggles rather than hills that rise. At 9 the ratio is
+            // 3.5x and a ridge reads as a ridge.
+            //
+            // This costs resolution in the DEPTH axis only. The 64 log frequency bands across each
+            // line are untouched, so the spectrum's fidelity is unchanged - it is the number of
+            // historical snapshots on screen that drops.
+            lines: 9,
             verts: 18,
-            scroll: 1.24,
+            // 1.24 gave a near-field flow of 0.50 px/frame, which is below the rate at which motion
+            // reads as motion - the grid crawled. It also meant a line was born only every 6.7
+            // frames, so the terrain sampled audio at 8.9Hz and roughly 93% of what was on screen
+            // was frozen history at any instant. This is the fourth value from the browser tuner
+            // that did not survive 60px, after amp, persp and lines; the tuner's canvas was far
+            // larger, so the same phase rate looked far faster there.
+            scroll: 2.6,
             persp: 1.40,
             spread: 1.50,
             glow: 0.98,
