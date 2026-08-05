@@ -96,7 +96,9 @@ impl Family for Segmented {
             for k in 0..lit_of(b).min(nseg) {
                 let frac = (k + 1) as f32 / nseg as f32;
                 let y = PAD_Y + usable_h - (k + 1) * seg_pitch;
-                glow.fill_rect(ox + b * pitch, y, BAR_W, SEG_H, Rgba::from_hex(t.lit_at(frac), 1.0));
+                let bx = b as f32 / (nbars - 1).max(1) as f32;
+                let col = super::tint(t, bx, d.time_s, false, t.lit_at(frac), 1.0);
+                glow.fill_rect(ox + b * pitch, y, BAR_W, SEG_H, col);
             }
         }
         let radius = t.bloom.round().max(0.0) as i32;
@@ -127,7 +129,9 @@ impl Family for Segmented {
             for k in 0..lit_of(b).min(nseg) {
                 let frac = (k + 1) as f32 / nseg as f32;
                 let y = PAD_Y + usable_h - (k + 1) * seg_pitch;
-                c.fill_rect(ox + b * pitch, y, BAR_W, SEG_H, Rgba::from_hex(t.lit_at(frac), 1.0));
+                let bx = b as f32 / (nbars - 1).max(1) as f32;
+                let col = super::tint(t, bx, d.time_s, false, t.lit_at(frac), 1.0);
+                c.fill_rect(ox + b * pitch, y, BAR_W, SEG_H, col);
             }
         }
 
@@ -176,7 +180,8 @@ impl Family for Segmented {
                 let lit = lit_of(b).min(nseg);
                 for k in lit..nseg {
                     let frac = (k + 1) as f32 / nseg as f32;
-                    let col = Rgba::from_hex(t.lit_at(frac), t.ghost);
+                    let bx = b as f32 / (nbars - 1).max(1) as f32;
+                    let col = super::tint(t, bx, d.time_s, false, t.lit_at(frac), t.ghost);
                     let y = PAD_Y + usable_h - (k + 1) * seg_pitch;
                     c.fill_rect(ox + b * pitch, y, BAR_W, SEG_H, col);
                 }
@@ -195,12 +200,13 @@ impl Family for Segmented {
                     continue;
                 }
                 let hh = lit.min(nseg) * seg_pitch - SEG_GAP;
+                let bx = b as f32 / (nbars - 1).max(1) as f32;
                 c.fill_rect(
                     ox + b * pitch + hot_x,
                     PAD_Y + usable_h - hh,
                     hot_w,
                     hh,
-                    Rgba::from_hex(&t.hot, 0.55),
+                    super::tint(t, bx, d.time_s, true, &t.hot, 0.55),
                 );
             }
         }

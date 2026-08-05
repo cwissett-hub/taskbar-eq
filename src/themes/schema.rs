@@ -70,6 +70,8 @@ struct RawLook {
     /// is an RMS of 0.02-0.12), which is why the VU needle and the scope trace both
     /// barely moved before this existed.
     sensitivity: Option<f32>,
+    rainbow: Option<f32>,
+    rainbow_spread: Option<f32>,
 }
 
 #[derive(Deserialize, Default)]
@@ -267,6 +269,8 @@ pub fn parse(src: &str) -> Result<Theme, ThemeError> {
         glow_strength: raw.look.glow_strength.unwrap_or(d.glow_strength),
         edge_glow: raw.look.edge_glow.unwrap_or(d.edge_glow),
         sensitivity: raw.look.sensitivity.unwrap_or(d.sensitivity),
+        rainbow: raw.look.rainbow.unwrap_or(d.rainbow),
+        rainbow_spread: raw.look.rainbow_spread.unwrap_or(d.rainbow_spread),
         fade: raw.look.fade.unwrap_or(d.fade),
         texture: texture_from(raw.look.texture, d.texture),
         ballistics: Ballistics {

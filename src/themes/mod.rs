@@ -20,6 +20,17 @@ pub enum Texture {
     None_,
 }
 
+/// Saturation the rainbow runs at, and it is a measured ceiling rather than taste.
+///
+/// This project requires every lit colour to clear 3:1 contrast against its own panel. Swept over
+/// all 360 hues against a near-black panel: at full saturation pure blue (hue 240) manages only
+/// 2.31:1 and FAILS that rule; 0.9 gives 2.48 and 0.8 gives 2.88, still failing. 0.70 is the first
+/// value that passes at every hue, at 3.59:1. 0.68 is used for a little margin.
+///
+/// So a rainbow cannot be fully saturated here. Blue is simply too dark against black at any
+/// brightness, and no amount of value fixes it - only pulling it toward white does.
+pub const RAINBOW_SAT: f32 = 0.68;
+
 /// Human-readable name for a family, for the theme menu's submenu titles.
 ///
 /// Falls back to a title-cased version of the raw family id rather than skipping or
@@ -238,6 +249,27 @@ impl Default for VaporParams {
     }
 }
 
+/// A rainbow colour for an element at horizontal fraction `x01`, or None when the colourway is not
+/// a rainbow one.
+///
+/// Returned as (hue, saturation, value) rather than a colour so `render` can build an `Rgba` with
+/// whatever alpha it needs - `themes` deliberately knows nothing about the canvas.
+pub fn rainbow_hsv(t: &Theme, x01: f32, time_s: f32, hot: bool) -> Option<(f32, f32, f32)> {
+    if t.rainbow <= 0.0 {
+        return None;
+    }
+    let x = if x01.is_finite() { x01.clamp(0.0, 1.0) } else { 0.0 };
+    let time = if time_s.is_finite() { time_s } else { 0.0 };
+    let hue = time * t.rainbow + x * t.rainbow_spread;
+    if hot {
+        // The hot core keeps the hue but pulls hard toward white, exactly as the fixed colourways do
+        // with their own `hot` - otherwise a rainbow loses the sense of a bright centre entirely.
+        Some((hue, RAINBOW_SAT * 0.30, 1.0))
+    } else {
+        Some((hue, RAINBOW_SAT, 1.0))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Zone {
     pub upto: f32,
@@ -278,6 +310,20 @@ pub struct Theme {
     /// sane default mapping, so 1.0 is already usable and this is the knob to reach for
     /// if a meter feels dead.
     pub sensitivity: f32,
+    /// Hue cycles per second. 0 disables the rainbow entirely and the fixed `lit`/`hot` are used.
+    ///
+    /// A rainbow cannot be expressed as a hex string, because it changes every frame and varies
+    /// across the display, so it is the one visual property that has to be computed rather than
+    /// declared. This is still data - a colourway turns it on - but the colour itself comes from
+    /// `Theme::rainbow_at`.
+    pub rainbow: f32,
+    /// Hue turns spanned across the width of the display, so the rainbow is a WAVE and not one
+    /// flat colour shifting.
+    ///
+    /// 0 gives the "spectrum cycle" a keyboard does when the whole board changes together; ~0.8
+    /// gives the "rainbow wave", where hue also varies by position. On a spectrum analyser that
+    /// second one doubles as a frequency legend, which is why it is the default.
+    pub rainbow_spread: f32,
     /// Vaporwave-only scene parameters; inert for the other families.
     pub vapor: VaporParams,
     /// Tube-row-only material colours; inert for the other families.
@@ -320,6 +366,8 @@ impl Default for Theme {
             // than the panel it sat on. 4.0 puts it ~60 luminance above.
             edge_glow: 4.0,
             sensitivity: 1.0,
+            rainbow: 0.0,
+            rainbow_spread: 0.8,
             vapor: VaporParams::default(),
             tube: TubeParams::default(),
             fade: 0.30,

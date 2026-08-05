@@ -81,7 +81,7 @@ overlay does not exist, so the tray icon is all that is left to click.
 **Last updated: 2026-08-05.** Full test suite green (199 at the time of writing), release
 build warning-free. The colourway and family counts below are asserted by a test; the test
 count itself is a snapshot and can drift.
-**41 colourways across 5 families.**
+**44 colourways across 5 families.**
 
 | | Feature | State |
 |---|---|---|
@@ -103,6 +103,32 @@ count itself is a snapshot and can drift.
 | ✅ | Frame-rate-independent animation (`dt_ms`), so scroll and the gate's timings do not drift with load | working |
 | ✅ | **Wide display** — claims the dead taskbar left of the widget, clamped to real clearance | **unseen** |
 | ✅ | Layouts scale with width: 4 VU dials and 20 valves at 380 px, 2 and 10 at 190 px | **unseen** |
+
+### RGB wave
+
+Three colourways — one each on the **Segmented VFD**, **Oscilloscope** and **VU dials** — are the
+gaming-keyboard rainbow: hue sweeps across the display and drifts over time. On a spectrum display
+that spatial sweep doubles as a frequency legend, which is why the hue varies by *position* and not
+just with the clock.
+
+It is the one visual property that cannot be a hex string, since it changes every frame, so it is
+two numbers in `[look]` instead:
+
+| key | meaning |
+|---|---|
+| `rainbow` | hue cycles per second. `0` disables it and the fixed `lit`/`hot` are used |
+| `rainbow_spread` | hue turns spanned across the width. `0` = whole display shifts together ("spectrum cycle"); `~0.85` = a wave |
+
+**The rainbow cannot be fully saturated.** Every lit colour here must clear 3:1 contrast against its
+own panel, and swept across all 360 hues against a near-black panel, fully saturated blue reaches
+only **2.31:1** — it fails. 0.9 gives 2.48 and 0.8 gives 2.88, still failing; **0.70 is the first
+value that passes**, at 3.59:1. Blue is simply too dark against black at any brightness, and only
+pulling it toward white fixes it. A test walks all 360 hues of every rainbow colourway so nobody
+raises the saturation back up.
+
+Two things deliberately keep their own colour under a rainbow: the VU's **overload arc and needle**
+stay red, because that colour means something; and the P7 phosphor's **slow trail** stays
+yellow-green, because being a different colour from the trace is the entire point of it.
 
 ### Width
 
@@ -184,7 +210,7 @@ The app also writes that log on every normal launch, so a failure can be reporte
 
 ## Themes
 
-**41 colourways across 5 families.** A *family* is a renderer with fixed geometry — code. A
+**44 colourways across 5 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
 **Segmented VFD** — a smoked-glass panel with discrete stacked segments, a faint dormant grid,
@@ -266,7 +292,7 @@ Drop a `.toml` file (any filename — the `id` inside is what matters) into
 watched, so saving the file updates the live overlay without a restart — edit a colour, hit
 save, and watch the taskbar change.
 
-A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 41
+A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 44
 built-ins, which are always embedded in the exe regardless of whether that folder exists.
 
 Failure modes are all deliberately soft, because these files are hand-authored:
@@ -327,7 +353,7 @@ PICK A FAMILY - a renderer with fixed geometry. You cannot invent one in data.
 
 FILE FORMAT - one `.toml` file per theme, saved under `%APPDATA%\taskbar-eq\themes\`
 (filename does not matter; `id` inside is the identity, and the override key - a file
-whose `id` matches one of the 41 built-ins REPLACES it, any other `id` is added):
+whose `id` matches one of the 44 built-ins REPLACES it, any other `id` is added):
 
   schema = 1
   id     = "my-theme"

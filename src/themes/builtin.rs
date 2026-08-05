@@ -10,6 +10,7 @@ pub fn all() -> Vec<Theme> {
         classic_three_colour(),
         hifi_white(),
         chrome(),
+        rgb_wave(),
         p1_green(),
         p7_dual(),
         p11_blue_violet(),
@@ -21,6 +22,7 @@ pub fn all() -> Vec<Theme> {
         scope_magenta(),
         tek_teal(),
         p39_yellow_green(),
+        scope_rgb_wave(),
         vu_cream(),
         vu_amber(),
         vu_ice(),
@@ -29,6 +31,7 @@ pub fn all() -> Vec<Theme> {
         vu_cyan(),
         vu_hot_pink(),
         vu_lime(),
+        vu_rgb_wave(),
         vapor_sunset(),
         vapor_miami(),
         vapor_outrun(),
@@ -210,6 +213,33 @@ pub fn chrome() -> Theme {
         // colour - the distinctness guard compares (texture, bloom, lit, fade).
         bloom: 2.0,
         ghost: 0.14,
+        ..vfd_ice()
+    }
+}
+
+/// RGB wave: the gaming-keyboard rainbow, hue sweeping across the bars and drifting over time.
+///
+/// `lit` and `hot` are still set, and are not decoration - they are what a build with `rainbow = 0`
+/// would draw, and they are what the contrast test measures. The live colour comes from
+/// `themes::rainbow_hsv`.
+pub fn rgb_wave() -> Theme {
+    Theme {
+        id: "rgb-wave".into(),
+        name: "RGB wave".into(),
+        lit: "#7dd8ff".into(),
+        hot: "#f0fbff".into(),
+        panel: "#08090c".into(),
+        panel_alpha: 1.0,
+        edge: "#8fa4b8".into(),
+        edge_alpha: 0.18,
+        texture: Texture::None_,
+        bloom: 5.0,
+        ghost: 0.10,
+        // A slow drift. Fast enough to be obviously alive, slow enough that the hue at any one bar
+        // is stable long enough to read the spectrum by - a quick cycle turns the display into a
+        // strobe and destroys the frequency legend the spread gives you for free.
+        rainbow: 0.07,
+        rainbow_spread: 0.85,
         ..vfd_ice()
     }
 }
@@ -446,6 +476,25 @@ pub fn p39_yellow_green() -> Theme {
     }
 }
 
+/// RGB wave on the oscilloscope: the hue sweeps along the trace itself.
+pub fn scope_rgb_wave() -> Theme {
+    Theme {
+        id: "scope-rgb-wave".into(),
+        name: "RGB wave".into(),
+        lit: "#7dd8ff".into(),
+        hot: "#f0fbff".into(),
+        panel: "#06070a".into(),
+        panel_alpha: 1.0,
+        edge: "#8fa4b8".into(),
+        edge_alpha: 0.17,
+        fade: 0.26,
+        bloom: 5.0,
+        rainbow: 0.09,
+        rainbow_spread: 0.9,
+        ..scope_base()
+    }
+}
+
 fn vu_base() -> Theme {
     Theme {
         family: "vu".into(),
@@ -570,6 +619,26 @@ pub fn vu_lime() -> Theme {
         panel_alpha: 1.0,
         edge: "#6f9e24".into(),
         edge_alpha: 0.18,
+        ..vu_base()
+    }
+}
+
+/// RGB wave on the dials: each dial sits at its own hue, and the whole set drifts.
+///
+/// Spread is low here on purpose. There are only two to four dials, so a wide spread would put them
+/// at wildly unrelated hues and read as a fault rather than a rainbow.
+pub fn vu_rgb_wave() -> Theme {
+    Theme {
+        id: "vu-rgb-wave".into(),
+        name: "RGB wave".into(),
+        lit: "#7dd8ff".into(),
+        hot: "#f0fbff".into(),
+        panel: "#06070a".into(),
+        panel_alpha: 1.0,
+        edge: "#8fa4b8".into(),
+        edge_alpha: 0.18,
+        rainbow: 0.06,
+        rainbow_spread: 0.22,
         ..vu_base()
     }
 }
@@ -1050,6 +1119,63 @@ mod tests {
         ids.sort();
         ids.dedup();
         assert_eq!(ids.len(), before, "duplicate theme ids would break override-by-id");
+    }
+
+    #[test]
+    fn every_hue_of_a_rainbow_colourway_clears_three_to_one_against_its_panel() {
+        // A rainbow colourway's `lit` hex is only what a non-rainbow build would draw, so the
+        // ordinary contrast test cannot see the colours actually rendered - they are computed per
+        // frame and sweep the whole wheel. This walks all 360 hues.
+        //
+        // The failure it guards is real and specific: fully saturated BLUE is too dark against a
+        // near-black panel. Measured at value 1.0 against #080a0e - saturation 1.0 gives 2.31:1,
+        // 0.9 gives 2.48, 0.8 gives 2.88, all failing this project's 3:1 rule; 0.70 is the first
+        // that passes, at 3.59. That measurement is what set RAINBOW_SAT, and this test is what
+        // stops someone "fixing" the rainbow by turning the saturation back up.
+        let rainbows: Vec<Theme> = all().into_iter().filter(|t| t.rainbow > 0.0).collect();
+        assert!(rainbows.len() >= 3, "expected a rainbow colourway per supporting family");
+        for t in rainbows {
+            let mut worst = (f32::MAX, 0u32);
+            for deg in 0..360 {
+                let (h, s, v) = crate::themes::rainbow_hsv(&t, deg as f32 / 360.0, 0.0, false)
+                    .expect("a rainbow colourway must yield a colour");
+                let (r, g, b) = hsv_to_rgb(h, s, v);
+                let hex = format!("#{r:02x}{g:02x}{b:02x}");
+                let c = contrast(&hex, &t.panel);
+                if c < worst.0 {
+                    worst = (c, deg as u32);
+                }
+            }
+            assert!(
+                worst.0 >= 3.0,
+                "{}: hue {} only reaches {:.2}:1 against its panel {}",
+                t.id,
+                worst.1,
+                worst.0,
+                t.panel
+            );
+        }
+    }
+
+    /// Mirrors `Rgba::from_hsv` so the contrast check above measures the colours actually drawn.
+    fn hsv_to_rgb(hue_turns: f32, sat: f32, val: f32) -> (u8, u8, u8) {
+        let h = hue_turns.rem_euclid(1.0) * 6.0;
+        let c = val * sat;
+        let x = c * (1.0 - ((h % 2.0) - 1.0).abs());
+        let m = val - c;
+        let (r, g, b) = match h as i32 {
+            0 => (c, x, 0.0),
+            1 => (x, c, 0.0),
+            2 => (0.0, c, x),
+            3 => (0.0, x, c),
+            4 => (x, 0.0, c),
+            _ => (c, 0.0, x),
+        };
+        (
+            ((r + m) * 255.0).round() as u8,
+            ((g + m) * 255.0).round() as u8,
+            ((b + m) * 255.0).round() as u8,
+        )
     }
 
     #[test]

@@ -9,6 +9,34 @@ pub struct Rgba {
 impl Rgba {
     pub const TRANSPARENT: Rgba = Rgba { r: 0, g: 0, b: 0, a: 0 };
 
+    /// Builds a colour from hue/saturation/value, hue in turns (0..1, wrapping).
+    ///
+    /// Needed because a rainbow colourway's colour cannot be a hex string in a theme file - it
+    /// changes every frame and varies across the display - so it has to be computed. Hue in turns
+    /// rather than degrees so a phase can wrap with `fract()` without a conversion either side.
+    pub fn from_hsv(hue_turns: f32, sat: f32, val: f32, alpha: f32) -> Rgba {
+        let h = if hue_turns.is_finite() { hue_turns.rem_euclid(1.0) } else { 0.0 } * 6.0;
+        let s = sat.clamp(0.0, 1.0);
+        let v = val.clamp(0.0, 1.0);
+        let c = v * s;
+        let x = c * (1.0 - ((h % 2.0) - 1.0).abs());
+        let m = v - c;
+        let (r, g, b) = match h as i32 {
+            0 => (c, x, 0.0),
+            1 => (x, c, 0.0),
+            2 => (0.0, c, x),
+            3 => (0.0, x, c),
+            4 => (x, 0.0, c),
+            _ => (c, 0.0, x),
+        };
+        Rgba::new(
+            ((r + m) * 255.0).round() as u8,
+            ((g + m) * 255.0).round() as u8,
+            ((b + m) * 255.0).round() as u8,
+            (alpha.clamp(0.0, 1.0) * 255.0).round() as u8,
+        )
+    }
+
     pub fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
         Rgba { r, g, b, a }
     }
@@ -950,6 +978,44 @@ mod tests {
         c.fill_rect(0, 0, 10, 10, Rgba::new(255, 255, 255, 255));
         c.clip_to_rounded_rect(0, 0, -4, 190, 5);
         assert!(c.bits().iter().all(|&p| p == 0), "degenerate rect clips everything");
+    }
+
+    #[test]
+    fn from_hsv_hits_the_primaries_and_wraps() {
+        let full = |h: f32| Rgba::from_hsv(h, 1.0, 1.0, 1.0);
+        assert_eq!(full(0.0), Rgba::new(255, 0, 0, 255), "0 turns = red");
+        assert_eq!(full(1.0 / 3.0), Rgba::new(0, 255, 0, 255), "1/3 = green");
+        assert_eq!(full(2.0 / 3.0), Rgba::new(0, 0, 255, 255), "2/3 = blue");
+        // Wrapping matters: the hue is an accumulating phase, so it goes past 1 and negative.
+        assert_eq!(full(1.0), full(0.0), "a full turn must return to the start");
+        assert_eq!(full(-1.0 / 3.0), full(2.0 / 3.0), "negative hues must wrap, not clamp");
+        // NaN must not produce a garbage colour - the phase is derived from frame timing.
+        assert_eq!(full(f32::NAN), full(0.0), "a non-finite hue must fall back, not corrupt");
+    }
+
+    #[test]
+    fn from_hsv_desaturates_toward_white_and_never_breaks_premultiplication() {
+        let grey = Rgba::from_hsv(0.5, 0.0, 1.0, 1.0);
+        assert_eq!(grey, Rgba::new(255, 255, 255, 255), "zero saturation is white at full value");
+        // Rgba holds STRAIGHT rgba - premultiplication happens when a pixel is written - so the
+        // invariant to check here is that alpha round-trips and no channel is produced out of
+        // range, not the r,g,b <= a relation that applies to stored pixels.
+        for h in 0..24 {
+            for &(sat, val, a) in &[(1.0f32, 1.0f32, 1.0f32), (0.68, 1.0, 0.5), (0.3, 0.6, 0.25)] {
+                let c = Rgba::from_hsv(h as f32 / 24.0, sat, val, a);
+                assert_eq!(
+                    c.a,
+                    (a * 255.0).round() as u8,
+                    "alpha must pass through untouched at h={h}"
+                );
+                let peak = c.r.max(c.g).max(c.b);
+                assert_eq!(
+                    peak,
+                    (val * 255.0).round() as u8,
+                    "the brightest channel must equal value at h={h}, sat={sat}"
+                );
+            }
+        }
     }
 
     #[test]

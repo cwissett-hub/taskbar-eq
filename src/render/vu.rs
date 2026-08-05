@@ -160,7 +160,7 @@ impl Family for Vu {
             c.fill_rect(1, y, w - 2, 1, Rgba::from_hex(&t.lit, 0.09 * f));
         }
 
-        let ink = Rgba::from_hex(&t.lit, 0.72);
+        let dial_x01 = |idx: usize| idx as f32 / (dials - 1).max(1) as f32;
         let over = Rgba::from_hex(t.overload_hex(), 0.85);
         let dial_w = (w / dials as i32 - 3).max(8);
         let readings: Vec<(f32, f32)> = [(self.l, self.pk_l), (self.r, self.pk_r)]
@@ -209,7 +209,11 @@ impl Family for Vu {
                 let f = step as f32 / steps as f32;
                 let (x0, y0) = arc_pt((step - 1) as f32 / steps as f32);
                 let (x1, y1) = arc_pt(f);
-                let col = if f >= OVERLOAD_AT { over } else { ink };
+                let col = if f >= OVERLOAD_AT {
+                    over
+                } else {
+                    super::tint(t, dial_x01(idx), d.time_s, false, &t.lit, 0.72)
+                };
                 dial.line(x0, y0, x1, y1, col);
             }
 
@@ -218,12 +222,15 @@ impl Family for Vu {
                 let ang = a0 + (a1 - a0) * k as f32 / 6.0;
                 let big = k == 0 || k == 3 || k == 6;
                 let inner = radius - if big { 5 } else { 3 };
+                // Same hue as this dial's arc. Left fixed, the ticks stayed pale blue against a red
+                // arc and the dial read as two unrelated colours rather than one instrument.
+                let tick = super::tint(t, dial_x01(idx), d.time_s, false, &t.lit, 0.72);
                 dial.line(
                     cx + (ang.cos() * inner as f32) as i32,
                     cy + (ang.sin() * inner as f32) as i32,
                     cx + (ang.cos() * radius as f32) as i32,
                     cy + (ang.sin() * radius as f32) as i32,
-                    ink,
+                    tick,
                 );
             }
 
@@ -241,9 +248,11 @@ impl Family for Vu {
             // Live needle, red past the overload point.
             let ang = a0 + (a1 - a0) * level.clamp(0.0, 1.0);
             let needle = if *level > OVERLOAD_AT {
+                // Overload stays red even under a rainbow: it means something, and a hue that
+                // happened to be red-ish anyway would make it unreadable.
                 Rgba::from_hex(t.overload_hex(), 1.0)
             } else {
-                Rgba::from_hex(&t.hot, 1.0)
+                super::tint(t, dial_x01(idx), d.time_s, true, &t.hot, 1.0)
             };
             // The needle is the one thing on the dial that must read instantly, and as a
             // 1px hairline with a 2x2 pivot it read as a scratch. Now: a full-length core,
@@ -287,7 +296,8 @@ impl Family for Vu {
             let ly = cy - (radius * 3 / 5);
             let lx = cx - (radius as f32 * 0.52) as i32;
             if ly + 5 < cy && lx >= 2 && lx + lw < w - 2 {
-                dial.text_3x5(lx, ly, label, Rgba::from_hex(&t.lit, 0.60));
+                let lc = super::tint(t, dial_x01(idx), d.time_s, false, &t.lit, 0.60);
+                dial.text_3x5(lx, ly, label, lc);
             }
         }
 

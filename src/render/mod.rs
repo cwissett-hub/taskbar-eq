@@ -24,6 +24,13 @@ pub struct FrameData {
     pub rms_l: f32,
     #[allow(dead_code)]
     pub rms_r: f32,
+    /// Seconds since the process started, for animation that is not frame-counted.
+    ///
+    /// Wrapped at 3600 so f32 keeps useful precision - at an hour it still resolves 0.2ms, where an
+    /// unwrapped accumulator would be down to whole milliseconds after a day. A hue phase can
+    /// therefore step discontinuously once an hour if the cycle rate does not divide 3600 evenly,
+    /// which is not worth more machinery than this comment.
+    pub time_s: f32,
     /// Milliseconds since the previous frame.
     ///
     /// The render loop sleeps a fixed 16ms, so its real period is that plus however long
@@ -41,6 +48,7 @@ impl Default for FrameData {
             waveform: [0.0; 256],
             rms_l: 0.0,
             rms_r: 0.0,
+            time_s: 0.0,
             dt_ms: 16.7,
         }
     }
@@ -56,6 +64,29 @@ pub trait Family {
     #[allow(dead_code)]
     fn id(&self) -> &'static str;
     fn draw(&mut self, c: &mut Canvas, t: &Theme, d: &FrameData);
+}
+
+/// The colour an element should be drawn in, honouring a rainbow colourway.
+///
+/// One resolver rather than a rainbow branch at every call site: families call this exactly where
+/// they used to call `Rgba::from_hex`, so a colourway that is not a rainbow one takes the identical
+/// path it always did and the fixed colourways cannot be changed by this feature at all.
+///
+/// `x01` is the element's horizontal position across the display, which is what turns a hue cycle
+/// into a WAVE - and on a spectrum display that position is frequency, so the rainbow doubles as a
+/// frequency legend.
+pub fn tint(
+    t: &Theme,
+    x01: f32,
+    time_s: f32,
+    hot: bool,
+    fallback: &str,
+    alpha: f32,
+) -> canvas::Rgba {
+    match crate::themes::rainbow_hsv(t, x01, time_s, hot) {
+        Some((h, s, v)) => canvas::Rgba::from_hsv(h, s, v, alpha),
+        None => canvas::Rgba::from_hex(fallback, alpha),
+    }
 }
 
 /// Every family the renderer can dispatch on.
@@ -288,5 +319,54 @@ mod opacity {
             "these colourways leave see-through pixels inside the panel, which the weather widget \
              shows through: {offenders:?}; worst {worst:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod rainbow_dump {
+    use super::*;
+    use crate::themes::builtin;
+    /// Run: cargo test --release dump_rainbow -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn dump_rainbow() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut n = 0;
+        for theme in builtin::all().into_iter().filter(|t| t.rainbow > 0.0) {
+            for (tag, time_s) in [("t0", 0.0f32), ("t1", 3.0)] {
+                let mut fam = family_for(&theme.family);
+                let mut c = Canvas::new(190, 60);
+                let mut d = FrameData::default();
+                for (i, v) in d.levels.iter_mut().enumerate() {
+                    let x = i as f32 / 63.0;
+                    *v = (0.22 + 0.5 * (x * 8.0).sin().abs()) * (1.0 - x * 0.25);
+                }
+                d.peaks = d.levels;
+                d.rms_l = 0.10;
+                d.rms_r = 0.065;
+                for (i, v) in d.waveform.iter_mut().enumerate() {
+                    *v = 0.4 * ((i as f32 / 26.0).sin() + 0.4 * (i as f32 / 9.0).sin());
+                }
+                d.time_s = time_s;
+                for _ in 0..8 {
+                    fam.draw(&mut c, &theme, &d);
+                }
+                let mut out = Vec::new();
+                for y in 0..60 {
+                    for x in 0..190 {
+                        let px = c.get(x, y);
+                        let a = px.a as f32 / 255.0;
+                        for ch in [px.r, px.g, px.b] {
+                            out.push((ch as f32 + 22.0 * (1.0 - a)).min(255.0) as u8);
+                        }
+                        out.push(255);
+                    }
+                }
+                std::fs::write(dir.join(format!("rgb-{}-{tag}.rgba", theme.id)), &out).unwrap();
+                n += 1;
+            }
+        }
+        println!("wrote {n} rainbow dumps");
     }
 }

@@ -165,6 +165,7 @@ impl Scope {
         (s, start)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn stroke_into(
         buf: &mut Canvas,
         wave: &[f32; 256],
@@ -172,6 +173,10 @@ impl Scope {
         colour: Rgba,
         fade: f32,
         gain: f32,
+        // Some(..) only for a rainbow colourway, in which case the trace is coloured per COLUMN so
+        // the hue sweeps along it. Passed rather than resolved inside because the trail layer wants
+        // its own colour and must not be re-tinted.
+        rainbow: Option<(&Theme, f32)>,
     ) {
         // Decay what is already there. Scaling alpha keeps the buffer transparent,
         // which is what lets the panel show through the trail.
@@ -212,6 +217,13 @@ impl Scope {
             let w = soft_clip(wave[i.min(255)] * gain);
             let y = mid - (w * amp as f32) as i32;
             let y = y.clamp(0, h - 1);
+            let colour = match rainbow {
+                Some((t, time_s)) => {
+                    let x01 = px as f32 / span.max(1) as f32;
+                    super::tint(t, x01, time_s, false, &t.lit, colour.a as f32 / 255.0)
+                }
+                None => colour,
+            };
             let (lo, hi) = match prev_y {
                 Some(p) if p < y => (p, y),
                 Some(p) => (y, p),
@@ -256,11 +268,14 @@ impl Family for Scope {
         // Slow trail first (drawn underneath), then the fast trace.
         if let (Some((trail_hex, trail_fade)), Some(trail)) = (t.dual.clone(), self.trail.as_mut()) {
             let c = Rgba::from_hex(&trail_hex, 1.0);
-            Self::stroke_into(trail, &wave, start, c, trail_fade, gain);
+            // The dual-layer trail keeps its own phosphor colour even under a rainbow - its whole
+            // point is being a DIFFERENT colour from the trace.
+            Self::stroke_into(trail, &wave, start, c, trail_fade, gain, None);
         }
         if let Some(trace) = self.trace.as_mut() {
             let c = Rgba::from_hex(&t.lit, 1.0);
-            Self::stroke_into(trace, &wave, start, c, t.fade, gain);
+            let rb = if t.rainbow > 0.0 { Some((t, d.time_s)) } else { None };
+            Self::stroke_into(trace, &wave, start, c, t.fade, gain, rb);
         }
 
         // Compose: panel, graticule, trail, trace, bezel.

@@ -248,6 +248,7 @@ fn main() -> Result<()> {
     // Real frame interval. The loop sleeps a fixed 16ms, so the actual period is that plus
     // however long the frame's capture, DSP and render took - measured, not assumed.
     let mut last_frame = std::time::Instant::now();
+    let mut time_s: f32 = 0.0;
 
     loop {
         while let Ok(f) = rx.try_recv() {
@@ -439,6 +440,8 @@ fn main() -> Result<()> {
         // scroll phase forward.
         let dt_ms = (now.duration_since(last_frame).as_secs_f32() * 1000.0).clamp(1.0, 100.0);
         last_frame = now;
+        // Wrapped rather than unbounded - see FrameData::time_s.
+        time_s = (time_s + dt_ms / 1000.0) % 3600.0;
 
         // Previously a hardcoded 16, which meant the gate's configured millisecond timings
         // were really being applied against an assumed frame rate the loop does not hit -
@@ -457,6 +460,7 @@ fn main() -> Result<()> {
                 rms_l: latest.rms_l,
                 rms_r: latest.rms_r,
                 dt_ms,
+                time_s,
             };
             family.draw(&mut canvas, &theme, &data);
             // Apply the reveal/hide fade. The gate has computed this opacity - with
