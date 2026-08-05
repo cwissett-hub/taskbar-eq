@@ -1,4 +1,4 @@
-use super::{Texture, Theme, VaporParams, Zone};
+use super::{Texture, Theme, TubeParams, VaporParams, Zone};
 use crate::dsp::ballistics::Ballistics;
 use serde::Deserialize;
 use std::fmt;
@@ -146,6 +146,29 @@ fn vapor_from(raw: Option<RawVapor>, d: VaporParams) -> VaporParams {
     }
 }
 
+/// The `[tube]` table. Material colours for the valve-row family; all optional.
+#[derive(Deserialize, Default)]
+struct RawTube {
+    chassis_top: Option<String>,
+    chassis_bottom: Option<String>,
+    internals: Option<String>,
+    socket: Option<String>,
+    collar: Option<String>,
+    glass: Option<String>,
+}
+
+fn tube_from(raw: Option<RawTube>, d: TubeParams) -> TubeParams {
+    let Some(r) = raw else { return d };
+    TubeParams {
+        chassis_top: r.chassis_top.unwrap_or(d.chassis_top),
+        chassis_bottom: r.chassis_bottom.unwrap_or(d.chassis_bottom),
+        internals: r.internals.unwrap_or(d.internals),
+        socket: r.socket.unwrap_or(d.socket),
+        collar: r.collar.unwrap_or(d.collar),
+        glass: r.glass.unwrap_or(d.glass),
+    }
+}
+
 #[derive(Deserialize, Default)]
 struct RawDual {
     trail: Option<String>,
@@ -169,6 +192,7 @@ struct RawTheme {
     #[serde(default)]
     dual: Option<RawDual>,
     vaporwave: Option<RawVapor>,
+    tube: Option<RawTube>,
     #[serde(default)]
     zone: Vec<RawZone>,
 }
@@ -237,6 +261,7 @@ pub fn parse(src: &str) -> Result<Theme, ThemeError> {
             dl.trail.map(|t| (t, dl.fade.unwrap_or(0.20)))
         }),
         vapor: vapor_from(raw.vaporwave, d.vapor),
+        tube: tube_from(raw.tube, d.tube),
     })
 }
 

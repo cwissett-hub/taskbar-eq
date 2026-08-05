@@ -33,12 +33,47 @@ pub fn family_label(family: &str) -> String {
         "scope" => "Oscilloscope".into(),
         "vu" => "VU dials".into(),
         "vapor" => "Vaporwave grid".into(),
+        "tube" => "Valve row".into(),
         other => {
             let mut c = other.chars();
             match c.next() {
                 Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
                 None => "Other".into(),
             }
+        }
+    }
+}
+
+/// Material colours for the vacuum-tube row family.
+///
+/// Separate from the `lit`/`hot`/`panel` trio because a valve is made of several materials
+/// that are not variations of one accent colour: glass, bakelite, brass and the dark metal
+/// of the plate all have to be independently settable or every colourway ends up looking
+/// like the same tube under a different gel.
+#[derive(Debug, Clone)]
+pub struct TubeParams {
+    /// Top of the chassis gradient - the lit edge of the metal.
+    pub chassis_top: String,
+    pub chassis_bottom: String,
+    /// Plate and grid metal, silhouetted against the glow. Dark on purpose.
+    pub internals: String,
+    /// Bakelite socket the envelope sits in.
+    pub socket: String,
+    /// Brass collar and pins.
+    pub collar: String,
+    /// Specular highlight on the envelope.
+    pub glass: String,
+}
+
+impl Default for TubeParams {
+    fn default() -> Self {
+        TubeParams {
+            chassis_top: "#3c4436".into(),
+            chassis_bottom: "#161a12".into(),
+            internals: "#0b0d08".into(),
+            socket: "#241a10".into(),
+            collar: "#8a6a2a".into(),
+            glass: "#cfe0d8".into(),
         }
     }
 }
@@ -200,6 +235,8 @@ pub struct Theme {
     pub sensitivity: f32,
     /// Vaporwave-only scene parameters; inert for the other families.
     pub vapor: VaporParams,
+    /// Tube-row-only material colours; inert for the other families.
+    pub tube: TubeParams,
     // Cross-fade duration for switching themes at runtime (Task 11+); the
     // segmented renderer draws every frame from scratch and has no
     // transition state to feed it yet.
@@ -239,6 +276,7 @@ impl Default for Theme {
             edge_glow: 4.0,
             sensitivity: 1.0,
             vapor: VaporParams::default(),
+            tube: TubeParams::default(),
             fade: 0.30,
             texture: Texture::Glass,
             ballistics: Ballistics::default(),

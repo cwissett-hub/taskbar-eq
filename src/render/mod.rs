@@ -1,6 +1,7 @@
 pub mod canvas;
 pub mod golden;
 pub mod scope;
+pub mod tube;
 pub mod vapor;
 pub mod segmented;
 pub mod vu;
@@ -63,7 +64,7 @@ pub trait Family {
 /// `segmented` for anything unrecognised, so a theme carrying a typo'd or unimplemented
 /// family name would silently render as the wrong meter instead of failing. This list is
 /// what lets that be asserted, and adding a family is a one-line change in one place.
-pub const KNOWN_FAMILIES: [&str; 4] = ["segmented", "scope", "vu", "vapor"];
+pub const KNOWN_FAMILIES: [&str; 5] = ["segmented", "scope", "vu", "vapor", "tube"];
 
 pub fn family_for(id: &str) -> Box<dyn Family> {
     // Say so when falling back. A theme file with a typo'd or not-yet-implemented family
@@ -79,6 +80,7 @@ pub fn family_for(id: &str) -> Box<dyn Family> {
     match id {
         "scope" => Box::new(scope::Scope::default()),
         "vapor" => Box::new(vapor::Vapor::default()),
+        "tube" => Box::new(tube::Tube::default()),
         "vu" => Box::new(vu::Vu::default()),
         _ => Box::new(segmented::Segmented),
     }

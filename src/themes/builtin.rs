@@ -1,4 +1,4 @@
-use super::{Texture, Theme, VaporParams, Zone};
+use super::{Texture, Theme, TubeParams, VaporParams, Zone};
 
 pub fn all() -> Vec<Theme> {
     vec![
@@ -29,6 +29,11 @@ pub fn all() -> Vec<Theme> {
         vapor_outrun(),
         vapor_toxic(),
         vapor_mono(),
+        tube_soviet(),
+        tube_steel(),
+        tube_mercury(),
+        tube_bakelite(),
+        tube_nixie_green(),
     ]
 }
 
@@ -604,6 +609,126 @@ pub fn vapor_mono() -> Theme {
             ..VaporParams::default()
         },
         ..vapor_base()
+    }
+}
+
+fn tube_base() -> Theme {
+    Theme {
+        family: "tube".into(),
+        texture: Texture::Filament,
+        ghost: 0.0,
+        // Tight. The glow is already a radial gradient inside the glass, and a wide blur
+        // spills it across the chassis and welds the row into one bar.
+        bloom: 4.0,
+        glow_strength: 0.55,
+        ..Theme::default()
+    }
+}
+
+/// The reference: a Soviet lab chassis in military olive, valves running orange.
+pub fn tube_soviet() -> Theme {
+    Theme {
+        id: "tube-soviet".into(),
+        name: "Soviet lab".into(),
+        lit: "#ff8a2a".into(),
+        hot: "#ffd9a0".into(),
+        panel: "#20241b".into(),
+        panel_alpha: 1.0,
+        edge: "#6f7a52".into(),
+        edge_alpha: 0.22,
+        ..tube_base()
+    }
+}
+
+/// Cold-war grey steel with white-hot heaters.
+pub fn tube_steel() -> Theme {
+    Theme {
+        id: "tube-steel".into(),
+        name: "Grey steel".into(),
+        lit: "#ffd08a".into(),
+        hot: "#fff6e2".into(),
+        panel: "#22242a".into(),
+        panel_alpha: 1.0,
+        edge: "#6b7280".into(),
+        edge_alpha: 0.22,
+        tube: TubeParams {
+            chassis_top: "#414652".into(),
+            chassis_bottom: "#15171c".into(),
+            socket: "#1c1e24".into(),
+            collar: "#9aa3b0".into(),
+            glass: "#dfe8f2".into(),
+            ..TubeParams::default()
+        },
+        ..tube_base()
+    }
+}
+
+/// Mercury-vapour blue - the rectifier look.
+pub fn tube_mercury() -> Theme {
+    Theme {
+        id: "tube-mercury".into(),
+        name: "Mercury vapour".into(),
+        lit: "#4fb8ff".into(),
+        hot: "#d8f2ff".into(),
+        panel: "#141a22".into(),
+        panel_alpha: 1.0,
+        edge: "#3f7ea8".into(),
+        edge_alpha: 0.22,
+        tube: TubeParams {
+            chassis_top: "#2b3642".into(),
+            chassis_bottom: "#0d1218".into(),
+            socket: "#141a20".into(),
+            collar: "#7d8f9e".into(),
+            glass: "#cfe6f5".into(),
+            ..TubeParams::default()
+        },
+        ..tube_base()
+    }
+}
+
+/// Bakelite and brass, deep amber - the domestic radio set.
+pub fn tube_bakelite() -> Theme {
+    Theme {
+        id: "tube-bakelite".into(),
+        name: "Bakelite".into(),
+        lit: "#ff6a18".into(),
+        hot: "#ffc07a".into(),
+        panel: "#2a1a10".into(),
+        panel_alpha: 1.0,
+        edge: "#8a5a28".into(),
+        edge_alpha: 0.24,
+        tube: TubeParams {
+            chassis_top: "#4a2f1c".into(),
+            chassis_bottom: "#180e07".into(),
+            socket: "#2e1d10".into(),
+            collar: "#b8862e".into(),
+            glass: "#e8d8c0".into(),
+            ..TubeParams::default()
+        },
+        ..tube_base()
+    }
+}
+
+/// Nixie green, for a tube row that matches the matrix VFD.
+pub fn tube_nixie_green() -> Theme {
+    Theme {
+        id: "tube-nixie-green".into(),
+        name: "Nixie green".into(),
+        lit: "#5cff9a".into(),
+        hot: "#dcffe8".into(),
+        panel: "#101a12".into(),
+        panel_alpha: 1.0,
+        edge: "#3f8a58".into(),
+        edge_alpha: 0.22,
+        tube: TubeParams {
+            chassis_top: "#26382a".into(),
+            chassis_bottom: "#0a120c".into(),
+            socket: "#141c16".into(),
+            collar: "#7f9a84".into(),
+            glass: "#d4ecdc".into(),
+            ..TubeParams::default()
+        },
+        ..tube_base()
     }
 }
 
