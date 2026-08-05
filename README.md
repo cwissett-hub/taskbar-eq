@@ -111,7 +111,7 @@ extending *leftward* into the empty taskbar between your last pinned app and the
 development machine that gap is 352 px; on the other side there are only 15 px before "Show
 Hidden Icons", which is why it grows left and not right.
 
-Set `width` in `%APPDATA%	askbar-eq\config.toml` (physical pixels) to change it. It is a
+Set `width` in `%APPDATA%\taskbar-eq\config.toml` (physical pixels) to change it. It is a
 **request, not a guarantee**: the overlay receives its own clicks — it deliberately does not set
 `WS_EX_TRANSPARENT`, or right-click and left-click would pass through — so every pixel it covers
 is a pixel of taskbar that can no longer be clicked. It therefore measures the clearance to the
