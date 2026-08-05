@@ -132,6 +132,26 @@ Layouts scale rather than stretch, because at 60 px tall some of them cannot sim
   stretched to a 37 px pitch with 20 px glass, which read as arched windows rather than valves.
 - **Segmented, oscilloscope and vaporwave** scale directly and gain from the room.
 
+### If it does not appear
+
+Run it once with `--diagnose`:
+
+```
+taskbar-eq.exe --diagnose
+```
+
+It checks every gate in the same order the render loop does, prints the result, and writes the same
+report to `%APPDATA%	askbar-eq	askbar-eq.log`. **The first `NO` in the output is the reason.** It
+covers the Windows build, which DPI awareness actually took effect, the taskbar rect, how many UI
+Automation elements were found, whether the Widgets button or the overflow chevron was located, the
+rect it chose, whether that rect passes the plausibility check, fullscreen/presentation state, and
+whether any audio is arriving at all.
+
+That last one matters most: if no audio frames arrive, the reveal gate never opens, and that is
+indistinguishable from "nothing renders".
+
+The app also writes that log on every normal launch, so a failure can be reported after the fact.
+
 ### Known gaps
 
 - **Nothing has been tested on Windows 10 or on a second machine.** The chevron fallback

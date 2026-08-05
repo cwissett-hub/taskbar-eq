@@ -1,4 +1,5 @@
 mod config;
+mod log;
 mod dsp;
 mod geom;
 mod render;
@@ -15,14 +16,185 @@ use win::capture::Frame;
 use win::tray::{Tray, TrayEvent};
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 
+/// Consecutive rect-discovery misses tolerated before the overlay gives up a known-good rect.
+///
+/// Module scope, not inside `main`, because `--diagnose` has to resolve the rect through exactly the
+/// same constants the render loop uses. A diagnostic that computes a different answer from the code
+/// it is diagnosing is worse than none.
+const RECT_MISS_LIMIT: u32 = 4;
+const FALLBACK_GAP: i32 = 4;
+const FALLBACK_WIDTH: i32 = 190;
+
+/// Pixels of clearance kept between the display's left edge and whatever is next to it.
+///
+/// Non-zero because the overlay receives its own clicks (it does not set WS_EX_TRANSPARENT - see
+/// win::overlay), so a pixel it covers is a pixel of taskbar that can no longer be clicked. Butting
+/// right up against a pinned app button would make that button feel dead along its edge.
+const WIDEN_MARGIN: i32 = 8;
+
+/// Width change, in pixels, below which the display keeps its current width.
+///
+/// The available clearance shifts whenever any window opens, closes or is minimised, and the scope
+/// family clears its persistence buffers on a canvas resize - so without hysteresis an unrelated bit
+/// of taskbar activity wipes the phosphor trail once a second.
+const WIDTH_HYSTERESIS: i32 = 12;
+
+/// Prints why the overlay would or would not be drawn, then exits.
+///
+/// Exists because the Windows 10 report - "anchoring worked but it showed a generic icon instead of
+/// rendering" - was not diagnosable from the outside at all. Every gate is checked in the same order
+/// the render loop checks them, so the first `NO` in this report is the answer.
+fn diagnose() -> Result<()> {
+    log::init();
+    let dpi = win::dpi::set_per_monitor_v2();
+    if let Err(e) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok() {
+        log::write(&format!("CoInitializeEx FAILED: {e}  <- UIA and WASAPI both need this"));
+    }
+    let cfg = Config::load();
+
+    log::write(&format!("dpi awareness: {dpi}"));
+    log::write(&format!("configured width: {} px", cfg.width));
+    log::write(&format!("selected theme: {}", cfg.theme));
+
+    let bar = win::placement::taskbar_rect();
+    log::write(&match bar {
+        Some(b) => format!("taskbar rect: {}x{} at ({},{})  YES", b.w, b.h, b.x, b.y),
+        None => "taskbar rect: NOT FOUND  <- Shell_TrayWnd is missing; nothing can be anchored".into(),
+    });
+
+    let elements = match win::placement::taskbar_elements() {
+        Ok(e) => {
+            log::write(&format!("UIA elements found: {}  YES", e.len()));
+            e
+        }
+        Err(e) => {
+            log::write(&format!("UIA enumeration FAILED: {e}  <- cannot find anything to anchor to"));
+            Vec::new()
+        }
+    };
+
+    let widget = win::placement::widget_rect_in(&elements);
+    log::write(&match widget {
+        Some(r) => format!("Widgets button: {}x{} at ({},{})  YES", r.w, r.h, r.x, r.y),
+        None => "Widgets button: NOT FOUND  (expected on Windows 10 - using the chevron)".into(),
+    });
+    let chevron = win::placement::chevron_rect_in(&elements);
+    log::write(&match chevron {
+        Some(r) => format!("overflow chevron: {}x{} at ({},{})  YES", r.w, r.h, r.x, r.y),
+        None => "overflow chevron: NOT FOUND  <- on Windows 10 this is the only anchor".into(),
+    });
+
+    // Resolve the rect exactly as the loop does.
+    let rect = match (widget, bar) {
+        (Some(w), Some(b)) => Some(win::placement::widened(
+            w,
+            b,
+            win::placement::left_limit(&elements, w),
+            cfg.width,
+            WIDEN_MARGIN,
+        )),
+        _ => match (chevron, bar) {
+            (Some(c), Some(b)) => {
+                let anchored = win::placement::rect_left_of(c, b, FALLBACK_GAP, FALLBACK_WIDTH);
+                Some(win::placement::widened(
+                    anchored,
+                    b,
+                    win::placement::left_limit(&elements, anchored),
+                    cfg.width,
+                    WIDEN_MARGIN,
+                ))
+            }
+            _ => None,
+        },
+    };
+    log::write(&match rect {
+        Some(r) => format!("chosen overlay rect: {}x{} at ({},{})  YES", r.w, r.h, r.x, r.y),
+        None => "chosen overlay rect: NONE  <- nothing to draw into".into(),
+    });
+
+    // The sanity check that silently suppresses drawing if it fails.
+    if let Some(r) = rect {
+        let ok = r.is_plausible_widget();
+        log::write(&format!(
+            "rect passes the plausibility check: {}  {}",
+            if ok { "YES" } else { "NO" },
+            if ok {
+                String::new()
+            } else {
+                format!(
+                    "<- needs w 40..600 and h 20..200, got w {} h {}; the overlay is suppressed",
+                    r.w, r.h
+                )
+            }
+        ));
+    }
+
+    let quns = win::placement::notification_state();
+    let blocked = quns == win::visibility::QUNS_FULLSCREEN || quns == win::visibility::QUNS_PRESENTATION;
+    log::write(&format!(
+        "notification state: {quns}  {}",
+        if blocked { "NO  <- fullscreen or presentation mode suppresses the overlay" } else { "YES" }
+    ));
+    log::write(&format!(
+        "taskbar visible: {}",
+        if win::placement::taskbar_visible() { "YES" } else { "NO  <- auto-hide taskbar?" }
+    ));
+
+    let inputs = win::visibility::Inputs {
+        widget: rect,
+        notification_state: quns,
+        taskbar_visible: win::placement::taskbar_visible(),
+    };
+    log::write(&format!(
+        "=> would draw: {}",
+        if win::visibility::should_show(&inputs) { "YES" } else { "NO" }
+    ));
+
+    // Audio last, because a silent capture looks exactly like "nothing renders": the reveal gate
+    // never opens, so the overlay is never shown even when every check above passes.
+    log::write("starting audio capture for 2s to see whether any audio is reaching us...");
+    let rx = win::capture::start();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let mut frames = 0u32;
+    let mut peak = 0.0f32;
+    while std::time::Instant::now() < deadline {
+        while let Ok(f) = rx.try_recv() {
+            frames += 1;
+            peak = peak.max(f.rms);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    log::write(&format!(
+        "capture: {frames} frames, peak rms {peak:.4}  {}",
+        if frames == 0 {
+            "NO  <- no audio frames arrived at all, so the reveal gate can never open. This is              indistinguishable from 'nothing renders' and is the first thing to rule out."
+        } else if peak < 0.0005 {
+            "silent - play something and run --diagnose again"
+        } else {
+            "YES"
+        }
+    ));
+
+    log::write(&format!("report written to {}", log::path().display()));
+    Ok(())
+}
+
 fn main() -> Result<()> {
-    win::dpi::set_per_monitor_v2()?;
+    // `--diagnose` prints the whole decision chain and exits. The first NO in its output is the
+    // reason the overlay is not on screen.
+    if std::env::args().any(|a| a == "--diagnose") {
+        return diagnose();
+    }
+    // Before anything else, so a failure during startup is recoverable from the log rather than
+    // flashing past on a console that closes with the process.
+    log::init();
+    log::write(&format!("dpi awareness: {}", win::dpi::set_per_monitor_v2()));
     // S_OK and S_FALSE both map to Ok; a real Err (e.g. RPC_E_CHANGED_MODE)
     // matters because UI Automation and WASAPI both require COM initialised.
     // CoInitializeEx returns HRESULT, not Result - `.ok()` is required and maps
     // S_OK/S_FALSE to Ok(()), leaving only genuine failures as Err.
     if let Err(e) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok() {
-        eprintln!("CoInitializeEx failed: {e}");
+        log::write(&format!("CoInitializeEx failed: {e}"));
     }
 
     let mut cfg = Config::load();
@@ -62,30 +234,15 @@ fn main() -> Result<()> {
     let mut rect: Option<geom::Rect> = None;
     // Consecutive rect-discovery misses tolerated before the overlay gives up and
     // hides. At one probe per second this is a few seconds of grace.
-    const RECT_MISS_LIMIT: u32 = 4;
+
     // Fallback placement, used when there is no Widgets button: sit this far left of
     // the tray's overflow chevron, at this width.
-    const FALLBACK_GAP: i32 = 4;
-    const FALLBACK_WIDTH: i32 = 190;
+
+
     let mut rect_misses: u32 = 0;
     // Hot-reload debounce: wait this long after the last filesystem event before
     // reparsing, so one save produces one reload.
     const RELOAD_DEBOUNCE_MS: u64 = 150;
-
-/// Pixels of clearance kept between the display's left edge and whatever is next to it.
-///
-/// Non-zero because the overlay receives its own clicks (it does not set WS_EX_TRANSPARENT -
-/// see win::overlay), so a pixel it covers is a pixel of taskbar that can no longer be
-/// clicked. Butting right up against a pinned app button would make that button feel dead
-/// along its edge.
-const WIDEN_MARGIN: i32 = 8;
-
-/// Width change, in pixels, below which the display keeps its current width.
-///
-/// The available clearance shifts whenever any window opens, closes or is minimised, and the
-/// scope family clears its persistence buffers on a canvas resize - so without hysteresis an
-/// unrelated bit of taskbar activity wipes the phosphor trail once a second.
-const WIDTH_HYSTERESIS: i32 = 12;
     let mut reload_pending = false;
     let mut last_change: Option<std::time::Instant> = None;
     // Real frame interval. The loop sleeps a fixed 16ms, so the actual period is that plus
@@ -306,9 +463,20 @@ const WIDTH_HYSTERESIS: i32 = 12;
             // tests - since it was written, but nothing ever consumed it, so the
             // overlay popped in and out instead of fading. That is the whole bug.
             canvas.scale_alpha(opacity);
-            overlay.show(r, &canvas)?;
+            // NOT fatal, and this is the bug behind the Windows 10 report. A single failing
+            // draw used to propagate out of `main` with `?` and end the process - so the tray icon
+            // appeared, the first frame failed, and the app was simply gone, with its explanation
+            // printed to a console that closed at the same moment. A draw that fails this frame may
+            // well succeed the next, and even if it never does, a running app that logs why is
+            // diagnosable where a vanished one is not.
+            if let Err(e) = overlay.show(r, &canvas) {
+                log::write(&format!(
+                    "overlay draw failed at {}x{} ({},{}) - {e}",
+                    r.w, r.h, r.x, r.y
+                ));
+            }
         } else {
-            overlay.hide()?;
+            let _ = overlay.hide();
         }
 
         overlay.pump_messages();

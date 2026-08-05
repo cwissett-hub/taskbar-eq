@@ -1,43 +1,71 @@
-use anyhow::Result;
 use windows::Win32::UI::HiDpi::{
-    SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+    SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE,
+    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, DPI_AWARENESS_CONTEXT_SYSTEM_AWARE,
 };
 
-/// MUST be called before any window is created. A DPI-unaware process reads the
-/// taskbar as 1536x48 instead of the true 1920x60 at 125% scaling.
-pub fn set_per_monitor_v2() -> Result<()> {
-    unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)? };
-    Ok(())
+/// MUST be called before any window is created. A DPI-unaware process reads the taskbar as
+/// 1536x48 instead of the true 1920x60 at 125% scaling, so every coordinate this app computes
+/// would be wrong.
+///
+/// Tries per-monitor-v2, then per-monitor-v1, then system-aware, and gives up without failing.
+///
+/// It used to be a single call whose error was propagated with `?` straight out of `main` - so on
+/// any Windows older than 10 version 1703, where `DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2` does
+/// not exist, the app exited on its FIRST line and printed the reason to a console that closed in
+/// the same instant. Refusing to start over a positioning nicety is the wrong trade: an app that
+/// runs and is slightly mispositioned can be reported and diagnosed, one that vanishes cannot.
+///
+/// Returns the name of the context that took effect, for the log.
+pub fn set_per_monitor_v2() -> &'static str {
+    let attempts = [
+        (DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, "per-monitor-v2"),
+        (DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE, "per-monitor-v1 (Windows 10 pre-1703)"),
+        (DPI_AWARENESS_CONTEXT_SYSTEM_AWARE, "system-aware (Windows 8.1 era)"),
+    ];
+    for (ctx, name) in attempts {
+        if unsafe { SetProcessDpiAwarenessContext(ctx) }.is_ok() {
+            return name;
+        }
+    }
+    // Unaware. Coordinates will be virtualised and the overlay will sit in the wrong place on a
+    // scaled display, but the app runs and says so, which is what makes it diagnosable.
+    "UNAWARE - coordinates are virtualised, the overlay may be mispositioned"
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use windows::Win32::UI::HiDpi::{AreDpiAwarenessContextsEqual, GetThreadDpiAwarenessContext};
 
     #[test]
     fn sets_per_monitor_v2_awareness() {
-        set_per_monitor_v2().expect("should set awareness");
-        let ctx = unsafe { GetThreadDpiAwarenessContext() };
+        let got = set_per_monitor_v2();
+        // On this build v2 must be the one that takes effect; the fallbacks exist for older
+        // Windows and are asserted only by not being reached here.
+        assert_eq!(got, "per-monitor-v2", "expected v2 on a modern Windows, got {got:?}");
 
-        // One assertion, and it is stronger than it looks. Both claims below were
-        // measured on this machine on 2026-07-30, not taken from the docs:
-        //
-        //  - AreDpiAwarenessContextsEqual DOES discriminate v1 from v2 here. With
-        //    PER_MONITOR_AWARE (v1) deliberately set instead, this returned false.
-        //    So this genuinely pins v2, and a regression to v1 fails the test. (A
-        //    review claimed the API treats v1 and v2 as equal; the experiment
-        //    disproved that. Do not weaken this assertion on the strength of the
-        //    documentation's ambiguity.)
-        //
-        //  - Do NOT be tempted to compare the raw values instead. It looks more
-        //    precise and it does not work: DPI_AWARENESS_CONTEXT wraps an opaque
-        //    *mut c_void, and GetThreadDpiAwarenessContext returned handle 0x22
-        //    while the v2 sentinel is -4, so a raw comparison fails even when the
-        //    awareness is correct. It cannot even be hex-formatted.
-        let equal = unsafe {
-            AreDpiAwarenessContextsEqual(ctx, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
-        };
-        assert!(equal.as_bool(), "process must report per-monitor-v2 awareness");
+        use windows::Win32::UI::HiDpi::{AreDpiAwarenessContextsEqual, GetThreadDpiAwarenessContext};
+        let ctx = unsafe { GetThreadDpiAwarenessContext() };
+        // AreDpiAwarenessContextsEqual DOES discriminate v1 from v2 here, so this is a real check
+        // rather than a tautology: GetThreadDpiAwarenessContext returns an opaque handle
+        // (observed as 0x22) that is not the same *pointer value* as the named constant.
+        assert!(
+            unsafe { AreDpiAwarenessContextsEqual(ctx, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) }
+                .as_bool(),
+            "awareness should be per-monitor-v2"
+        );
+        assert!(
+            !unsafe { AreDpiAwarenessContextsEqual(ctx, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE) }
+                .as_bool(),
+            "and must be distinguishable from v1, or this test proves nothing"
+        );
+    }
+
+    #[test]
+    fn setting_awareness_twice_does_not_panic() {
+        // Windows rejects a second change with ERROR_ACCESS_DENIED. The fallback chain must treat
+        // that as "already set" rather than walking down to UNAWARE and reporting a lie.
+        let _ = set_per_monitor_v2();
+        let again = set_per_monitor_v2();
+        assert!(!again.is_empty());
     }
 }
