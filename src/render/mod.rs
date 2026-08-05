@@ -173,3 +173,53 @@ mod dispatch_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod wide_dump {
+    use super::*;
+    use crate::themes::builtin;
+
+    /// Dumps one colourway per family at the wide size, for eyeballing.
+    /// Run: cargo test --release dump_wide -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn dump_wide() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (w, h) = (380, 60);
+        let mut d = FrameData::default();
+        for (i, v) in d.levels.iter_mut().enumerate() {
+            let x = i as f32 / 63.0;
+            *v = (0.18 + 0.72 * (x * 9.0).sin().abs()) * (1.0 - x * 0.4);
+        }
+        d.peaks = d.levels;
+        for (i, v) in d.waveform.iter_mut().enumerate() {
+            let t = i as f32 / 256.0;
+            *v = 0.45 * ((t * std::f32::consts::TAU * 3.0).sin() + 0.4 * (t * std::f32::consts::TAU * 7.0).sin());
+        }
+        d.rms_l = 0.09;
+        d.rms_r = 0.055;
+
+        for id in ["vfd-ice", "p1-green", "vu-cream", "vapor-sunset", "tube-soviet"] {
+            let theme = builtin::all().into_iter().find(|t| t.id == id).unwrap();
+            let mut fam = family_for(&theme.family);
+            let mut c = Canvas::new(w, h);
+            for _ in 0..8 {
+                fam.draw(&mut c, &theme, &d);
+            }
+            let mut out = Vec::with_capacity((w * h * 4) as usize);
+            for y in 0..h {
+                for x in 0..w {
+                    let px = c.get(x, y);
+                    let a = px.a as f32 / 255.0;
+                    for ch in [px.r, px.g, px.b] {
+                        out.push((ch as f32 + 22.0 * (1.0 - a)).min(255.0) as u8);
+                    }
+                    out.push(255);
+                }
+            }
+            std::fs::write(dir.join(format!("wide-{id}.rgba")), &out).unwrap();
+        }
+        println!("wrote 5 wide dumps ({w}x{h}) to {}", dir.display());
+    }
+}

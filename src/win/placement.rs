@@ -46,15 +46,147 @@ mod tests {
     fn is_case_sensitive_on_the_prefix() {
         assert!(!is_widget_name("widgets 19C"));
     }
+
+    /// The real taskbar of the development machine, captured with
+    /// `tools/probe/Probe-Taskbar.ps1`. Physical pixels, 125% scale, taskbar row at y=1140.
+    ///
+    /// Real coordinates rather than invented ones, because the numbers are the whole point:
+    /// the last pinned app ends at 1064 and the widget starts at 1416, so there are 352px of
+    /// dead taskbar to claim - and only 15px on the other side before "Show Hidden Icons",
+    /// which is why widening goes left and not right.
+    fn observed_taskbar() -> Vec<(String, Rect)> {
+        let row = |x: i32, w: i32| Rect { x, y: 1140, w, h: 60 };
+        vec![
+            ("Start".into(), row(0, 69)),
+            ("Search".into(), Rect { x: 72, y: 1150, w: 275, h: 40 }),
+            ("Task View".into(), row(349, 55)),
+            ("Microsoft Teams pinned".into(), row(404, 55)),
+            ("File Explorer pinned".into(), row(459, 55)),
+            ("Microsoft Edge pinned".into(), row(514, 55)),
+            ("Microsoft Store pinned".into(), row(569, 55)),
+            ("Google Chrome pinned".into(), row(624, 55)),
+            ("Lens Studio pinned".into(), row(679, 55)),
+            ("Cursor pinned".into(), row(734, 55)),
+            ("Claude pinned".into(), row(789, 55)),
+            ("Visual Studio Code - 1 running window pinned".into(), row(844, 55)),
+            ("Spotify - 1 running window".into(), row(899, 55)),
+            ("Slack - 1 running window".into(), row(954, 55)),
+            ("Corin (Snap Inc.) - Chrome - 1 running window".into(), row(1009, 55)),
+            // The container under-reports: it stops at 899 while its buttons reach 1064.
+            ("Running applications".into(), Rect { x: 69, y: 1140, w: 830, h: 60 }),
+            ("Widgets 22\u{b0}C Partly sunny".into(), row(1416, 190)),
+            ("Show Hidden Icons".into(), row(1621, 40)),
+            ("Network Lenses - Primary".into(), row(1661, 35)),
+            ("Volume Speakers".into(), row(1696, 30)),
+            ("Power Battery status: fully charged 100%".into(), row(1726, 82)),
+            ("Clock 17:22".into(), row(1808, 97)),
+            ("Show Desktop".into(), row(1905, 15)),
+        ]
+    }
+
+    fn observed_bar() -> Rect {
+        Rect { x: 0, y: 1140, w: 1920, h: 60 }
+    }
+
+    #[test]
+    fn left_limit_finds_the_last_app_button_not_the_container() {
+        let els = observed_taskbar();
+        let widget = widget_rect_in(&els).expect("the observed layout has a widget");
+        assert_eq!(widget, Rect { x: 1416, y: 1140, w: 190, h: 60 });
+        // 1064 is the right edge of the last pinned app. Trusting the "Running applications"
+        // pane instead would give 899 and let the overlay cover three real buttons.
+        assert_eq!(left_limit(&els, widget), Some(1064));
+    }
+
+    #[test]
+    fn left_limit_ignores_elements_on_a_different_row() {
+        let mut els = observed_taskbar();
+        let widget = widget_rect_in(&els).unwrap();
+        // A flyout or a secondary-monitor element well above the taskbar row must not count as
+        // being "in the way", or the overlay would refuse to widen for no reason.
+        els.push(("Some flyout".into(), Rect { x: 1300, y: 400, w: 200, h: 300 }));
+        assert_eq!(left_limit(&els, widget), Some(1064));
+    }
+
+    #[test]
+    fn doubling_the_width_fits_on_the_real_taskbar() {
+        let els = observed_taskbar();
+        let widget = widget_rect_in(&els).unwrap();
+        let r = widened(widget, observed_bar(), left_limit(&els, widget), 380, 8);
+        assert_eq!(r.w, 380, "380 fits in the 352px gap plus the widget's own 190");
+        // Right edge stays glued to the widget's right edge.
+        assert_eq!(r.x + r.w, widget.x + widget.w);
+        assert!(r.x >= 1064 + 8, "must not touch the last app button: x={}", r.x);
+    }
+
+    #[test]
+    fn a_crowded_taskbar_shrinks_the_display_instead_of_covering_buttons() {
+        let els = observed_taskbar();
+        let widget = widget_rect_in(&els).unwrap();
+        // Six more windows open, at 55px each, pushing the last button's edge to 1394.
+        let r = widened(widget, observed_bar(), Some(1394), 380, 8);
+        assert!(r.w < 380, "it must give up width rather than overlap: w={}", r.w);
+        assert_eq!(r.x, 1402, "left edge sits exactly `margin` clear of the last button");
+        assert!(r.x >= 1394 + 8);
+    }
+
+    #[test]
+    fn a_full_taskbar_degrades_to_exactly_the_widget() {
+        let els = observed_taskbar();
+        let widget = widget_rect_in(&els).unwrap();
+        // Apps right up against the widget - there is no room at all.
+        let r = widened(widget, observed_bar(), Some(1416), 380, 8);
+        assert_eq!(r, widget, "with no clearance it must fall back to the widget's own rect");
+    }
+
+    #[test]
+    fn never_narrower_than_the_widget_even_if_asked() {
+        let els = observed_taskbar();
+        let widget = widget_rect_in(&els).unwrap();
+        // Covering the weather is the point, so a silly config value cannot expose it.
+        for desired in [0, 1, 40, 100, 189] {
+            let r = widened(widget, observed_bar(), left_limit(&els, widget), desired, 8);
+            assert_eq!(r.w, widget.w, "desired {desired} must not shrink below the widget");
+        }
+    }
+
+    #[test]
+    fn stays_inside_the_taskbar_when_the_widget_is_near_the_left_edge() {
+        // A left-aligned taskbar puts the widget close to x=0, so an ambitious width would
+        // otherwise place the window at a negative x and draw off-screen.
+        let widget = Rect { x: 40, y: 1140, w: 190, h: 60 };
+        let r = widened(widget, observed_bar(), None, 900, 8);
+        assert!(r.x >= 0, "x must not go negative: {}", r.x);
+        assert!(r.x + r.w <= widget.x + widget.w);
+    }
+
+    #[test]
+    fn the_width_is_stable_while_the_weather_text_changes_length() {
+        // The regression this guards: the overlay used the widget rect verbatim, so its WIDTH
+        // moved with the forecast wording - and the scope family clears its persistence buffers
+        // on any canvas resize, so the phosphor trail was wiped when the weather changed.
+        let bar = observed_bar();
+        let mut widths = std::collections::HashSet::new();
+        for (x, w) in [(1416, 190), (1385, 221), (1425, 181), (1440, 166)] {
+            let widget = Rect { x, y: 1140, w, h: 60 };
+            widths.insert(widened(widget, bar, Some(1064), 380, 8).w);
+        }
+        assert_eq!(widths.len(), 1, "width must not vary with the weather text: {widths:?}");
+    }
 }
 
 fn tray_hwnd() -> Result<HWND> {
     Ok(unsafe { FindWindowW(w!("Shell_TrayWnd"), None)? })
 }
 
-/// Walks the taskbar's UIA subtree for the Widgets button. Returns physical pixels.
-/// Call this on a timer - the rect moves as the weather text changes width.
-pub fn find_widget_rect() -> Result<Option<Rect>> {
+/// Every named element on the taskbar with its rect, in physical pixels, from ONE UIA walk.
+///
+/// One walk rather than three. Finding the widget, the chevron and the left-hand clearance each
+/// used to instantiate a COM automation object and enumerate the whole descendant tree - three
+/// times a second, for data that is consistent only if it comes from a single snapshot. Reading
+/// the clearance from a different enumeration than the widget rect would let the two disagree
+/// about where things are mid-move.
+pub fn taskbar_elements() -> Result<Vec<(String, Rect)>> {
     let tray = tray_hwnd()?;
     let automation: IUIAutomation =
         unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)? };
@@ -62,46 +194,81 @@ pub fn find_widget_rect() -> Result<Option<Rect>> {
     let cond = unsafe { automation.CreateTrueCondition()? };
     let all = unsafe { root.FindAll(TreeScope_Descendants, &cond)? };
 
+    let mut out = Vec::new();
     for i in 0..unsafe { all.Length()? } {
         let el = unsafe { all.GetElement(i)? };
         let name: BSTR = unsafe { el.CurrentName().unwrap_or_default() };
-        if is_widget_name(&name.to_string()) {
-            let r = unsafe { el.CurrentBoundingRectangle()? };
-            return Ok(Some(Rect {
-                x: r.left,
-                y: r.top,
-                w: r.right - r.left,
-                h: r.bottom - r.top,
-            }));
+        let n = name.to_string();
+        if n.is_empty() {
+            continue;
+        }
+        if let Ok(r) = unsafe { el.CurrentBoundingRectangle() } {
+            out.push((
+                n,
+                Rect { x: r.left, y: r.top, w: r.right - r.left, h: r.bottom - r.top },
+            ));
         }
     }
-    Ok(None)
+    Ok(out)
 }
 
-/// The taskbar's own rect, in true physical pixels (the process is per-monitor-v2
-/// aware, so GetWindowRect is not virtualised here).
-/// Finds the overflow chevron's rect via the same UIA walk as the Widgets button.
-pub fn find_chevron_rect() -> Result<Option<Rect>> {
-    let tray = tray_hwnd()?;
-    let automation: IUIAutomation =
-        unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)? };
-    let root = unsafe { automation.ElementFromHandle(tray)? };
-    let cond = unsafe { automation.CreateTrueCondition()? };
-    let all = unsafe { root.FindAll(TreeScope_Descendants, &cond)? };
-    for i in 0..unsafe { all.Length()? } {
-        let el = unsafe { all.GetElement(i)? };
-        let name: BSTR = unsafe { el.CurrentName().unwrap_or_default() };
-        if is_chevron_name(&name.to_string()) {
-            let r = unsafe { el.CurrentBoundingRectangle()? };
-            return Ok(Some(Rect {
-                x: r.left,
-                y: r.top,
-                w: r.right - r.left,
-                h: r.bottom - r.top,
-            }));
-        }
-    }
-    Ok(None)
+/// Right edge of the nearest thing to the LEFT of the widget on the same taskbar row.
+///
+/// This is the hard limit on how far the display may be widened, and the limit is FUNCTIONAL,
+/// not cosmetic: the overlay deliberately does not set WS_EX_TRANSPARENT, because it has to
+/// receive its own right-click and left-click (see win::overlay). So any pixel it covers is a
+/// pixel the taskbar underneath can no longer be clicked on. Overrunning this would eat a
+/// pinned app button.
+///
+/// Returns None when nothing is to the left, in which case the taskbar's own left edge is the
+/// only limit.
+///
+/// Containers are harmless here because this takes the MAXIMUM right edge: on a real taskbar the
+/// "Running applications" pane reported a right edge of 899 while the app buttons it contains
+/// actually reached 1064, so trusting the container alone would have allowed the overlay to
+/// cover five pinned buttons.
+pub fn left_limit(elements: &[(String, Rect)], widget: Rect) -> Option<i32> {
+    let (band_top, band_bottom) = (widget.y, widget.y + widget.h);
+    elements
+        .iter()
+        .filter(|(_, r)| r.w > 0 && r.h > 0)
+        // same taskbar row - a vertically disjoint element is not in the way
+        .filter(|(_, r)| r.y < band_bottom && r.y + r.h > band_top)
+        // entirely to the left of the widget
+        .filter(|(_, r)| r.x + r.w <= widget.x)
+        .map(|(_, r)| r.x + r.w)
+        .max()
+}
+
+/// Widens the display leftward from the widget, stopping short of whatever is already there.
+///
+/// Anchored to the widget's RIGHT edge, which also fixes something that was already wrong: the
+/// overlay used the widget's rect verbatim, and that rect's WIDTH changes with the weather text
+/// ("22C Partly sunny" is wider than "5C Fog"). Every such change resized the canvas, and the
+/// scope family reallocates - and therefore CLEARS - its persistence buffers whenever the canvas
+/// size changes, so the phosphor trail was being wiped whenever the forecast wording changed.
+/// Pinning the width makes only `x` track the widget.
+///
+/// Never returns narrower than the widget itself: covering the weather is the entire point, so a
+/// crowded taskbar degrades to exactly the old behaviour rather than to a sliver.
+pub fn widened(widget: Rect, taskbar: Rect, left_limit: Option<i32>, desired_w: i32, margin: i32) -> Rect {
+    let right = widget.x + widget.w;
+    let floor_w = widget.w.max(1);
+    let limit = left_limit.unwrap_or(taskbar.x) + margin.max(0);
+    let room = (right - limit).max(floor_w);
+    let w = desired_w.max(floor_w).min(room).min(taskbar.w.max(floor_w));
+    let x = (right - w).max(taskbar.x);
+    Rect { x, y: widget.y, w, h: widget.h }
+}
+
+/// The widget's rect from an already-captured element list.
+pub fn widget_rect_in(elements: &[(String, Rect)]) -> Option<Rect> {
+    elements.iter().find(|(n, _)| is_widget_name(n)).map(|(_, r)| *r)
+}
+
+/// The chevron's rect from an already-captured element list.
+pub fn chevron_rect_in(elements: &[(String, Rect)]) -> Option<Rect> {
+    elements.iter().find(|(n, _)| is_chevron_name(n)).map(|(_, r)| *r)
 }
 
 pub fn taskbar_rect() -> Option<Rect> {
@@ -125,7 +292,7 @@ pub fn is_chevron_name(name: &str) -> bool {
 ///
 /// This is the Windows 10 answer as well as the "put it somewhere sensible" answer.
 /// Win10 has no Widgets button at all - it has News and interests, a differently
-/// named element - so on that OS `find_widget_rect` always returns None and the
+/// named element - so on that OS `widget_rect_in` always returns None and the
 /// overlay would otherwise run and show nothing. The chevron exists on both, sits in
 /// the same part of the tray on both, and moves with the tray as icons come and go,
 /// so anchoring to it gives a consistent position without hardcoding coordinates.
@@ -199,3 +366,52 @@ mod fallback_tests {
     }
 }
 
+
+#[cfg(test)]
+mod live {
+    use super::*;
+
+    /// Reports what the widening would do on THIS machine right now. Not an assertion - the
+    /// answer depends on which apps happen to be open.
+    /// Run: cargo test --release probe_live_widening -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn probe_live_widening() {
+        // UIA is COM; the test harness is not the app's main, so nothing has initialised it.
+        unsafe {
+            let _ = windows::Win32::System::Com::CoInitializeEx(
+                None,
+                windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
+            );
+        }
+        let els = match taskbar_elements() {
+            Ok(e) => e,
+            Err(e) => {
+                println!("UIA unavailable: {e}");
+                return;
+            }
+        };
+        let bar = taskbar_rect();
+        println!("taskbar: {bar:?}   elements: {}", els.len());
+        let Some(widget) = widget_rect_in(&els) else {
+            println!("no Widgets button on this machine");
+            return;
+        };
+        let limit = left_limit(&els, widget);
+        println!("widget: {widget:?}");
+        if let Some(l) = limit {
+            let who = els
+                .iter()
+                .filter(|(_, r)| r.x + r.w == l && r.y < widget.y + widget.h && r.y + r.h > widget.y)
+                .map(|(n, _)| n.as_str())
+                .collect::<Vec<_>>();
+            println!("left limit: {l}  (set by {who:?})  gap = {}px", widget.x - l);
+        }
+        if let Some(bar) = bar {
+            for desired in [190, 260, 380, 456, 600] {
+                let r = widened(widget, bar, limit, desired, 8);
+                println!("  desired {desired:>4} -> x={} w={} (right edge {})", r.x, r.w, r.x + r.w);
+            }
+        }
+    }
+}

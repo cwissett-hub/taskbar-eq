@@ -24,10 +24,24 @@ use crate::themes::Theme;
 /// Floor glow every tube keeps, before any audio. See the heater note in the module docs.
 const HEATER_FLOOR: f32 = 0.17;
 
-/// Tubes drawn across the panel. Ten at 190px gives a ~19px pitch, which leaves an envelope
-/// wide enough to have a visible plate inside it - the point of the family. Fewer looks
-/// sparse; more collapses the glass to a stripe with no interior.
-const TUBES: usize = 10;
+/// Pitch one valve wants, in pixels.
+///
+/// 19 is the 190px reference panel divided by the ten tubes that were tuned and approved, so
+/// the narrow case is unchanged. Chosen because it leaves an envelope wide enough to have a
+/// visible plate inside it, which is the point of the family: narrower collapses the glass to a
+/// stripe with no interior, wider reads as an arched window rather than a valve.
+const TUBE_PITCH: i32 = 19;
+
+/// Valves to draw at a given panel width.
+///
+/// Scaled rather than fixed, because a fixed count stretches: measured at 380px the ten tubes
+/// grew to a 37px pitch with 20px-wide glass, which read as a row of arched windows. Adding
+/// valves instead keeps every one the size it was tuned at - and it also narrows each valve's
+/// share of the spectrum, so neighbouring valves differ more, which is the thing the row was
+/// short of.
+fn tube_count(w: i32) -> usize {
+    ((w / TUBE_PITCH).max(4) as usize).min(40)
+}
 
 #[derive(Default)]
 pub struct Tube;
@@ -38,10 +52,11 @@ impl Tube {
     /// Averaged rather than sampled, because at ten tubes across 64 bands a point sample
     /// throws away five sixths of the spectrum and makes neighbouring tubes jump
     /// independently of the music.
-    fn level_for(d: &FrameData, i: usize) -> f32 {
+    fn level_for(d: &FrameData, i: usize, tubes: usize) -> f32 {
         let n = d.levels.len();
-        let lo = i * n / TUBES;
-        let hi = (((i + 1) * n / TUBES).max(lo + 1)).min(n);
+        let tubes = tubes.max(1);
+        let lo = i * n / tubes;
+        let hi = (((i + 1) * n / tubes).max(lo + 1)).min(n);
         let mut acc = 0.0;
         let mut cnt = 0.0;
         for v in &d.levels[lo..hi] {
@@ -57,10 +72,11 @@ impl Tube {
         }
     }
 
-    fn peak_for(d: &FrameData, i: usize) -> f32 {
+    fn peak_for(d: &FrameData, i: usize, tubes: usize) -> f32 {
         let n = d.peaks.len();
-        let lo = i * n / TUBES;
-        let hi = (((i + 1) * n / TUBES).max(lo + 1)).min(n);
+        let tubes = tubes.max(1);
+        let lo = i * n / tubes;
+        let hi = (((i + 1) * n / tubes).max(lo + 1)).min(n);
         d.peaks[lo..hi]
             .iter()
             .copied()
@@ -106,7 +122,8 @@ impl Family for Tube {
         // wide, which at a 19px pitch left no chassis between tubes and rendered the row as
         // ten touching slabs rather than as separate valves.
         let margin = 4;
-        let pitch = ((w - margin * 2) as f32 / TUBES as f32).max(6.0);
+        let tubes = tube_count(w);
+        let pitch = ((w - margin * 2) as f32 / tubes as f32).max(6.0);
         let glass_w = ((pitch * 0.55) as i32).max(5) | 1; // odd, so it has a true centre column
         let base_h = 6;
         let top = 5;
@@ -139,10 +156,10 @@ impl Family for Tube {
         // documented in segmented/scope/vu.
         let mut lit = Canvas::new(w, h);
 
-        for i in 0..TUBES {
+        for i in 0..tubes {
             let cx = margin + (pitch * (i as f32 + 0.5)) as i32;
-            let level = Self::level_for(d, i);
-            let peak = Self::peak_for(d, i);
+            let level = Self::level_for(d, i, tubes);
+            let peak = Self::peak_for(d, i, tubes);
             let drive = HEATER_FLOOR + (1.0 - HEATER_FLOOR) * level;
 
             // Cathode glow, centred on the plate. The radius is tied to the ENVELOPE, not to
@@ -207,7 +224,7 @@ impl Family for Tube {
         // (18.2px), so every tube erased the light of the one before it and the whole row
         // rendered dark except for a few stray pixels. Clipping against the union of the
         // envelopes is the only formulation that cannot depend on draw order.
-        let centres: Vec<i32> = (0..TUBES)
+        let centres: Vec<i32> = (0..tubes)
             .map(|i| margin + (pitch * (i as f32 + 0.5)) as i32)
             .collect();
         for y in 2..(h - 2) {
@@ -238,7 +255,7 @@ impl Family for Tube {
 
         // Sockets and glass, drawn AFTER the light so a tube reads as a lit thing seen
         // through glass rather than as a glowing rectangle with a lid.
-        for i in 0..TUBES {
+        for i in 0..tubes {
             let cx = margin + (pitch * (i as f32 + 0.5)) as i32;
             let gx = cx - glass_w / 2;
 
@@ -298,6 +315,29 @@ mod tests {
             }
         }
         sum
+    }
+
+    #[test]
+    fn tube_count_holds_at_ten_when_narrow_and_grows_with_width() {
+        assert_eq!(tube_count(190), 10, "the reference panel must keep the ten tuned valves");
+        assert_eq!(tube_count(380), 20, "double the width doubles the valves rather than the glass");
+        assert!(tube_count(4000) <= 40, "capped");
+        assert!(tube_count(20) >= 4, "and never fewer than a handful");
+    }
+
+    #[test]
+    fn a_wide_panel_keeps_the_valves_the_size_they_were_tuned_at() {
+        // A fixed count stretched: at 380px the ten valves grew to a 37px pitch with 20px glass,
+        // which read as a row of arched windows rather than valves. Pitch is what must stay put.
+        let pitch_at = |w: i32| (w - 8) as f32 / tube_count(w) as f32;
+        let reference = pitch_at(190);
+        for w in [190, 240, 380, 456, 600] {
+            let p = pitch_at(w);
+            assert!(
+                (p - reference).abs() < 4.0,
+                "at width {w} the valve pitch drifted to {p:.1} from the tuned {reference:.1}"
+            );
+        }
     }
 
     #[test]

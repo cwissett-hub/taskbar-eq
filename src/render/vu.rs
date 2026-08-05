@@ -26,12 +26,42 @@ fn needle_level(rms: f32, sensitivity: f32) -> f32 {
     (norm * sensitivity.max(0.0)).clamp(0.0, 1.0)
 }
 
+/// Width one dial wants, in pixels.
+///
+/// 95 is half of the 190px reference panel, i.e. exactly the dial size that was tuned and
+/// approved - so the narrow case keeps its two dials and wider panels add dials rather than
+/// inflating them.
+///
+/// The narrow case is NOT quite pixel-identical: the new height cap trims the radius from 55 to
+/// 52 at 190x60. That is a fix rather than a regression - at 55 the arc's apex landed on row 1,
+/// one pixel ABOVE the panel's top edge at row 2, a containment bug this file already documented
+/// and worked around by clipping afterwards. The dial is now inside the panel by construction.
+const DIAL_PITCH: i32 = 95;
+
+/// Dials to draw at a given panel width.
+///
+/// A dial cannot simply be scaled up: its arc apex sits at `cy - radius` with `cy` near the
+/// bottom of a 60px panel, so a radius derived from width alone leaves the canvas entirely.
+/// Measured at 380px wide: `dial_w * 0.60` gave a radius of 112 on a 60px panel, putting the
+/// apex 56px ABOVE the top edge - the arc, ticks and scale all vanished and only two bare
+/// needle lines were left. Height caps the radius, so extra width has to buy extra dials.
+pub fn dial_count(w: i32) -> usize {
+    ((w / DIAL_PITCH).max(2) as usize).min(8)
+}
+
 #[derive(Default)]
 pub struct Vu {
     l: f32,
     r: f32,
     pk_l: f32,
     pk_r: f32,
+    /// Smoothed (level, peak) for the frequency-band dials that exist only on a wide panel.
+    ///
+    /// Kept separate from `l`/`r` rather than folded into one vector so the two-dial case stays
+    /// exactly what it was: dials 0 and 1 are always left and right channel RMS, which is the
+    /// stereo reading the narrow layout was approved on. Anything beyond them is a band, the
+    /// way a broadcast console carries a stereo pair plus band meters.
+    bands: Vec<(f32, f32)>,
 }
 
 impl Family for Vu {
@@ -59,6 +89,30 @@ impl Family for Vu {
         self.pk_l = (self.pk_l - 0.004).max(self.l);
         self.pk_r = (self.pk_r - 0.004).max(self.r);
 
+        // Band dials, on wide panels only. Same ballistics as the stereo pair, so they settle
+        // together instead of one bank visibly leading the other.
+        let dials = dial_count(w);
+        let band_dials = dials.saturating_sub(2);
+        if self.bands.len() != band_dials {
+            self.bands.resize(band_dials, (0.0, 0.0));
+        }
+        for i in 0..band_dials {
+            let lo = i * d.levels.len() / band_dials.max(1);
+            let hi = (((i + 1) * d.levels.len()) / band_dials.max(1)).max(lo + 1).min(d.levels.len());
+            let mut acc = 0.0;
+            let mut n = 0.0;
+            for v in &d.levels[lo..hi] {
+                if v.is_finite() {
+                    acc += *v;
+                    n += 1.0;
+                }
+            }
+            let target = if n > 0.0 { (acc / n).clamp(0.0, 1.0) } else { 0.0 };
+            let (lv, pk) = self.bands[i];
+            let lv = lv + (target - lv) * VU_SMOOTHING;
+            self.bands[i] = (lv, (pk - 0.004).max(lv));
+        }
+
         c.clear();
         c.rounded_rect(1, 2, w - 2, h - 4, 4, Rgba::from_hex(&t.panel, t.panel_alpha));
 
@@ -75,7 +129,12 @@ impl Family for Vu {
 
         let ink = Rgba::from_hex(&t.lit, 0.72);
         let over = Rgba::from_hex(t.overload_hex(), 0.85);
-        let dial_w = w / 2 - 3;
+        let dial_w = (w / dials as i32 - 3).max(8);
+        let readings: Vec<(f32, f32)> = [(self.l, self.pk_l), (self.r, self.pk_r)]
+            .into_iter()
+            .chain(self.bands.iter().copied())
+            .take(dials)
+            .collect();
 
         // Arcs, ticks and needles are drawn onto their own transparent layer,
         // not straight onto `c`. `Canvas::bloom` composites its halo UNDER
@@ -90,10 +149,13 @@ impl Family for Vu {
         // `scope.rs` for exactly this reason.
         let mut dial = Canvas::new(w, h);
 
-        for (idx, (level, peak)) in [(self.l, self.pk_l), (self.r, self.pk_r)].iter().enumerate() {
-            let cx = 2 + idx as i32 * (w / 2) + dial_w / 2;
+        for (idx, (level, peak)) in readings.iter().enumerate() {
+            let cx = 2 + idx as i32 * (w / dials as i32) + dial_w / 2;
             let cy = h - 4;
-            let radius = (dial_w as f32 * 0.60) as i32;
+            // Height caps the radius. Without this the arc's apex leaves the panel entirely on
+            // a wide display - see `dial_count`. The -8 keeps the apex a few pixels below the
+            // top edge so the bezel and the bloom halo have somewhere to go.
+            let radius = ((dial_w as f32 * 0.60) as i32).min(h - 8).max(4);
             let (a0, a1) = (-std::f32::consts::PI * 0.78, -std::f32::consts::PI * 0.22);
 
             // Printed arc, with the overload segment in its own colour.
@@ -239,6 +301,66 @@ mod tests {
         let left = (5..90).map(|x| lum(c.get(x, 30))).fold(0.0f32, f32::max);
         let right = (100..185).map(|x| lum(c.get(x, 30))).fold(0.0f32, f32::max);
         assert!(left > 80.0 && right > 80.0, "expected a dial in each half (left {left}, right {right})");
+    }
+
+    #[test]
+    fn dial_count_holds_at_two_when_narrow_and_grows_with_width() {
+        assert_eq!(dial_count(190), 2, "the reference panel must keep its stereo pair");
+        assert_eq!(dial_count(150), 2, "and so must anything narrower");
+        assert_eq!(dial_count(380), 4, "double the width buys two more dials");
+        assert_eq!(dial_count(456), 4);
+        assert!(dial_count(4000) <= 8, "capped, or a huge panel draws a useless smear of dials");
+    }
+
+    #[test]
+    fn the_dial_arc_stays_inside_the_panel_at_every_width() {
+        // The bug this guards was visible only once the display was widened: the radius came
+        // from dial width alone, so at 380px it reached 112 on a 60px-tall panel and the arc,
+        // the ticks and the printed scale all left the canvas, leaving two bare needle lines.
+        //
+        // Checks rendered pixels rather than the radius arithmetic, because the arithmetic is
+        // what was wrong - asserting on it would just restate the bug.
+        for w in [150, 190, 240, 380, 456, 600] {
+            let mut v = Vu::default();
+            let mut c = Canvas::new(w, 60);
+            for _ in 0..90 {
+                v.draw(&mut c, &builtin::vu_cream(), &level(0.5, 0.5));
+            }
+            // Rows 0..2 are outside the panel, which starts at y=2.
+            for y in 0..2 {
+                for x in 0..w {
+                    assert_eq!(
+                        c.get(x, y).a, 0,
+                        "at width {w} the dial painted outside the panel at ({x},{y})"
+                    );
+                }
+            }
+            // And something must actually be drawn near the top of the panel, or the arc has
+            // silently collapsed to nothing and the check above would pass vacuously.
+            let ink_high = (2..14).any(|y| (0..w).any(|x| c.get(x, y).a > 40));
+            assert!(ink_high, "at width {w} nothing was drawn in the upper panel - arc missing?");
+        }
+    }
+
+    #[test]
+    fn a_wide_panel_shows_band_dials_that_respond_to_the_spectrum() {
+        // The extra dials must be driven by something. A wide panel whose band dials sat at zero
+        // would look like broken hardware next to two live stereo dials.
+        let mut v = Vu::default();
+        let mut c = Canvas::new(380, 60);
+        let mut d = level(0.09, 0.055);
+        for (i, x) in d.levels.iter_mut().enumerate() {
+            *x = if i < 32 { 0.8 } else { 0.1 };
+        }
+        for _ in 0..90 {
+            v.draw(&mut c, &builtin::vu_cream(), &d);
+        }
+        assert_eq!(v.bands.len(), 2, "380px should add two band dials");
+        assert!(
+            v.bands[0].0 > v.bands[1].0 + 0.15,
+            "the low-band dial must read higher than the high-band one: {:?}",
+            v.bands
+        );
     }
 
     #[test]

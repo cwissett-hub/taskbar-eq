@@ -13,6 +13,14 @@ pub struct Config {
     pub reveal_ms: u32,
     pub hide_ms: u32,
     pub fade_ms: u32,
+    /// Display width in physical pixels, measured leftward from the Widgets button's right edge.
+    ///
+    /// Customisable because the amount of dead taskbar available depends entirely on how many
+    /// apps are pinned and open, which is per-machine and changes minute to minute. This is a
+    /// REQUEST, not a guarantee: `placement::widened` clamps it to whatever clearance actually
+    /// exists, because the overlay receives its own clicks and so cannot be allowed to cover a
+    /// pinned button.
+    pub width: i32,
     pub autostart: bool,
 }
 
@@ -26,6 +34,11 @@ impl Default for Config {
             reveal_ms: 400,
             hide_ms: 4500,
             fade_ms: 450,
+            // Roughly double the ~190px the Widgets button occupies. On the development
+            // machine there are 352px of empty taskbar between the last pinned app and the
+            // widget, so this fits with room to spare and shrinks automatically when it does
+            // not.
+            width: 380,
             autostart: false,
         }
     }

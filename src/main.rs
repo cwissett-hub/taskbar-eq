@@ -59,7 +59,7 @@ fn main() -> Result<()> {
 
     let mut latest = Frame::default();
     let mut rect_tick = 0u32;
-    let mut rect = None;
+    let mut rect: Option<geom::Rect> = None;
     // Consecutive rect-discovery misses tolerated before the overlay gives up and
     // hides. At one probe per second this is a few seconds of grace.
     const RECT_MISS_LIMIT: u32 = 4;
@@ -71,6 +71,21 @@ fn main() -> Result<()> {
     // Hot-reload debounce: wait this long after the last filesystem event before
     // reparsing, so one save produces one reload.
     const RELOAD_DEBOUNCE_MS: u64 = 150;
+
+/// Pixels of clearance kept between the display's left edge and whatever is next to it.
+///
+/// Non-zero because the overlay receives its own clicks (it does not set WS_EX_TRANSPARENT -
+/// see win::overlay), so a pixel it covers is a pixel of taskbar that can no longer be
+/// clicked. Butting right up against a pinned app button would make that button feel dead
+/// along its edge.
+const WIDEN_MARGIN: i32 = 8;
+
+/// Width change, in pixels, below which the display keeps its current width.
+///
+/// The available clearance shifts whenever any window opens, closes or is minimised, and the
+/// scope family clears its persistence buffers on a canvas resize - so without hysteresis an
+/// unrelated bit of taskbar activity wipes the phosphor trail once a second.
+const WIDTH_HYSTERESIS: i32 = 12;
     let mut reload_pending = false;
     let mut last_change: Option<std::time::Instant> = None;
     // Real frame interval. The loop sleeps a fixed 16ms, so the actual period is that plus
@@ -179,9 +194,42 @@ fn main() -> Result<()> {
 
         // Re-discover the rect once a second - it moves with the weather text.
         if rect_tick == 0 {
-            match win::placement::find_widget_rect() {
-                Ok(Some(found)) => {
-                    rect = Some(found);
+            // ONE UIA snapshot per tick, shared by the widget lookup, the clearance
+            // measurement and the chevron fallback. Reading the clearance from a different
+            // enumeration than the widget rect would let the two disagree about where things
+            // are while the taskbar is mid-animation, and the clearance is what stops the
+            // overlay covering a pinned button.
+            let elements = win::placement::taskbar_elements().unwrap_or_default();
+            let bar = win::placement::taskbar_rect();
+
+            match win::placement::widget_rect_in(&elements) {
+                Some(widget) => {
+                    let want = match bar {
+                        // Widen leftward into the dead taskbar between the last pinned app and
+                        // the widget. `cfg.width` is a request; this clamps it to the room that
+                        // actually exists.
+                        Some(bar) => win::placement::widened(
+                            widget,
+                            bar,
+                            win::placement::left_limit(&elements, widget),
+                            cfg.width,
+                            WIDEN_MARGIN,
+                        ),
+                        None => widget,
+                    };
+                    // Hysteresis on the width only.
+                    //
+                    // The clearance moves every time a window opens, closes or is minimised, and
+                    // the scope family reallocates - and therefore CLEARS - its persistence
+                    // buffers on any canvas resize. Without this, a taskbar that is busy for
+                    // unrelated reasons wipes the phosphor trail once a second. `x` is allowed to
+                    // track freely because moving the window costs nothing.
+                    rect = Some(match rect {
+                        Some(prev) if (prev.w - want.w).abs() < WIDTH_HYSTERESIS => {
+                            geom::Rect { x: want.x + (want.w - prev.w), ..prev }
+                        }
+                        _ => want,
+                    });
                     rect_misses = 0;
                 }
                 // A transient failure must NOT throw away a known-good rect.
@@ -193,7 +241,7 @@ fn main() -> Result<()> {
                 // give up after several consecutive misses, which still handles the
                 // genuine cases (the widget switched off, or a Windows version that
                 // has no Widgets button at all - see the chevron fallback below).
-                Ok(None) | Err(_) => {
+                None => {
                     rect_misses += 1;
                     if rect_misses >= RECT_MISS_LIMIT {
                         rect = None;
@@ -205,15 +253,17 @@ fn main() -> Result<()> {
             // That element exists on Windows 10 as well ("Show hidden icons"), which is
             // the only reason this app shows anything at all on that OS.
             if rect.is_none() {
-                if let (Ok(Some(chev)), Some(bar)) = (
-                    win::placement::find_chevron_rect(),
-                    win::placement::taskbar_rect(),
-                ) {
-                    rect = Some(win::placement::rect_left_of(
-                        chev,
+                if let (Some(chev), Some(bar)) = (win::placement::chevron_rect_in(&elements), bar) {
+                    // Widened the same way, so the Windows 10 path gets the wide display too
+                    // rather than being stuck at the old fixed fallback width.
+                    let anchored =
+                        win::placement::rect_left_of(chev, bar, FALLBACK_GAP, FALLBACK_WIDTH);
+                    rect = Some(win::placement::widened(
+                        anchored,
                         bar,
-                        FALLBACK_GAP,
-                        FALLBACK_WIDTH,
+                        win::placement::left_limit(&elements, anchored),
+                        cfg.width,
+                        WIDEN_MARGIN,
                     ));
                 }
             }

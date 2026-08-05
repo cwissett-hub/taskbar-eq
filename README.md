@@ -101,7 +101,35 @@ count itself is a snapshot and can drift.
 | ✅ | External TOML colourways, versioned schema, override-by-id, `[vaporwave]` + `[tube]` tables | working |
 | ✅ | **Hot reload** — save a theme file and the taskbar updates, no restart | working |
 | ✅ | Frame-rate-independent animation (`dt_ms`), so scroll and the gate's timings do not drift with load | working |
-| 📋 | 456 px-wide variant, claiming the dead taskbar left of the widget | not started |
+| ✅ | **Wide display** — claims the dead taskbar left of the widget, clamped to real clearance | **unseen** |
+| ✅ | Layouts scale with width: 4 VU dials and 20 valves at 380 px, 2 and 10 at 190 px | **unseen** |
+
+### Width
+
+The display defaults to **380 px** — roughly double the ~190 px the Widgets button occupies —
+extending *leftward* into the empty taskbar between your last pinned app and the widget. On the
+development machine that gap is 352 px; on the other side there are only 15 px before "Show
+Hidden Icons", which is why it grows left and not right.
+
+Set `width` in `%APPDATA%	askbar-eq\config.toml` (physical pixels) to change it. It is a
+**request, not a guarantee**: the overlay receives its own clicks — it deliberately does not set
+`WS_EX_TRANSPARENT`, or right-click and left-click would pass through — so every pixel it covers
+is a pixel of taskbar that can no longer be clicked. It therefore measures the clearance to the
+nearest element on the same taskbar row every second and clamps itself to fit, keeping 8 px
+clear. Open enough windows and it shrinks; fill the taskbar completely and it falls back to
+exactly the widget's own rect rather than covering a pinned button.
+
+Layouts scale rather than stretch, because at 60 px tall some of them cannot simply be scaled up:
+
+- **VU dials** — 2 at 190 px (left/right channel), 4 at 380 px. A dial's arc apex sits near the
+  top of the panel, so a radius derived from width alone leaves the canvas: at 380 px it computed
+  to 112 on a 60 px panel and the arc, ticks and scale all vanished, leaving two bare needle
+  lines. Height caps the radius, so extra width buys extra dials. Dials 0 and 1 are always the
+  stereo pair; the rest are frequency bands, the way a console carries a stereo pair plus band
+  meters.
+- **Valve row** — 10 at 190 px, 20 at 380 px, each valve the size it was tuned at. A fixed count
+  stretched to a 37 px pitch with 20 px glass, which read as arched windows rather than valves.
+- **Segmented, oscilloscope and vaporwave** scale directly and gain from the room.
 
 ### Known gaps
 
@@ -118,7 +146,10 @@ count itself is a snapshot and can drift.
   them; the `persp` needed for legibility at 60 px removes that condition. Measured: `persp`
   1.4 changes 0 pixels, 2.07 changes 83. Kept for the wider variant and for theme files that
   raise `persp`.
-- Theme *aesthetics* at 190×60 are not verified by anything automated. Every family has an
+- The width is **clamped by what UI Automation reports**, so an element it cannot see is an
+  element the overlay may cover. Every named taskbar element on the test machine was accounted
+  for, but this has not been tried on a taskbar with third-party shell extensions.
+- Theme *aesthetics* at 190×60 and 380×60 are not verified by anything automated. Every family has an
   `#[ignore]`d dump harness (`cargo test --release dump_ -- --ignored`) that writes raw RGBA
   for eyeballing, because "does this look like a smear" is not a question a golden can answer.
   See [HANDOVER.md](HANDOVER.md) for the full measured-vs-assumed split.
