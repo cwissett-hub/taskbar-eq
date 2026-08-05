@@ -1,3 +1,5 @@
+# CHOSEN. This is what the built-in vaporwave colourways now ship, so this file is redundant
+# as an override and is kept only to document what was compared.
 # VARIANT B - the new shipped default, as a file so it can be compared side by side.
 schema = 1
 id     = "vapor-b-balanced"

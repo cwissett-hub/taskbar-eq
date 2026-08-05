@@ -1,3 +1,5 @@
+# REJECTED - the latency of flowing toward the viewer was audible-to-visible lag. Kept as documentation of the comparison; drop into
+# %APPDATA%	askbar-eq	hemes to try it again.
 # VARIANT D - the classic flying-FORWARD direction, for comparison.
 # Trade: the nearest lines then show what the music did about half a second ago.
 schema = 1

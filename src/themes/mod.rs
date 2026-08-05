@@ -187,6 +187,11 @@ impl Default for VaporParams {
             // terrain became a hatch that jiggles rather than hills that rise. At 9 the ratio is
             // 3.5x and a ridge reads as a ridge.
             //
+            // 9 lines / scroll 2.6 / amp 1.15 is the combination the user picked by eye, from four
+            // variants compared live in the running app (kept in docs/reference/theme-variants).
+            // Do not change these three without offering that comparison again - it is a taste
+            // call on a real trade, not a value that can be derived.
+            //
             // This costs resolution in the DEPTH axis only. The 64 log frequency bands across each
             // line are untouched, so the spectrum's fidelity is unchanged - it is the number of
             // historical snapshots on screen that drops.

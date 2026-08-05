@@ -1,3 +1,5 @@
+# REJECTED - the dense mesh hides the audio. Kept as documentation of the comparison; drop into
+# %APPDATA%	askbar-eq	hemes to try it again.
 # VARIANT C - dense, the original look, but with the flow raised so it does not crawl.
 # Keep this if you prefer the richer mesh and can live with ridges being harder to pick out.
 schema = 1

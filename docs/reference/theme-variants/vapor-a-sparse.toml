@@ -1,3 +1,5 @@
+# REJECTED - too sparse. Kept as documentation of the comparison; drop into
+# %APPDATA%	askbar-eq	hemes to try it again.
 # VARIANT A - sparse and fast. Fewest depth lines, so each ridge is unmistakable.
 # Peak displacement is 2.7x the line spacing here, versus 4.7x on the original.
 schema = 1
