@@ -54,14 +54,20 @@ const FLUX_REFRACTORY: u32 = 12;
 
 
 
-/// Normalised level a segment's mean must exceed before it is re-stroked as a peak glow.
+/// RAW band level a segment must exceed before it is re-stroked as a peak glow.
 ///
-/// Raised again with the measured window remap. Under the old inert auto-ranger 0.82 was reached
-/// only by the single loudest band each frame, which is what made the white flash occasional. The
-/// new mapping saturates every band at or above the measured p90, so 0.82 would fire on roughly a
-/// tenth of all band-frames and the glow would stop marking anything. At 0.97 it marks only ridges
-/// that have actually run out of displacement range.
-const GLOW_AT: f32 = 0.97;
+/// Keyed on the raw level, NOT on the terrain response, because the response CLAMPS at 1.0 - so any
+/// threshold below 1.0 fires on every band that saturates, and a threshold at 1.0 fires on all of
+/// them at once. Measured on the real-music fixture after the window remap landed: a response
+/// threshold of 0.97 caught 8.0% of all band-frames, which is about five of the sixty-four bands
+/// glowing white EVERY FRAME. That is the constant flashing that was reported as the lightning
+/// firing on every snare - it was not the lightning at all.
+///
+/// The raw level cannot be defeated that way. Measured on the same fixture: >= 0.60 catches 5.7% of
+/// band-frames, >= 0.70 catches 2.3%, >= 0.78 catches about 0.7%, >= 0.85 catches none at all. 0.78
+/// puts it back to a genuine occasional highlight - slightly rarer than the 1.4% the old inert
+/// mapping produced, which was already described as flashing too much.
+const GLOW_AT_RAW: f32 = 0.78;
 
 /// Reference frame duration. The render loop sleeps a fixed 16ms per tick, so its real
 /// period is 16ms plus however long the frame took; scroll and bolt decay are scaled by the
@@ -506,6 +512,8 @@ impl Family for Vapor {
             let step = 1;
             let mut pts: Vec<(i32, i32)> = Vec::new();
             let mut vals: Vec<f32> = Vec::new();
+            // Raw levels kept alongside the responses, for the peak glow - see GLOW_AT_RAW.
+            let mut raws: Vec<f32> = Vec::new();
             let mut x = x0.round() as i32;
             let xe = x1.round() as i32;
             while x <= xe {
@@ -520,6 +528,7 @@ impl Family for Vapor {
                 let frac = fb - i0 as f32;
                 let raw = row[i0] * (1.0 - frac) + row[i1] * frac;
                 let v = Self::terrain_resp(raw, theme.sensitivity);
+                raws.push(raw);
                 let y = depth_y - v * amp_max * f;
                 pts.push((x, y.round() as i32));
                 vals.push(v);
@@ -539,9 +548,9 @@ impl Family for Vapor {
             for i in 1..pts.len() {
                 c.line(pts[i - 1].0, pts[i - 1].1, pts[i].0, pts[i].1, grid);
                 // Peak glow: loud sections re-stroke brighter, nearer lines more so.
-                let mean = (vals[i - 1] + vals[i]) * 0.5;
-                if mean > GLOW_AT {
-                    let a = ((mean - GLOW_AT) / (1.0 - GLOW_AT)) * t.glow * f;
+                let mean = (raws[i - 1] + raws[i]) * 0.5;
+                if mean > GLOW_AT_RAW {
+                    let a = ((mean - GLOW_AT_RAW) / (1.0 - GLOW_AT_RAW)) * t.glow * f;
                     if a > 0.02 {
                         let g = Rgba::from_hex(&theme.hot, a.clamp(0.0, 1.0));
                         c.line(pts[i - 1].0, pts[i - 1].1, pts[i].0, pts[i].1, g);
@@ -660,6 +669,33 @@ mod tests {
             (0.6..=3.5).contains(&per_sec),
             "lightning fired {strikes} times over {:.1}s = {per_sec:.2}/s, which is outside the              range a listener would call musical",
             frames.len() as f32 / 99.0
+        );
+    }
+
+    #[test]
+    fn the_peak_glow_stays_rare_on_real_music() {
+        // The regression this guards was reported as "the lightning is going with every snare", and
+        // it was not the lightning: the window remap clamps the terrain response at 1.0, so a glow
+        // threshold of 0.97 caught 8.0% of all band-frames on this fixture - about five of the
+        // sixty-four bands glowing white every single frame.
+        //
+        // Asserted on the RAW level because that is what the glow now keys on, and because a
+        // response-based assertion is exactly the one that could not see the problem.
+        let frames = real_music();
+        let total: usize = frames.iter().map(|r| r.len()).sum();
+        let hot = frames
+            .iter()
+            .flat_map(|r| r.iter())
+            .filter(|&&v| v > GLOW_AT_RAW)
+            .count();
+        let pct = hot as f32 / total as f32 * 100.0;
+        assert!(
+            pct < 2.0,
+            "the peak glow fires on {pct:.2}% of band-frames, which reads as constant flashing              rather than as a highlight"
+        );
+        assert!(
+            pct > 0.05,
+            "the peak glow fires on {pct:.2}% of band-frames, so it never appears at all and the              feature is dead weight"
         );
     }
 
