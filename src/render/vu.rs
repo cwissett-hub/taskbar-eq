@@ -63,9 +63,14 @@ impl Family for Vu {
         c.rounded_rect(1, 2, w - 2, h - 4, 4, Rgba::from_hex(&t.panel, t.panel_alpha));
 
         // Warm backlight pooling from the bottom.
+        //
+        // 0.22 washed the panel to a muddy mid-tone across the whole lower two thirds -
+        // which is exactly where the needle sits - so the needle had almost nothing to
+        // contrast against and the dial read as flat. The glow is meant to suggest a lamp
+        // behind the dial, not to be the brightest thing on it.
         for y in (h / 3)..(h - 4) {
             let f = (y - h / 3) as f32 / (h - 4 - h / 3).max(1) as f32;
-            c.fill_rect(1, y, w - 2, 1, Rgba::from_hex(&t.lit, 0.22 * f));
+            c.fill_rect(1, y, w - 2, 1, Rgba::from_hex(&t.lit, 0.09 * f));
         }
 
         let ink = Rgba::from_hex(&t.lit, 0.72);
@@ -92,13 +97,25 @@ impl Family for Vu {
             let (a0, a1) = (-std::f32::consts::PI * 0.78, -std::f32::consts::PI * 0.22);
 
             // Printed arc, with the overload segment in its own colour.
-            for step in 0..=60 {
-                let f = step as f32 / 60.0;
+            //
+            // Joined with `line` rather than plotted as independent points. Stepping the
+            // angle and setting one pixel per step leaves 8-connected diagonal runs, which
+            // at 1px read as a dashed arc - visible in the render as a dotted scale that
+            // looked like noise rather than print.
+            let arc_pt = |f: f32| {
                 let ang = a0 + (a1 - a0) * f;
+                (
+                    cx + (ang.cos() * radius as f32) as i32,
+                    cy + (ang.sin() * radius as f32) as i32,
+                )
+            };
+            let steps = 60;
+            for step in 1..=steps {
+                let f = step as f32 / steps as f32;
+                let (x0, y0) = arc_pt((step - 1) as f32 / steps as f32);
+                let (x1, y1) = arc_pt(f);
                 let col = if f >= OVERLOAD_AT { over } else { ink };
-                let px = cx + (ang.cos() * radius as f32) as i32;
-                let py = cy + (ang.sin() * radius as f32) as i32;
-                dial.fill_rect(px, py, 1, 1, col);
+                dial.line(x0, y0, x1, y1, col);
             }
 
             // Tick marks, longer at the ends and centre.
@@ -106,20 +123,25 @@ impl Family for Vu {
                 let ang = a0 + (a1 - a0) * k as f32 / 6.0;
                 let big = k == 0 || k == 3 || k == 6;
                 let inner = radius - if big { 5 } else { 3 };
-                for rr in inner..=radius {
-                    let px = cx + (ang.cos() * rr as f32) as i32;
-                    let py = cy + (ang.sin() * rr as f32) as i32;
-                    dial.fill_rect(px, py, 1, 1, ink);
-                }
+                dial.line(
+                    cx + (ang.cos() * inner as f32) as i32,
+                    cy + (ang.sin() * inner as f32) as i32,
+                    cx + (ang.cos() * radius as f32) as i32,
+                    cy + (ang.sin() * radius as f32) as i32,
+                    ink,
+                );
             }
 
-            // Ghost peak needle.
+            // Ghost peak needle. Deliberately faint: it is a reference mark, and at 0.32
+            // it competed with the live needle it exists to annotate.
             let pang = a0 + (a1 - a0) * peak.clamp(0.0, 1.0);
-            for rr in (radius / 3)..radius {
-                let px = cx + (pang.cos() * rr as f32) as i32;
-                let py = cy + (pang.sin() * rr as f32) as i32;
-                dial.fill_rect(px, py, 1, 1, Rgba::from_hex("#ffffff", 0.32));
-            }
+            dial.line(
+                cx + (pang.cos() * (radius / 3) as f32) as i32,
+                cy + (pang.sin() * (radius / 3) as f32) as i32,
+                cx + (pang.cos() * radius as f32) as i32,
+                cy + (pang.sin() * radius as f32) as i32,
+                Rgba::from_hex("#ffffff", 0.22),
+            );
 
             // Live needle, red past the overload point.
             let ang = a0 + (a1 - a0) * level.clamp(0.0, 1.0);
@@ -128,12 +150,39 @@ impl Family for Vu {
             } else {
                 Rgba::from_hex(&t.hot, 1.0)
             };
-            for rr in 0..(radius as f32 * 0.95) as i32 {
-                let px = cx + (ang.cos() * rr as f32) as i32;
-                let py = cy + (ang.sin() * rr as f32) as i32;
-                dial.fill_rect(px, py, 1, 1, needle);
+            // The needle is the one thing on the dial that must read instantly, and as a
+            // 1px hairline with a 2x2 pivot it read as a scratch. Now: a full-length core,
+            // a second offset line thickening the lower two thirds, and a round hub - so
+            // it tapers from a broad base to a fine tip the way a real pointer does.
+            let (dx, dy) = (ang.cos(), ang.sin());
+            let tip = radius as f32 * 0.95;
+            let (tx, ty) = (cx + (dx * tip) as i32, cy + (dy * tip) as i32);
+            dial.line(cx, cy, tx, ty, needle);
+
+            // Perpendicular offset, stopping short of the tip so it stays pointed.
+            let (ox, oy) = ((-dy).round() as i32, dx.round() as i32);
+            if ox != 0 || oy != 0 {
+                let broad = tip * 0.66;
+                dial.line(
+                    cx + ox,
+                    cy + oy,
+                    cx + ox + (dx * broad) as i32,
+                    cy + oy + (dy * broad) as i32,
+                    needle,
+                );
             }
-            dial.fill_rect(cx - 1, cy - 1, 2, 2, needle);
+
+            // Bright hot tip, so the eye lands on where the needle is pointing.
+            dial.line(
+                cx + (dx * tip * 0.82) as i32,
+                cy + (dy * tip * 0.82) as i32,
+                tx,
+                ty,
+                Rgba::from_hex(&t.hot, 1.0),
+            );
+
+            // Pivot hub.
+            dial.fill_circle(cx, cy, 2, needle);
         }
 
         // `Canvas::bloom` keeps the original (crisp) pixel on top of the
@@ -336,5 +385,37 @@ mod tests {
             v.draw(&mut c, &builtin::vu_cream(), &level(0.65, 0.4));
         }
         std::fs::write("tests/golden/vu-cream.txt", canvas_to_ascii(&c)).unwrap();
+    }
+
+    /// Dumps every VU colourway to raw RGBA for visual inspection.
+    /// Run: cargo test --release dump_vu_frames -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn dump_vu_frames() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut n = 0usize;
+        for t in builtin::all().into_iter().filter(|t| t.family == "vu") {
+            let mut v = Vu::default();
+            let mut c = Canvas::new(190, 60);
+            // settle the ballistics at a realistic listening level
+            for _ in 0..120 {
+                v.draw(&mut c, &t, &level(0.09, 0.055));
+            }
+            let mut out = Vec::with_capacity(190 * 60 * 4);
+            for y in 0..60 {
+                for x in 0..190 {
+                    let px = c.get(x, y);
+                    let a = px.a as f32 / 255.0;
+                    for ch in [px.r, px.g, px.b] {
+                        out.push((ch as f32 + 22.0 * (1.0 - a)).min(255.0) as u8);
+                    }
+                    out.push(255);
+                }
+            }
+            std::fs::write(dir.join(format!("vu-{}.rgba", t.id)), &out).unwrap();
+            n += 1;
+        }
+        println!("wrote {} vu dumps to {}", n, dir.display());
     }
 }

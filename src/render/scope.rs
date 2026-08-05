@@ -1,6 +1,6 @@
 use super::canvas::{Canvas, Rgba};
 use super::{Family, FrameData};
-use crate::themes::Theme;
+use crate::themes::{Texture, Theme};
 
 #[derive(Default)]
 pub struct Scope {
@@ -266,6 +266,21 @@ impl Family for Scope {
         // Compose: panel, graticule, trail, trace, bezel.
         c.clear();
         c.rounded_rect(1, 2, w - 2, h - 4, 4, Rgba::from_hex(&t.panel, t.panel_alpha));
+
+        // Scanlines, when the colourway asks for them. The scope family ignored
+        // `texture` entirely before this, so setting the field on a scope theme was
+        // inert - and a colourway that declares a texture it does not get is the same
+        // fake distinctness the bloom spread was.
+        if matches!(t.texture, Texture::Scanlines) {
+            // Every other row, dark rather than lit: a scanline is the ABSENCE of
+            // phosphor, so it must darken the panel, not add another glowing grid.
+            let line = Rgba::new(0, 0, 0, 90);
+            let mut y = 3;
+            while y < h - 3 {
+                c.fill_rect(1, y, w - 2, 1, line);
+                y += 2;
+            }
+        }
 
         let grid = Rgba::from_hex(&t.lit, 0.10);
         for k in 1..8 {
@@ -543,6 +558,7 @@ mod tests {
             (acc / 1.67 + n * 0.12) * amp
         };
 
+        let mut n = 0usize;
         for (label, amp) in [("quiet", 0.05f32), ("normal", 0.35), ("loud", 0.85)] {
             for t in builtin::all().into_iter().filter(|t| t.family == "scope") {
                 let mut sc = Scope::default();
@@ -571,8 +587,9 @@ mod tests {
                     }
                 }
                 std::fs::write(dir.join(format!("scope-{}-{}.rgba", t.id, label)), &out).unwrap();
+                n += 1;
             }
         }
-        println!("wrote {} rgba dumps to {}", 15, dir.display());
+        println!("wrote {} rgba dumps to {}", n, dir.display());
     }
 }

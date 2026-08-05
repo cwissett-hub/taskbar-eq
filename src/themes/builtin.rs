@@ -12,11 +12,18 @@ pub fn all() -> Vec<Theme> {
         p11_blue_violet(),
         scope_amber(),
         scope_white(),
+        mw2_trace(),
+        scope_red(),
+        scope_azure(),
+        scope_magenta(),
         vu_cream(),
         vu_amber(),
         vu_ice(),
         vu_green(),
         vu_red(),
+        vu_cyan(),
+        vu_hot_pink(),
+        vu_lime(),
     ]
 }
 
@@ -260,6 +267,85 @@ pub fn scope_white() -> Theme {
     }
 }
 
+/// The green oscilloscope readout from the 2009 Modern Warfare 2 reveal trailer.
+///
+/// Not a CRT phosphor like the other five, which is why it is tuned against them rather
+/// than with them: a military data readout, so the green is acid chartreuse rather than
+/// the soft mint of P1, the persistence is short enough to read as instantaneous, and it
+/// is the only scope colourway with scanlines.
+pub fn mw2_trace() -> Theme {
+    Theme {
+        id: "mw2-trace".into(),
+        name: "MW2 trace".into(),
+        lit: "#a8ff2e".into(),
+        hot: "#e6ffb8".into(),
+        panel: "#040703".into(),
+        panel_alpha: 1.0,
+        edge: "#5f9a1e".into(),
+        edge_alpha: 0.18,
+        // Crisp, not smeary - a readout rather than an afterglow.
+        fade: 0.28,
+        texture: Texture::Scanlines,
+        // P1 green's bloom, the reference the whole family was brought down to.
+        bloom: 5.0,
+        ..scope_base()
+    }
+}
+
+/// Bright, saturated scope traces, as a counterpoint to the five muted CRT phosphors.
+///
+/// The phosphor set is faithful but all of it is low-key by nature; these are picked for
+/// punch on a dark taskbar instead. They share P1 green's bloom of 5.0 - the reference the
+/// family was tuned to - and a short fade, because a saturated colour smears far more
+/// visibly than a soft mint one does.
+pub fn scope_red() -> Theme {
+    Theme {
+        id: "scope-red".into(),
+        name: "Signal red".into(),
+        lit: "#ff4a3d".into(),
+        hot: "#ffcdc7".into(),
+        panel: "#0a0302".into(),
+        panel_alpha: 1.0,
+        edge: "#c23a2e".into(),
+        edge_alpha: 0.17,
+        fade: 0.25,
+        bloom: 5.0,
+        ..scope_base()
+    }
+}
+
+pub fn scope_azure() -> Theme {
+    Theme {
+        id: "scope-azure".into(),
+        name: "Electric azure".into(),
+        lit: "#35b6ff".into(),
+        hot: "#cdeeff".into(),
+        panel: "#01060c".into(),
+        panel_alpha: 1.0,
+        edge: "#2680bd".into(),
+        edge_alpha: 0.17,
+        fade: 0.23,
+        bloom: 5.0,
+        ..scope_base()
+    }
+}
+
+pub fn scope_magenta() -> Theme {
+    Theme {
+        id: "scope-magenta".into(),
+        name: "Hot magenta".into(),
+        lit: "#ff45cf".into(),
+        hot: "#ffcbf4".into(),
+        panel: "#0a0209".into(),
+        panel_alpha: 1.0,
+        edge: "#bd3399".into(),
+        edge_alpha: 0.17,
+        fade: 0.27,
+        bloom: 5.0,
+        ..scope_base()
+    }
+}
+
 fn vu_base() -> Theme {
     Theme {
         family: "vu".into(),
@@ -343,6 +429,51 @@ pub fn vu_red() -> Theme {
     }
 }
 
+/// Bright dial colourways. The five originals are all warm, low-key vintage panels; these
+/// trade authenticity for legibility at 190x60 on a dark taskbar, with a near-black panel
+/// so the needle has something to contrast against.
+pub fn vu_cyan() -> Theme {
+    Theme {
+        id: "vu-cyan".into(),
+        name: "Neon cyan".into(),
+        lit: "#3ff0ff".into(),
+        hot: "#e0feff".into(),
+        panel: "#01090c".into(),
+        panel_alpha: 1.0,
+        edge: "#2aa8b8".into(),
+        edge_alpha: 0.18,
+        ..vu_base()
+    }
+}
+
+pub fn vu_hot_pink() -> Theme {
+    Theme {
+        id: "vu-hot-pink".into(),
+        name: "Hot pink".into(),
+        lit: "#ff5ad2".into(),
+        hot: "#ffd6f5".into(),
+        panel: "#0b0209".into(),
+        panel_alpha: 1.0,
+        edge: "#c23a9a".into(),
+        edge_alpha: 0.18,
+        ..vu_base()
+    }
+}
+
+pub fn vu_lime() -> Theme {
+    Theme {
+        id: "vu-lime".into(),
+        name: "Lime".into(),
+        lit: "#a8ff3c".into(),
+        hot: "#e8ffc4".into(),
+        panel: "#050a02".into(),
+        panel_alpha: 1.0,
+        edge: "#6f9e24".into(),
+        edge_alpha: 0.18,
+        ..vu_base()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -372,13 +503,26 @@ mod tests {
     }
 
     #[test]
-    fn ships_fifteen_colourways_across_three_families() {
+    fn every_family_ships_and_no_theme_is_orphaned() {
+        // Deliberately a floor, not an exact count. This asserted `len() == 15` and
+        // exactly 5 per family, which made adding a colourway a test failure - directly
+        // against the standing requirement that themes stay expandable. What it is
+        // actually worth guarding is that no family silently loses its colourways and
+        // that no theme carries a family name the renderer cannot dispatch on.
         let all = all();
-        assert_eq!(all.len(), 15, "expected 15 colourways, got {}", all.len());
-        for fam in ["segmented", "scope", "vu"] {
+        const FAMILIES: [&str; 3] = ["segmented", "scope", "vu"];
+        let mut counted = 0;
+        for fam in FAMILIES {
             let n = all.iter().filter(|t| t.family == fam).count();
-            assert_eq!(n, 5, "family {fam} should have 5 colourways, has {n}");
+            assert!(n >= 5, "family {fam} should ship at least 5 colourways, has {n}");
+            counted += n;
         }
+        assert_eq!(
+            counted,
+            all.len(),
+            "every theme must belong to a known family; {} theme(s) have an unknown one",
+            all.len() - counted
+        );
     }
 
     #[test]
