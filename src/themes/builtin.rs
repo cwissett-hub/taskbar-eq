@@ -761,6 +761,37 @@ mod tests {
     }
 
     #[test]
+    fn the_readme_states_the_real_colourway_and_family_counts() {
+        // The README is the remote status dashboard - it is read when the repo cannot be
+        // built, so a stale number there is a lie with no way to check it. It has drifted
+        // before: it claimed 167 tests when there were 176, caught only because someone
+        // happened to run the suite.
+        //
+        // Deliberately checks the COUNTS and not the prose. Asserting on wording would make
+        // every copy edit a test failure, and the failure mode being guarded is a number
+        // that no longer matches the code.
+        let readme = include_str!("../../README.md");
+        let colourways = all().len();
+        let families = crate::render::KNOWN_FAMILIES.len();
+        assert!(
+            readme.contains(&format!("{colourways} colourways")),
+            "README does not state the real colourway count ({colourways})"
+        );
+        assert!(
+            readme.contains(&format!("{families} families")),
+            "README does not state the real family count ({families})"
+        );
+        // And every family must be named somewhere in it, so a new one cannot ship unlisted.
+        for fam in crate::render::KNOWN_FAMILIES {
+            let label = crate::themes::family_label(fam);
+            assert!(
+                readme.contains(&label),
+                "README never mentions the {label:?} family"
+            );
+        }
+    }
+
+    #[test]
     fn every_family_ships_and_no_theme_is_orphaned() {
         // Deliberately a floor, not an exact count. This asserted `len() == 15` and
         // exactly 5 per family, which made adding a colourway a test failure - directly

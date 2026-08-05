@@ -67,7 +67,7 @@ want it gone completely. Nothing is written anywhere else and nothing is registe
 
 | Action | What it does |
 |---|---|
-| **Right-click the equaliser** | Theme menu |
+| **Right-click the equaliser** | Theme menu — colourways grouped into a submenu per family, following your Windows light/dark setting |
 | **Left-click the equaliser** | Opens the Widgets panel (sends `Win+W`), so the weather stays reachable while covered |
 | **Right-click the tray icon** | Same theme menu, plus Start-with-Windows and Quit |
 
@@ -78,7 +78,10 @@ overlay does not exist, so the tray icon is all that is left to click.
 
 ## Status
 
-**Last updated: 2026-08-01.** 176 tests passing, release build warning-free.
+**Last updated: 2026-08-05.** Full test suite green (199 at the time of writing), release
+build warning-free. The colourway and family counts below are asserted by a test; the test
+count itself is a snapshot and can drift.
+**32 colourways across 5 families.**
 
 | | Feature | State |
 |---|---|---|
@@ -86,18 +89,19 @@ overlay does not exist, so the tray icon is all that is left to click.
 | ✅ | Windows 10 / no-Widgets fallback, anchored beside the overflow chevron | **untested** |
 | ✅ | WASAPI loopback capture, follows default-device changes | working |
 | ✅ | dB-scaled spectrum — 2048-pt FFT, 64 log bands, bass-compensating tilt | working |
-| ✅ | Reveal/hide gate with blip rejection | working |
-| ✅ | **Segmented family — 5 colourways** | working |
-| ✅ | **Oscilloscope family — 5 phosphors**, genuine persistence trails incl. dual-layer P7 | **unseen** |
-| ✅ | **Analogue VU family — 5 dial backlights**, twin needles, ~300 ms ballistics | **unseen** |
-| ✅ | Tray icon, theme menu, start-with-Windows, clean quit | working |
+| ✅ | Reveal/hide gate, 4.5 s hide delay, 450 ms cross-fade | working |
+| ✅ | **Segmented VFD — 5 colourways** | working |
+| ✅ | **Oscilloscope — 9 colourways**, triggered sweep, auto-ranged gain, persistence incl. dual-layer P7 | working |
+| ✅ | **VU dials — 8 colourways**, twin needles, dB-mapped, ~300 ms ballistics | working |
+| ✅ | **Vaporwave grid — 5 colourways**, terrain from the spectrum, bass-triggered lightning | **unseen** |
+| ✅ | **Valve row — 5 colourways**, per-band cathode glow inside the glass | **unseen** |
+| ✅ | Theme menu: per-family submenus, follows the Windows light/dark setting | **unseen** |
+| ✅ | Tray icon, start-with-Windows, clean quit | working |
 | ✅ | Right-click equaliser → theme menu; left-click → `Win+W` | working |
-| 🔜 | Oscilloscope family — 5 phosphors, persistence trace | in progress |
-| 🔜 | Analogue VU family — 5 dial backlights, twin needles | in progress |
-| ✅ | External TOML colourways with a versioned schema, override-by-id | working |
+| ✅ | External TOML colourways, versioned schema, override-by-id, `[vaporwave]` + `[tube]` tables | working |
 | ✅ | **Hot reload** — save a theme file and the taskbar updates, no restart | working |
-| ✅ | Canvas primitives for scene families (line, polygon, gradients, circles) | done |
-| 📋 | Vaporwave grid family ([specced](docs/superpowers/specs/2026-07-31-vaporwave-grid-family-design.md)) | ready to build |
+| ✅ | Frame-rate-independent animation (`dt_ms`), so scroll and the gate's timings do not drift with load | working |
+| 📋 | 456 px-wide variant, claiming the dead taskbar left of the widget | not started |
 
 ### Known gaps
 
@@ -105,16 +109,29 @@ overlay does not exist, so the tray icon is all that is left to click.
   exists precisely because Win10 has no Widgets button, but that path is reasoning from code,
   not evidence. If nothing appears, run `tools/probe/Probe-Taskbar.ps1` there and send me the
   output — the element names will say exactly what to match.
-- Theme *aesthetics* at 190×60 are not verified by anything automated. See
-  [HANDOVER.md](HANDOVER.md) for the full measured-vs-assumed split, which is kept honest
-  deliberately.
+- **The dark menu uses two undocumented uxtheme calls** (ordinals 135/136). There is no
+  documented way to dark-mode a Win32 menu. If either ordinal is missing on your build the
+  menu silently stays light — deliberately, since a light menu is a cosmetic flaw and a crash
+  is not an acceptable price for avoiding it.
+- **Hidden-line removal in the vaporwave family is inert at the shipped settings.** It only
+  bites when the perspective term packs grid lines tighter than the audio lift can separate
+  them; the `persp` needed for legibility at 60 px removes that condition. Measured: `persp`
+  1.4 changes 0 pixels, 2.07 changes 83. Kept for the wider variant and for theme files that
+  raise `persp`.
+- Theme *aesthetics* at 190×60 are not verified by anything automated. Every family has an
+  `#[ignore]`d dump harness (`cargo test --release dump_ -- --ignored`) that writes raw RGBA
+  for eyeballing, because "does this look like a smear" is not a question a golden can answer.
+  See [HANDOVER.md](HANDOVER.md) for the full measured-vs-assumed split.
 
 ---
 
 ## Themes
 
-Five colourways ship built in, all in the **segmented** family — a smoked-glass panel with
-discrete stacked segments, a faint dormant grid, peak-hold caps and a per-segment halo.
+**32 colourways across 5 families.** A *family* is a renderer with fixed geometry — code. A
+*colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
+
+**Segmented VFD** — a smoked-glass panel with discrete stacked segments, a faint dormant grid,
+peak-hold caps and a per-segment halo.
 
 | Colourway | Character |
 |---|---|
@@ -124,9 +141,50 @@ discrete stacked segments, a faint dormant grid, peak-hold caps and a per-segmen
 | Vac Tube Orange | Warm valve-filament amber, slowest peak fall, filament glow along the bottom |
 | Classic Three-Colour | Green while there is headroom, amber when loud, red at the top |
 
-Two more families are designed and next: an **oscilloscope** (phosphor trace with genuine
-persistence, including the dual-layer P7 whose fading tail is a different colour from its
-trace) and an **analogue VU** (twin backlit needle dials with ~300 ms ballistics).
+**Oscilloscope** — a triggered sweep on a graticule, with genuine phosphor persistence. The
+gain auto-ranges, so the trace uses the full screen at any volume; a scope shows you the
+*shape* of the wave, and the VU family is what shows level.
+
+| Colourway | Character |
+|---|---|
+| P1 green | The reference. Tightest bloom of the set — the others were brought down to match it |
+| P7 dual-layer | Blue-white flash over a slower yellow-green tail, genuinely two buffers |
+| P11 blue-violet | Pale periwinkle, the photographic phosphor |
+| Amber | Warm, slow |
+| White-hot | Neutral, brightest |
+| MW2 trace | The green readout from the 2009 Modern Warfare 2 reveal trailer — acid chartreuse, crisp, the only scope colourway with scanlines |
+| Signal red · Electric azure · Hot magenta | Saturated and punchy, against the five faithful-but-low-key phosphors |
+
+**VU dials** — twin backlit needle dials with a printed arc, a red overload zone and ~300 ms
+ballistics. The needle is dB-mapped across [−45, 0] dBFS, because a VU is a dB instrument.
+
+| Colourway | Character |
+|---|---|
+| Warm cream · Amber · Ice · Green · Red | Vintage panel backlights |
+| Neon cyan · Hot pink · Lime | Near-black panels so the needle has something to contrast against |
+
+**Vaporwave grid** — not an instrument but a scene: a slotted sun over a scrolling perspective
+grid, the terrain displaced by the spectrum, lightning fired by bass transients.
+
+| Colourway | Character |
+|---|---|
+| Sunset | The tuned reference — magenta sun over a violet grid |
+| Miami | Warm orange horizon, cyan grid |
+| Outrun | Deep purple sky, hot pink grid |
+| Toxic | Acid green, and the calm one: lightning disabled |
+| Monochrome | Greyscale, for when the colour is too much |
+
+**Valve row** — a rank of vacuum tubes bolted through a milled chassis, each glowing with its
+band. The heaters never go fully out, because a tube that goes black at silence looks broken
+rather than quiet.
+
+| Colourway | Character |
+|---|---|
+| Soviet lab | Military olive chassis, orange valves — the reference |
+| Grey steel | Cold-war steel with white-hot heaters |
+| Mercury vapour | The blue rectifier look |
+| Bakelite | Domestic radio set — brown, brass, deep amber |
+| Nixie green | Matches the Matrix Green VFD |
 
 ### Adding your own
 
@@ -135,7 +193,7 @@ Drop a `.toml` file (any filename — the `id` inside is what matters) into
 watched, so saving the file updates the live overlay without a restart — edit a colour, hit
 save, and watch the taskbar change.
 
-A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 15
+A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 32
 built-ins, which are always embedded in the exe regardless of whether that folder exists.
 
 Failure modes are all deliberately soft, because these files are hand-authored:
@@ -186,12 +244,17 @@ THE CANVAS - READ THIS BEFORE CHOOSING COLOURS
 
 PICK A FAMILY - a renderer with fixed geometry. You cannot invent one in data.
   segmented  discrete stacked segments on a glass panel, dormant grid, peak-hold caps
-  scope      an oscilloscope trace with a graticule and phosphor persistence
+  scope      a triggered oscilloscope trace with a graticule and phosphor persistence
   vu         two analogue needle dials with a printed arc and a red overload zone
+  vapor      a sunset over a scrolling perspective grid; the grid carries the audio
+  tube       a row of vacuum tubes, each glowing with its band inside the glass
+
+  An unknown family name is NOT an error - it falls back to `segmented` and logs a
+  warning. So a typo does not fail loudly; check the family name spelling.
 
 FILE FORMAT - one `.toml` file per theme, saved under `%APPDATA%\taskbar-eq\themes\`
 (filename does not matter; `id` inside is the identity, and the override key - a file
-whose `id` matches one of the 15 built-ins REPLACES it, any other `id` is added):
+whose `id` matches one of the 32 built-ins REPLACES it, any other `id` is added):
 
   schema = 1
   id     = "my-theme"
@@ -212,6 +275,7 @@ whose `id` matches one of the 15 built-ins REPLACES it, any other `id` is added)
   glow_strength = 0.35
   edge_glow     = 4.0
   fade          = 0.30
+  sensitivity   = 1.0
   texture       = "glass"
 
   [ballistics]
@@ -228,7 +292,51 @@ whose `id` matches one of the 15 built-ins REPLACES it, any other `id` is added)
   # optional, scope family only - see "dual" below
   [dual]
   trail = "#..."
-  fade  = 0.055
+  fade  = 0.20
+
+  # optional, vapor family only. Every key optional; these are the shipped defaults,
+  # which are NOT the browser-tuner values - see "the 60px problem" below.
+  [vaporwave]
+  horizon      = 0.48   # fraction of panel height
+  amp          = 0.55   # terrain displacement scale
+  lines        = 12     # receding horizontal grid lines
+  verts        = 18     # converging verticals
+  scroll       = 1.24
+  persp        = 1.40   # depth-spacing exponent
+  spread       = 1.50   # width spread of the near edge
+  glow         = 0.98   # peak-glow brightness
+  smoothing    = 0.65   # spectral smoothing; higher = rolling hills, not spikes
+  sun          = 0.83
+  slots        = 6      # horizontal gaps cut in the sun
+  slot_bias    = 0.0    # slot widening toward the horizon
+  slot_top     = 0.18
+  halo         = 0.84
+  warmth       = 0.63
+  bolt_sens    = 0.55   # rise in bass needed to fire lightning
+  bolt_bright  = 0.90   # set 0.0 to disable lightning entirely
+  sky_flash    = 0.35
+  grid_flash   = 0.60
+  bolt_decay   = 0.55
+  occlusion    = true
+  crisp        = true
+  sun_rim      = true
+  sky_top      = "#1a0b2e"
+  sky_horizon  = "#ff5f93"
+  ground       = "#12061f"
+  sun_crown    = "#fff6d0"
+  sun_upper    = "#ffd76e"
+  sun_lower    = "#ff9c4a"
+  sun_base     = "#ff5f93"
+
+  # optional, tube family only. A valve is several materials, none of which is a
+  # variation of the accent colour, so they are set independently.
+  [tube]
+  chassis_top    = "#3c4436"
+  chassis_bottom = "#161a12"
+  internals      = "#0b0d08"   # plate metal, silhouetted against the glow - keep it DARK
+  socket         = "#241a10"   # bakelite
+  collar         = "#8a6a2a"   # brass
+  glass          = "#cfe0d8"   # specular highlight
 
 Every field below is optional except `schema`/`id`/`name`/`family` - anything you omit
 takes the documented default, so a minimal file is valid. Unknown keys and unknown
@@ -241,7 +349,7 @@ FIELDS
                 numbers), not silently reinterpreted.
   id            kebab-case, stable, unique. Also the override key - see FILE FORMAT.
   name          shown in a context menu, so keep it short.
-  family        segmented | scope | vu
+  family        segmented | scope | vu | vapor | tube
 
   [colour]
   lit           the main emissive colour
@@ -330,7 +438,7 @@ Requires the [Rust stable MSVC toolchain](https://rustup.rs). No other dependenc
 git clone https://github.com/cwissett-hub/taskbar-eq
 cd taskbar-eq
 cargo build --release        # -> target/release/taskbar-eq.exe
-cargo test                   # 176 tests
+cargo test                   # the full suite
 ```
 
 Building yourself also sidesteps the SmartScreen prompt entirely.
