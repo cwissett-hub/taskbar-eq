@@ -1,4 +1,4 @@
-use super::{Texture, Theme, TubeParams, VaporParams, Zone};
+use super::{ChromaParams, PantoneParams, Texture, Theme, TubeParams, VaporParams, Zone};
 use crate::dsp::ballistics::Ballistics;
 use serde::Deserialize;
 use std::fmt;
@@ -70,6 +70,10 @@ struct RawLook {
     /// is an RMS of 0.02-0.12), which is why the VU needle and the scope trace both
     /// barely moved before this existed.
     sensitivity: Option<f32>,
+    inks: Option<u32>,
+    ink_chroma: Option<f32>,
+    aberration: Option<f32>,
+    contrast_floor: Option<f32>,
     rainbow: Option<f32>,
     rainbow_spread: Option<f32>,
 }
@@ -179,6 +183,68 @@ fn tube_from(raw: Option<RawTube>, d: TubeParams) -> TubeParams {
     }
 }
 
+/// The `[pantone]` table. Structure weights for the Pantone family; all optional.
+#[derive(Deserialize, Default)]
+struct RawPantone {
+    barcode: Option<f32>,
+    halftone: Option<f32>,
+    glitch: Option<f32>,
+    split: Option<bool>,
+}
+
+fn pantone_from(raw: Option<RawPantone>, d: PantoneParams) -> PantoneParams {
+    let Some(r) = raw else { return d };
+    PantoneParams {
+        barcode: r.barcode.unwrap_or(d.barcode),
+        halftone: r.halftone.unwrap_or(d.halftone),
+        glitch: r.glitch.unwrap_or(d.glitch),
+        split: r.split.unwrap_or(d.split),
+    }
+}
+
+/// The `[chroma]` table. Print parameters for the chroma-field family; all optional.
+#[derive(Deserialize, Default)]
+struct RawChroma {
+    stripe_px: Option<f32>,
+    swell: Option<f32>,
+    sat: Option<f32>,
+    hue_span: Option<f32>,
+    hue_offset: Option<f32>,
+    inks: Option<Vec<String>>,
+    scramble: Option<bool>,
+    accent: Option<bool>,
+    shift_r: Option<i32>,
+    shift_b: Option<i32>,
+    halftone: Option<f32>,
+    halftone_pitch: Option<i32>,
+    halftone_strength: Option<f32>,
+    ink: Option<String>,
+    glitch_sens: Option<f32>,
+    glitch_px: Option<i32>,
+}
+
+fn chroma_from(raw: Option<RawChroma>, d: ChromaParams) -> ChromaParams {
+    let Some(r) = raw else { return d };
+    ChromaParams {
+        stripe_px: r.stripe_px.unwrap_or(d.stripe_px),
+        swell: r.swell.unwrap_or(d.swell),
+        sat: r.sat.unwrap_or(d.sat),
+        hue_span: r.hue_span.unwrap_or(d.hue_span),
+        hue_offset: r.hue_offset.unwrap_or(d.hue_offset),
+        inks: r.inks.unwrap_or(d.inks),
+        scramble: r.scramble.unwrap_or(d.scramble),
+        accent: r.accent.unwrap_or(d.accent),
+        shift_r: r.shift_r.unwrap_or(d.shift_r),
+        shift_b: r.shift_b.unwrap_or(d.shift_b),
+        halftone: r.halftone.unwrap_or(d.halftone),
+        halftone_pitch: r.halftone_pitch.unwrap_or(d.halftone_pitch),
+        halftone_strength: r.halftone_strength.unwrap_or(d.halftone_strength),
+        ink: r.ink.unwrap_or(d.ink),
+        glitch_sens: r.glitch_sens.unwrap_or(d.glitch_sens),
+        glitch_px: r.glitch_px.unwrap_or(d.glitch_px),
+    }
+}
+
 #[derive(Deserialize, Default)]
 struct RawDual {
     trail: Option<String>,
@@ -203,6 +269,8 @@ struct RawTheme {
     dual: Option<RawDual>,
     vaporwave: Option<RawVapor>,
     tube: Option<RawTube>,
+    chroma: Option<RawChroma>,
+    pantone: Option<RawPantone>,
     #[serde(default)]
     zone: Vec<RawZone>,
 }
@@ -269,6 +337,10 @@ pub fn parse(src: &str) -> Result<Theme, ThemeError> {
         glow_strength: raw.look.glow_strength.unwrap_or(d.glow_strength),
         edge_glow: raw.look.edge_glow.unwrap_or(d.edge_glow),
         sensitivity: raw.look.sensitivity.unwrap_or(d.sensitivity),
+        inks: raw.look.inks.unwrap_or(d.inks),
+        ink_chroma: raw.look.ink_chroma.unwrap_or(d.ink_chroma),
+        aberration: raw.look.aberration.unwrap_or(d.aberration),
+        contrast_floor: raw.look.contrast_floor.unwrap_or(d.contrast_floor),
         rainbow: raw.look.rainbow.unwrap_or(d.rainbow),
         rainbow_spread: raw.look.rainbow_spread.unwrap_or(d.rainbow_spread),
         fade: raw.look.fade.unwrap_or(d.fade),
@@ -288,6 +360,8 @@ pub fn parse(src: &str) -> Result<Theme, ThemeError> {
         }),
         vapor: vapor_from(raw.vaporwave, d.vapor),
         tube: tube_from(raw.tube, d.tube),
+        chroma: chroma_from(raw.chroma, d.chroma),
+        pantone: pantone_from(raw.pantone, d.pantone),
     })
 }
 

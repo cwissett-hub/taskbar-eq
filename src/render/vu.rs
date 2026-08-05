@@ -317,6 +317,15 @@ impl Family for Vu {
         // after their own bloom step.
         c.clip_to_rounded_rect(1, 2, w - 2, h - 4, 4);
 
+        // RGB misregistration, for a Pantone colourway; 0 on every other one. Last, after the clip:
+        // `chromatic_aberration` leaves alpha untouched, so it cannot reintroduce the containment
+        // problem the clip above exists to fix, and the plates need the opaque panel underneath
+        // them to fringe against. The needle and arcs are 1px, which is where a mis-set plate is
+        // most visible - a hairline splits into a red one and a blue one.
+        if t.aberration.is_finite() && t.aberration != 0.0 {
+            c.chromatic_aberration(t.aberration.round() as i32);
+        }
+
         let e = Rgba::from_hex(&t.edge, t.edge_alpha);
         c.fill_rect(1, 2, w - 2, 1, e);
         c.fill_rect(1, h - 3, w - 2, 1, e);

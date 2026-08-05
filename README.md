@@ -81,7 +81,7 @@ overlay does not exist, so the tray icon is all that is left to click.
 **Last updated: 2026-08-05.** Full test suite green (199 at the time of writing), release
 build warning-free. The colourway and family counts below are asserted by a test; the test
 count itself is a snapshot and can drift.
-**69 colourways across 10 families.**
+**82 colourways across 12 families.**
 
 | | Feature | State |
 |---|---|---|
@@ -148,6 +148,26 @@ energy is as it passes each bearing, so the display builds a whole picture over 
 |---|---|
 | P1 green · Amber · Ice blue · Red alert · Monochrome | |
 
+**Pantone** — Felipe Pantone's surface language on a bar meter: a full-spectrum chromatic gradient,
+RGB channel misregistration, halftone screens and barcode bands. Its answer to the contrast problem
+is the interesting part — see RGB wave below.
+
+| Colourway | Character |
+|---|---|
+| Spectrum · Process (CMYK) · Barcode · Misregister · Halftone | Each leans on a different element of his vocabulary |
+
+**Chroma field** — Pantone's *geometry*, not just his surface. Hard-edged vertical stripes filling the
+whole panel in spectrum order, where each stripe's **width** is its band and the widths are
+**zero-sum**: they always add up to exactly the panel interior, so a swelling stripe necessarily
+pinches its neighbours. That constraint is the design — something is always moving, because the widths
+must always sum. Integerised by largest-remainder (Hare quota), so exactness is by construction rather
+than by rounding luck. 10 stripes at 190 px, 20 at 380 px. Black keylines, misregistration, a halftone
+screen, and a glitch slice on bass transients.
+
+| Colourway | Character |
+|---|---|
+| Spectrum · CMYK · Barcode · Misregistration · Halftone | Barcode withholds chroma almost entirely, as his stripe works do |
+
 ### RGB wave
 
 Three colourways — one each on the **Segmented VFD**, **Oscilloscope** and **VU dials** — are the
@@ -162,6 +182,14 @@ two numbers in `[look]` instead:
 |---|---|
 | `rainbow` | hue cycles per second. `0` disables it and the fixed `lit`/`hot` are used |
 | `rainbow_spread` | hue turns spanned across the width. `0` = whole display shifts together ("spectrum cycle"); `~0.85` = a wave |
+
+**Full chroma cannot clear 3:1 at every hue against any flat panel** — that is arithmetic, not
+tuning. A dark panel fails on blue (2.32:1); a light panel fails on yellow (1.00:1); mid grey fails
+both ways. Two honest resolutions ship: the **Chroma field** family delineates every stripe with a
+black keyline, so legibility comes from the keyline rather than hue-vs-panel contrast, and declares a
+measured `contrast_floor` of 2.30 which a test requires to be *tight*; the **Pantone** family instead
+quantises the palette to a few `inks`, because the ceiling only binds on a continuous wheel — with
+four process inks the dark hues that force it are simply not in the palette.
 
 **The rainbow cannot be fully saturated.** Every lit colour here must clear 3:1 contrast against its
 own panel, and swept across all 360 hues against a near-black panel, fully saturated blue reaches
@@ -263,7 +291,7 @@ The app also writes that log on every normal launch, so a failure can be reporte
 
 ## Themes
 
-**69 colourways across 10 families.** A *family* is a renderer with fixed geometry — code. A
+**82 colourways across 12 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
 **Segmented VFD** — a smoked-glass panel with discrete stacked segments, a faint dormant grid,
@@ -345,7 +373,7 @@ Drop a `.toml` file (any filename — the `id` inside is what matters) into
 watched, so saving the file updates the live overlay without a restart — edit a colour, hit
 save, and watch the taskbar change.
 
-A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 69
+A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 82
 built-ins, which are always embedded in the exe regardless of whether that folder exists.
 
 Failure modes are all deliberately soft, because these files are hand-authored:
@@ -406,7 +434,7 @@ PICK A FAMILY - a renderer with fixed geometry. You cannot invent one in data.
 
 FILE FORMAT - one `.toml` file per theme, saved under `%APPDATA%\taskbar-eq\themes\`
 (filename does not matter; `id` inside is the identity, and the override key - a file
-whose `id` matches one of the 69 built-ins REPLACES it, any other `id` is added):
+whose `id` matches one of the 82 built-ins REPLACES it, any other `id` is added):
 
   schema = 1
   id     = "my-theme"

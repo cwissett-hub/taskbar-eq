@@ -709,6 +709,76 @@ impl Canvas {
         }
     }
 
+
+    /// Offsets the RED and BLUE channels horizontally in opposite directions, leaving green -
+    /// and alpha - exactly where they were. The mis-registered colour plates of a badly printed
+    /// page, or a display with a failing cable.
+    ///
+    /// `shift` is in pixels: red moves `shift` to the RIGHT and blue `shift` to the LEFT, so the
+    /// total separation between the two fringes is `2 * shift`. A negative value swaps which side
+    /// each plate lands on. A flat field is unchanged; the effect exists only at EDGES, which is
+    /// what makes it read as misregistration rather than as a tint.
+    ///
+    /// Three properties, each of which guards a rule this project has already broken once:
+    ///
+    /// - **Resampled in STRAIGHT colour, never premultiplied.** `bloom` once scaled premultiplied
+    ///   channels independently of alpha and produced opaque-DARK pixels, because for any real
+    ///   pixel alpha is the largest channel and saturates first. Moving a premultiplied `r` from a
+    ///   bright neighbour into a fainter pixel is the same class of bug and breaks `r <= a`
+    ///   outright. So each pixel is unpacked to straight colour, takes its r/b from the
+    ///   neighbours' STRAIGHT colour, and is repacked - `pack` re-premultiplies, so the invariant
+    ///   holds by construction instead of by clamping. (The unpack/repack round trip is exact at
+    ///   alpha 255 and can move a channel by one at partial alpha, which is why this belongs at
+    ///   the end of a frame rather than inside an accumulating loop.)
+    /// - **Alpha never moves.** Every destination keeps its own alpha bit-for-bit. So this cannot
+    ///   punch a hole in an opaque panel - the overlay is composited with per-pixel alpha over the
+    ///   Windows weather widget, so a pixel below 255 inside the panel is a hole the forecast
+    ///   shows through - and it cannot make an off-panel pixel visible either. That is what makes
+    ///   it safe as the LAST step of a family, AFTER `clip_to_rounded_rect`, which is also the
+    ///   only place it does anything: on a transparent ink layer there is nothing either side of a
+    ///   mark for the plates to fringe against, so the effect needs the opaque panel already
+    ///   underneath it.
+    /// - **A fully transparent source contributes nothing.** `unpack` returns black at alpha 0, so
+    ///   sampling from outside the panel would import "colour" that is really just absence and lay
+    ///   a dark cyan and a dark red band down the panel's own left and right edges - `shift`
+    ///   columns of fringe belonging to no mark at all. Those pixels keep their own channel.
+    pub fn chromatic_aberration(&mut self, shift: i32) {
+        let (w, h) = (self.w, self.h);
+        if shift == 0 || w <= 0 || h <= 0 {
+            return;
+        }
+        // Bounded before it reaches any address arithmetic: `x + shift` at an i32::MAX shift
+        // overflows, which panics in debug and wraps in release. Anything beyond the canvas width
+        // samples nothing anyway, so clamping cannot change the result.
+        let shift = shift.clamp(-w, w);
+        let src = self.px.clone();
+        for y in 0..h {
+            let row = y * w;
+            for x in 0..w {
+                let i = (row + x) as usize;
+                let here = src[i];
+                if here >> 24 == 0 {
+                    continue; // transparent stays transparent
+                }
+                let own = Self::unpack(here);
+                let plate = |sx: i32| -> Option<Rgba> {
+                    if sx < 0 || sx >= w {
+                        return None;
+                    }
+                    let p = src[(row + sx) as usize];
+                    if p >> 24 == 0 {
+                        None
+                    } else {
+                        Some(Self::unpack(p))
+                    }
+                };
+                let r = plate(x + shift).map(|c| c.r).unwrap_or(own.r);
+                let b = plate(x - shift).map(|c| c.b).unwrap_or(own.b);
+                self.px[i] = Self::pack(Rgba::new(r, own.g, b, own.a));
+            }
+        }
+    }
+
     /// Gradient over an ELLIPSE, so the vertical and horizontal extents can differ.
     ///
     /// A strict generalisation of `radial_gradient`: with `rx == ry` it produces byte-identical
@@ -982,6 +1052,127 @@ mod tests {
         c.fill_rect(0, 0, 10, 10, Rgba::new(255, 255, 255, 255));
         c.clip_to_rounded_rect(0, 0, -4, 190, 5);
         assert!(c.bits().iter().all(|&p| p == 0), "degenerate rect clips everything");
+    }
+
+    #[test]
+    fn chromatic_aberration_moves_red_right_and_blue_left_with_green_staying_put() {
+        let mut c = bar_on_panel();
+        c.chromatic_aberration(2);
+        // Two columns LEFT of the bar now carries the red plate on its own: red was pulled in
+        // from x+2 (inside the bar) while green and blue are still the panel's.
+        assert_eq!(c.get(7, 2), Rgba::new(255, 7, 10, 255), "a lone red plate 2px left of the bar");
+        // ...and two columns RIGHT carries the blue plate on its own.
+        assert_eq!(c.get(13, 2), Rgba::new(7, 7, 255, 255), "a lone blue plate 2px right of the bar");
+        // Green is the reference plate: the bar's own extent in green must not have moved at all,
+        // which is what stops this reading as a plain sideways smear.
+        for x in 9..12 {
+            assert_eq!(c.get(x, 2).g, 255, "green must stay registered at x={x}");
+        }
+        assert_eq!(c.get(8, 2).g, 7, "and must not spread left");
+        assert_eq!(c.get(12, 2).g, 7, "or right");
+        // The bar's own edges therefore go yellow (red present, blue gone) and cyan (the
+        // reverse) - the actual misprint signature, not just a coloured halo.
+        assert_eq!(c.get(9, 2), Rgba::new(255, 255, 10, 255), "left edge of the bar goes yellow");
+        assert_eq!(c.get(11, 2), Rgba::new(7, 255, 255, 255), "right edge goes cyan");
+    }
+
+    #[test]
+    fn chromatic_aberration_never_changes_alpha_anywhere() {
+        // The rule this is most likely to break: the overlay is composited with per-pixel alpha
+        // over the Windows weather widget, so any pixel it drops below 255 inside the panel is a
+        // hole the forecast shows through. Mixed alpha on purpose - fully transparent margins, a
+        // translucent wash, and opaque marks.
+        for shift in [-5i32, -1, 1, 2, 3, 9, 400] {
+            let mut c = Canvas::new(24, 6);
+            c.fill_rect(2, 1, 20, 4, Rgba::new(7, 7, 10, 255));
+            c.fill_rect(4, 1, 3, 4, Rgba::new(255, 40, 200, 255));
+            c.fill_rect(14, 2, 4, 2, Rgba::new(0, 255, 255, 90));
+            let before: Vec<u32> = c.bits().iter().map(|p| p >> 24).collect();
+            c.chromatic_aberration(shift);
+            let after: Vec<u32> = c.bits().iter().map(|p| p >> 24).collect();
+            assert_eq!(before, after, "shift {shift} altered alpha somewhere");
+        }
+    }
+
+    #[test]
+    fn chromatic_aberration_never_breaks_the_premultiplied_invariant() {
+        // The failure mode being avoided is exactly `bloom`'s: move a premultiplied channel from a
+        // bright neighbour into a fainter pixel and r > a, which renders as an opaque dark blot.
+        for shift in [-7i32, -2, 1, 4, 11] {
+            let mut c = Canvas::new(20, 6);
+            c.fill_rect(0, 0, 20, 6, Rgba::new(255, 255, 255, 12));
+            c.fill_rect(5, 1, 3, 4, Rgba::new(255, 10, 200, 255));
+            c.fill_rect(9, 1, 3, 4, Rgba::new(0, 0, 0, 40));
+            c.chromatic_aberration(shift);
+            assert_invariant(&c, &format!("chromatic_aberration({shift})"));
+        }
+    }
+
+    #[test]
+    fn chromatic_aberration_does_not_import_colour_from_a_transparent_neighbour() {
+        // `unpack` returns BLACK for alpha 0, so naively sampling off the panel would lay a dark
+        // band down the panel's own edges - `shift` columns of fringe that belong to no mark.
+        let mut c = Canvas::new(8, 1);
+        c.fill_rect(3, 0, 5, 1, Rgba::new(255, 255, 255, 255));
+        c.chromatic_aberration(2);
+        assert_eq!(
+            c.get(3, 0),
+            Rgba::new(255, 255, 255, 255),
+            "the leftmost opaque pixel must keep its own blue rather than sampling the void"
+        );
+        assert_eq!(c.get(2, 0), Rgba::TRANSPARENT, "and the void itself stays transparent");
+        // The right-hand plate does still fall off the canvas edge, and that is the same case:
+        // keep your own channel rather than going dark.
+        assert_eq!(c.get(7, 0), Rgba::new(255, 255, 255, 255), "nor off the canvas edge");
+    }
+
+    #[test]
+    fn chromatic_aberration_is_a_no_op_at_zero_and_survives_degenerate_canvases() {
+        let mut c = bar_on_panel();
+        let before = c.bits().to_vec();
+        c.chromatic_aberration(0);
+        assert_eq!(c.bits(), &before[..], "shift 0 must not touch a pixel");
+
+        // A shift far wider than the canvas: every sample is off-canvas, so every pixel keeps its
+        // own colour. Must not panic on the `x + shift` arithmetic.
+        let mut wide = bar_on_panel();
+        wide.chromatic_aberration(i32::MAX);
+        assert_eq!(wide.bits(), &before[..], "an enormous shift samples nothing");
+        let mut neg = bar_on_panel();
+        neg.chromatic_aberration(i32::MIN);
+        assert_eq!(neg.bits(), &before[..], "and neither does an enormous negative one");
+
+        for (w, h) in [(1, 1), (0, 0), (1, 60), (190, 1)] {
+            let mut tiny = Canvas::new(w, h);
+            tiny.fill_rect(0, 0, w, h, Rgba::new(255, 255, 255, 255));
+            tiny.chromatic_aberration(3);
+            assert_eq!(tiny.bits().len(), (w.max(0) * h.max(0)) as usize, "{w}x{h} changed size");
+        }
+    }
+
+    #[test]
+    fn chromatic_aberration_does_not_leak_across_rows() {
+        // Both plates are sampled from the SAME row. A row-crossing index bug would show up as
+        // colour bleeding vertically, which at 60px tall reads as a smear rather than a misprint.
+        let mut c = Canvas::new(9, 3);
+        c.fill_rect(0, 0, 9, 3, Rgba::new(7, 7, 10, 255));
+        c.fill_rect(4, 1, 1, 1, Rgba::new(255, 255, 255, 255));
+        c.chromatic_aberration(2);
+        for x in 0..9 {
+            assert_eq!(c.get(x, 0), Rgba::new(7, 7, 10, 255), "row 0 must be untouched at x={x}");
+            assert_eq!(c.get(x, 2), Rgba::new(7, 7, 10, 255), "row 2 must be untouched at x={x}");
+        }
+        assert_eq!(c.get(2, 1).r, 255, "the red plate landed in the mark's own row");
+    }
+
+
+    /// An opaque dark field with a 3px white bar in the middle of it, which is the shape the
+    /// effect is actually applied to: marks on an already-opaque panel.
+    fn bar_on_panel() -> Canvas {
+        let mut c = Canvas::new(21, 5);
+        c.fill_rect(0, 0, 21, 5, Rgba::new(7, 7, 10, 255));
+        c.fill_rect(9, 0, 3, 5, Rgba::new(255, 255, 255, 255));
+        c
     }
 
     #[test]

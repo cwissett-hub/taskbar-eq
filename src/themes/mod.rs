@@ -50,6 +50,8 @@ pub fn family_label(family: &str) -> String {
         "reel" => "Reel-to-reel".into(),
         "patchbay" => "Patchbay".into(),
         "radar" => "Radar".into(),
+        "pantone" => "Pantone".into(),
+        "chroma" => "Chroma field".into(),
         other => {
             let mut c = other.chars();
             match c.next() {
@@ -275,6 +277,118 @@ pub fn rainbow_hsv(t: &Theme, x01: f32, time_s: f32, hot: bool) -> Option<(f32, 
     }
 }
 
+/// Structure parameters for the Pantone family; inert for the other families.
+///
+/// Separate from `lit`/`hot`/`panel` because none of these are colours: they are how much of the
+/// panel each of Pantone's recognisable devices gets. The five shipped colourways differ mostly by
+/// these four numbers rather than by hue, which is deliberate - the identity of that look is the
+/// STRUCTURE (misregistration, halftone, barcode, glitch), not the palette.
+#[derive(Debug, Clone)]
+pub struct PantoneParams {
+    /// Height of the barcode stripe band, as a fraction of the panel interior. 0 removes it.
+    pub barcode: f32,
+    /// Halftone dot-field strength, 0..1. Above ~0.5 the dots also screen the lit bars, not just
+    /// the dormant part of the field.
+    pub halftone: f32,
+    /// Peak sideways displacement of the glitch slice, in PIXELS at full drive. 0 removes it.
+    pub glitch: f32,
+    /// The hard diagonal splitting solid ink from screened ink across the bar field.
+    pub split: bool,
+}
+
+impl Default for PantoneParams {
+    fn default() -> Self {
+        PantoneParams { barcode: 0.16, halftone: 0.55, glitch: 4.0, split: true }
+    }
+}
+
+/// Print parameters for the chroma-field family.
+///
+/// Separate from the `lit`/`hot`/`panel` trio for the same reason `TubeParams` is: this family
+/// is not one accent colour on a panel, it is a printed surface, and the surface has parts -
+/// a stripe palette, a key plate, a channel misregistration and a halftone screen - that are
+/// not variations of each other.
+///
+/// These names are a published schema the moment a theme file sets one, so they must not be
+/// renamed without bumping `schema`.
+#[derive(Debug, Clone)]
+pub struct ChromaParams {
+    /// Target stripe pitch in pixels; the stripe COUNT is derived from it so a wider panel
+    /// gets more stripes rather than fatter ones. See `render::chroma::stripe_count` for why
+    /// 18 is the measured choice at the 190px reference.
+    pub stripe_px: f32,
+    /// Extra weight a fully driven stripe carries over an idle one, so the width ratio
+    /// between them is `1 + swell`.
+    ///
+    /// Measured at 4.0, ten stripes, 186px of interior, against an 18.6px rest width: a
+    /// shaped spectrum gives 13..25px, alternating loud and quiet groups gives 7..30px, and a
+    /// single group driven alone against silence reaches 14..59px. Lower values compress that
+    /// - at 1.24 the single-driven case only reaches 37px and the realistic case collapses to
+    /// 12..25px, which is a field that moves without the pinch reading as a pinch.
+    pub swell: f32,
+    /// Stripe saturation. 1.0 - full chroma - is the point of the family; the keylines are
+    /// what keep that legible. See `contrast_floor`.
+    pub sat: f32,
+    /// Hue turns spanned left to right across the field, and the hue the left edge starts at.
+    /// 0.85 from 0.0 runs red through to violet without wrapping back to red.
+    pub hue_span: f32,
+    pub hue_offset: f32,
+    /// A fixed process palette. Empty means the spectrum hue ramp; a list replaces it, which
+    /// is how the CMYK and barcode colourways restrict themselves to real plate colours.
+    pub inks: Vec<String>,
+    /// Pick each stripe's ink by hash rather than in order. A print's plates cycle; a
+    /// barcode's runs do not, and a cycling palette against varying widths reads as a
+    /// repeating pattern rather than as a barcode.
+    pub scramble: bool,
+    /// Draw the loudest stripe in full chroma even when `inks` would have made it grey.
+    /// This is how a colourway can withhold chroma almost entirely and still say WHERE the
+    /// energy is.
+    pub accent: bool,
+    /// Horizontal displacement of the red and blue planes from green, in pixels. Opposite
+    /// signs give the classic mis-printed page, with a warm fringe on one side of a keyline
+    /// and a cool one on the other.
+    pub shift_r: i32,
+    pub shift_b: i32,
+    /// Fraction of the field height the halftone screen covers, anchored at the bottom.
+    pub halftone: f32,
+    /// Lattice pitch of the halftone dots, in pixels.
+    pub halftone_pitch: i32,
+    /// Ink strength of the halftone at the deepest end of its ramp.
+    pub halftone_strength: f32,
+    /// The key plate: keylines and halftone dots. Black in the reference work, and the
+    /// keyline is load-bearing rather than decorative - see `contrast_floor`.
+    pub ink: String,
+    /// Bass rise needed to fire the glitch, 1.0 being the most sensitive. 0.0 disables it.
+    pub glitch_sens: f32,
+    /// How far the glitched slice is displaced, in pixels.
+    pub glitch_px: i32,
+}
+
+impl Default for ChromaParams {
+    fn default() -> Self {
+        ChromaParams {
+            stripe_px: 18.0,
+            swell: 4.0,
+            sat: 1.0,
+            hue_span: 0.85,
+            hue_offset: 0.0,
+            inks: Vec::new(),
+            scramble: false,
+            accent: false,
+            // Opposite directions at 2px: 1px is present but reads as anti-aliasing at this
+            // size, and beyond 3px on an 18px stripe the fringe starts to outweigh the core.
+            shift_r: 2,
+            shift_b: -2,
+            halftone: 0.45,
+            halftone_pitch: 3,
+            halftone_strength: 0.85,
+            ink: "#000000".into(),
+            glitch_sens: 0.55,
+            glitch_px: 9,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Zone {
     pub upto: f32,
@@ -321,6 +435,52 @@ pub struct Theme {
     /// across the display, so it is the one visual property that has to be computed rather than
     /// declared. This is still data - a colourway turns it on - but the colour itself comes from
     /// `Theme::rainbow_at`.
+    /// Pixels the red plate is offset (blue goes the other way), i.e. RGB misregistration.
+    ///
+    /// The single most identifiable element of the Pantone look and what separates it from a
+    /// generic rainbow, so it is a shared `[look]` field rather than a family-private one: the
+    /// segmented VFD, the oscilloscope and the VU dials all apply it as their last step. 0 is off,
+    /// which is what every pre-existing colourway keeps.
+    /// Pantone-only structure parameters; inert for the other families.
+    pub pantone: PantoneParams,
+    /// Chroma-field-only print parameters; inert for the other families.
+    pub chroma: ChromaParams,
+    /// Hue quantisation: 0 for a continuous wheel, N for N evenly spaced ink plates. See
+    /// `quantise_hue`.
+    pub inks: u32,
+    /// Saturation the computed rainbow colour runs at. Defaults to `RAINBOW_SAT`.
+    ///
+    /// Exists because that 0.68 ceiling is only binding on a CONTINUOUS hue wheel: raise `inks` and
+    /// the dark hues that force it are simply not in the palette any more, so full chroma becomes
+    /// legal. That is the honest resolution of "Pantone wants maximum chroma but every lit colour
+    /// must clear 3:1" - a print process has a handful of inks, not a wheel.
+    ///
+    /// Raising this on a CONTINUOUS colourway will fail
+    /// `every_hue_of_a_rainbow_colourway_clears_three_to_one_against_its_panel`, which is the
+    /// intended outcome - see RAINBOW_SAT for the measurements.
+    ///
+    /// Named `ink_chroma` rather than `chroma`: two families built in parallel both chose a Theme
+    /// field called `chroma` for different things, and a bare one beside `chroma: ChromaParams`
+    /// would be a trap for the next reader.
+    pub ink_chroma: f32,
+    pub aberration: f32,
+    /// Minimum contrast ratio this colourway's lit colours must clear against its own panel.
+    ///
+    /// 3.0 is the project rule and the default, so no existing colourway changes. It is a
+    /// per-colourway field rather than a constant because ONE family cannot meet it honestly:
+    /// the chroma field runs at maximum chroma by design, and a full-chroma rainbow provably
+    /// cannot clear 3:1 at every hue against any flat panel - measured, pure blue reaches only
+    /// 2.36:1 on a near-black panel, and on a light panel yellow drops to 1.00:1. That family
+    /// carries its legibility in 1px black keylines around every stripe instead, so its
+    /// colourways declare the floor they actually measure at.
+    ///
+    /// Lowering this is therefore an explicit, recorded decision per colourway, not a way out
+    /// of the rule: `builtin::tests::only_the_recorded_colourways_lower_the_contrast_floor`
+    /// names the ones allowed to, and
+    /// `render::chroma::tests::every_stripe_colour_clears_its_own_colourways_declared_contrast_floor`
+    /// additionally requires the declared value to be TIGHT against what is measured - so a
+    /// deliberate 2.3:1 passes and is recorded while an accidental 1.2:1 still fails.
+    pub contrast_floor: f32,
     pub rainbow: f32,
     /// Hue turns spanned across the width of the display, so the rainbow is a WAVE and not one
     /// flat colour shifting.
@@ -371,6 +531,12 @@ impl Default for Theme {
             // than the panel it sat on. 4.0 puts it ~60 luminance above.
             edge_glow: 4.0,
             sensitivity: 1.0,
+            pantone: PantoneParams::default(),
+            chroma: ChromaParams::default(),
+inks: 0,
+            ink_chroma: RAINBOW_SAT,
+            aberration: 0.0,
+            contrast_floor: 3.0,
             rainbow: 0.0,
             rainbow_spread: 0.8,
             vapor: VaporParams::default(),

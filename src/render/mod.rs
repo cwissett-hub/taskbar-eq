@@ -3,6 +3,8 @@ pub mod golden;
 pub mod scope;
 pub mod nixie;
 pub mod patchbay;
+pub mod chroma;
+pub mod pantone;
 pub mod radar;
 pub mod reel;
 pub mod tube;
@@ -100,8 +102,8 @@ pub fn tint(
 /// `segmented` for anything unrecognised, so a theme carrying a typo'd or unimplemented
 /// family name would silently render as the wrong meter instead of failing. This list is
 /// what lets that be asserted, and adding a family is a one-line change in one place.
-pub const KNOWN_FAMILIES: [&str; 10] = [
-    "segmented", "scope", "vu", "vapor", "tube", "nixie", "waterfall", "reel", "patchbay", "radar",
+pub const KNOWN_FAMILIES: [&str; 12] = [
+    "segmented", "scope", "vu", "vapor", "tube", "nixie", "waterfall", "reel", "patchbay", "radar", "pantone", "chroma",
 ];
 
 pub fn family_for(id: &str) -> Box<dyn Family> {
@@ -124,6 +126,8 @@ pub fn family_for(id: &str) -> Box<dyn Family> {
         "reel" => Box::new(reel::Reel::default()),
         "patchbay" => Box::new(patchbay::Patchbay::default()),
         "radar" => Box::new(radar::Radar::default()),
+        "pantone" => Box::new(pantone::Pantone::default()),
+        "chroma" => Box::new(chroma::Chroma::default()),
         "vu" => Box::new(vu::Vu::default()),
         _ => Box::new(segmented::Segmented),
     }
@@ -432,5 +436,59 @@ mod newfam_dump {
             n += 1;
         }
         println!("wrote {n} new-family dumps");
+    }
+}
+
+#[cfg(test)]
+mod newest_dump {
+    use super::*;
+    use crate::themes::builtin;
+    /// Run: cargo test --release dump_newest -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn dump_newest() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
+        std::fs::create_dir_all(&dir).unwrap();
+        let want = [
+            "radar-p1", "pantone-spectrum", "pantone-misregister", "pantone-barcode",
+            "chroma-spectrum", "chroma-barcode", "chroma-misreg", "vfd-pantone",
+        ];
+        let mut n = 0;
+        for id in want {
+            let Some(theme) = builtin::all().into_iter().find(|t| t.id == id) else { continue };
+            let mut f = family_for(&theme.family);
+            let mut c = Canvas::new(190, 60);
+            for k in 0..220 {
+                let mut d = FrameData::default();
+                let t = k as f32 / 220.0;
+                for (i, v) in d.levels.iter_mut().enumerate() {
+                    let x = i as f32 / 63.0;
+                    *v = (0.18 + 0.5 * ((x * 6.0 + t * 11.0).sin().abs())) * (1.0 - x * 0.3);
+                }
+                d.peaks = d.levels;
+                d.rms_l = 0.24;
+                d.rms_r = 0.19;
+                for (i, v) in d.waveform.iter_mut().enumerate() {
+                    *v = 0.4 * ((i as f32 / 24.0).sin());
+                }
+                d.dt_ms = 16.7;
+                d.time_s = k as f32 * 0.0167;
+                f.draw(&mut c, &theme, &d);
+            }
+            let mut out = Vec::new();
+            for y in 0..60 {
+                for x in 0..190 {
+                    let px = c.get(x, y);
+                    let a = px.a as f32 / 255.0;
+                    for ch in [px.r, px.g, px.b] {
+                        out.push((ch as f32 + 22.0 * (1.0 - a)).min(255.0) as u8);
+                    }
+                    out.push(255);
+                }
+            }
+            std::fs::write(dir.join(format!("new2-{id}.rgba")), &out).unwrap();
+            n += 1;
+        }
+        println!("wrote {n} dumps");
     }
 }

@@ -332,6 +332,16 @@ impl Family for Scope {
         // below, mirroring segmented.rs's fix.
         c.clip_to_rounded_rect(1, 2, w - 2, h - 4, 4);
 
+        // RGB misregistration, for a Pantone colourway; 0 on every other one. Applied to the
+        // composited frame rather than to the persisted trace buffer, and that distinction matters
+        // here more than in the other families: the buffer is re-read and decayed every frame, so
+        // shifting its channels in place would drag the plates a further `aberration` pixels apart
+        // on every frame until the trace was three separate coloured traces. See the same class of
+        // compounding bug in `stroke_into`'s note about blooming the persisted buffer.
+        if t.aberration.is_finite() && t.aberration != 0.0 {
+            c.chromatic_aberration(t.aberration.round() as i32);
+        }
+
         let e = Rgba::from_hex(&t.edge, t.edge_alpha);
         c.fill_rect(1, 2, w - 2, 1, e);
         c.fill_rect(1, h - 3, w - 2, 1, e);

@@ -278,6 +278,18 @@ impl Family for Segmented {
         }
 
         // 12. bezel
+        // 13. RGB misregistration, for a Pantone colourway. Off (aberration 0) for every other one,
+        // and then this is a plain early return.
+        //
+        // LAST, and after the clip at step 7, on purpose. `chromatic_aberration` never touches
+        // alpha, so it can neither punch a hole in the panel nor make an off-panel pixel visible -
+        // and this is also the only point at which it does anything, because the plates need an
+        // opaque neighbour to fringe against. Run on the glow layer instead and there would be
+        // nothing either side of a lit segment but transparency.
+        if t.aberration.is_finite() && t.aberration != 0.0 {
+            c.chromatic_aberration(t.aberration.round() as i32);
+        }
+
         let e = Rgba::from_hex(&t.edge, t.edge_alpha);
         c.fill_rect(1, 2, w - 2, 1, e);
         c.fill_rect(1, h - 3, w - 2, 1, e);
