@@ -81,7 +81,7 @@ overlay does not exist, so the tray icon is all that is left to click.
 **Last updated: 2026-08-05.** Full test suite green (199 at the time of writing), release
 build warning-free. The colourway and family counts below are asserted by a test; the test
 count itself is a snapshot and can drift.
-**74 colourways across 11 families.**
+**69 colourways across 10 families.**
 
 | | Feature | State |
 |---|---|---|
@@ -135,10 +135,6 @@ brightness track a band group, and LEDs that blink on bass transients.
 | Colourway | Character |
 |---|---|
 | Classic · Cream · All-black · Rainbow cables · Neon UV | |
-
-**LED ladder** — the hi-fi amplifier front panel: chunky discrete LEDs with *visible unlit housings*,
-so you can see where the dark ones are, plus a slow-falling peak dot above each column. Crisp rather
-than glowy, and the most readable of all of them.
 
 | Colourway | Character |
 |---|---|
@@ -251,11 +247,9 @@ The app also writes that log on every normal launch, so a failure can be reporte
   at 190 px), so its sag cue flattens on real music; and the **Spectrogram**'s max-fold of 64 bands
   into ~56 rows is implemented correctly but its only test is vacuous — it passes with `max` replaced
   by `mean`. Fixed already: the Reel's peak lamp needed rms ≥ 0.508 against a real ceiling of 0.12,
-  so it was permanently dark, and the LED ladder painted its square bezel outside the rounded panel.
 - **Every family leaks a few bezel pixels outside the rounded panel.** The bezel is drawn after
   `clip_to_rounded_rect`, and it is square while the panel's corners are not, so ~4 pixels per corner
   land on the bare taskbar. Measured, pre-existing, and cosmetically invisible against a dark
-  taskbar — the LED ladder was the exception worth fixing because it also drew full-height verticals
   through both rounded corners.
 - The width is **clamped by what UI Automation reports**, so an element it cannot see is an
   element the overlay may cover. Every named taskbar element on the test machine was accounted
@@ -269,7 +263,7 @@ The app also writes that log on every normal launch, so a failure can be reporte
 
 ## Themes
 
-**74 colourways across 11 families.** A *family* is a renderer with fixed geometry — code. A
+**69 colourways across 10 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
 **Segmented VFD** — a smoked-glass panel with discrete stacked segments, a faint dormant grid,
@@ -351,7 +345,7 @@ Drop a `.toml` file (any filename — the `id` inside is what matters) into
 watched, so saving the file updates the live overlay without a restart — edit a colour, hit
 save, and watch the taskbar change.
 
-A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 74
+A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 69
 built-ins, which are always embedded in the exe regardless of whether that folder exists.
 
 Failure modes are all deliberately soft, because these files are hand-authored:
@@ -412,7 +406,7 @@ PICK A FAMILY - a renderer with fixed geometry. You cannot invent one in data.
 
 FILE FORMAT - one `.toml` file per theme, saved under `%APPDATA%\taskbar-eq\themes\`
 (filename does not matter; `id` inside is the identity, and the override key - a file
-whose `id` matches one of the 74 built-ins REPLACES it, any other `id` is added):
+whose `id` matches one of the 69 built-ins REPLACES it, any other `id` is added):
 
   schema = 1
   id     = "my-theme"

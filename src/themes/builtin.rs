@@ -52,11 +52,6 @@ pub fn all() -> Vec<Theme> {
         patch_noir(),
         patch_rainbow(),
         patch_uv(),
-        ladder_classic(),
-        ladder_vintage(),
-        ladder_modern(),
-        ladder_amber(),
-        ladder_plasma(),
         radar_p1(),
         radar_amber(),
         radar_ice(),
@@ -1528,8 +1523,9 @@ fn patchbay_base() -> Theme {
 /// The cables are coloured through `zones`, not by `lit` alone. A patchbay with one cable
 /// colour reads as a harp; the whole point of the hardware is that you can tell one patch from
 /// another at a glance, and `lit_at`/`hot_at` already exist to index a colour by position, so
-/// this needs nothing added to the theme schema. Five zones cycling three primaries, so the
-/// row alternates rather than running a gradient.
+/// this needs nothing added to the theme schema. One stop per cable at the reference width, so
+/// every cable in the row is a different colour - the earlier version cycled only three and read
+/// as a repeat.
 pub fn patch_classic() -> Theme {
     Theme {
         id: "patch-classic".into(),
@@ -1540,13 +1536,6 @@ pub fn patch_classic() -> Theme {
         panel_alpha: 1.0,
         edge: "#9aa3ad".into(),
         edge_alpha: 0.20,
-        zones: vec![
-            Zone { upto: 0.20, lit: "#ff4a3d".into(), hot: "#ffcdc7".into() },
-            Zone { upto: 0.40, lit: "#ffd22e".into(), hot: "#fff2c0".into() },
-            Zone { upto: 0.60, lit: "#4a9cff".into(), hot: "#cfe4ff".into() },
-            Zone { upto: 0.80, lit: "#ff4a3d".into(), hot: "#ffcdc7".into() },
-            Zone { upto: 1.01, lit: "#ffd22e".into(), hot: "#fff2c0".into() },
-        ],
         tube: TubeParams {
             chassis_top: "#2a2c30".into(),
             chassis_bottom: "#0a0b0d".into(),
@@ -1555,6 +1544,17 @@ pub fn patch_classic() -> Theme {
             collar: "#b9bfc7".into(),
             glass: "#e6ecf2".into(),
         },
+        // One stop per cable, so every cable is a different colour and the colourway is
+        // identifiable by its cables and not only by its panel. `lit_at` maps a cable's
+        // position along the row onto these, which is why they are zones rather than a new
+        // theme field.
+        zones: vec![
+            Zone { upto: 0.200, lit: "#ff4a3d".into(), hot: "#ff4a3d".into() },
+            Zone { upto: 0.400, lit: "#ffd22e".into(), hot: "#ffd22e".into() },
+            Zone { upto: 0.600, lit: "#4a9cff".into(), hot: "#4a9cff".into() },
+            Zone { upto: 0.800, lit: "#e8e4dc".into(), hot: "#e8e4dc".into() },
+            Zone { upto: 1.000, lit: "#8d94a0".into(), hot: "#8d94a0".into() },
+        ],
         ..patchbay_base()
     }
 }
@@ -1578,13 +1578,6 @@ pub fn patch_buchla() -> Theme {
         panel_alpha: 1.0,
         edge: "#6a5f4a".into(),
         edge_alpha: 0.38,
-        zones: vec![
-            Zone { upto: 0.20, lit: "#7d2b1c".into(), hot: "#d4643a".into() },
-            Zone { upto: 0.40, lit: "#1f4f52".into(), hot: "#54a0a4".into() },
-            Zone { upto: 0.60, lit: "#3f4a1e".into(), hot: "#8ea052".into() },
-            Zone { upto: 0.80, lit: "#2a2f6b".into(), hot: "#6f78c8".into() },
-            Zone { upto: 1.01, lit: "#5a2350".into(), hot: "#b060a4".into() },
-        ],
         tube: TubeParams {
             chassis_top: "#d6cbb4".into(),
             chassis_bottom: "#a89a80".into(),
@@ -1593,6 +1586,17 @@ pub fn patch_buchla() -> Theme {
             collar: "#8f8570".into(),
             glass: "#fffaf0".into(),
         },
+        // One stop per cable, so every cable is a different colour and the colourway is
+        // identifiable by its cables and not only by its panel. `lit_at` maps a cable's
+        // position along the row onto these, which is why they are zones rather than a new
+        // theme field.
+        zones: vec![
+            Zone { upto: 0.200, lit: "#7d2b1c".into(), hot: "#7d2b1c".into() },
+            Zone { upto: 0.400, lit: "#1f4f52".into(), hot: "#1f4f52".into() },
+            Zone { upto: 0.600, lit: "#3f4a1e".into(), hot: "#3f4a1e".into() },
+            Zone { upto: 0.800, lit: "#2a2f6b".into(), hot: "#2a2f6b".into() },
+            Zone { upto: 1.000, lit: "#5a2350".into(), hot: "#5a2350".into() },
+        ],
         ..patchbay_base()
     }
 }
@@ -1618,6 +1622,17 @@ pub fn patch_noir() -> Theme {
             collar: "#9ba0a6".into(),
             glass: "#f4f7fa".into(),
         },
+        // One stop per cable, so every cable is a different colour and the colourway is
+        // identifiable by its cables and not only by its panel. `lit_at` maps a cable's
+        // position along the row onto these, which is why they are zones rather than a new
+        // theme field.
+        zones: vec![
+            Zone { upto: 0.200, lit: "#ffffff".into(), hot: "#ffffff".into() },
+            Zone { upto: 0.400, lit: "#cfd6de".into(), hot: "#cfd6de".into() },
+            Zone { upto: 0.600, lit: "#9aa3ad".into(), hot: "#9aa3ad".into() },
+            Zone { upto: 0.800, lit: "#e6ecf2".into(), hot: "#e6ecf2".into() },
+            Zone { upto: 1.000, lit: "#b6bec8".into(), hot: "#b6bec8".into() },
+        ],
         ..patchbay_base()
     }
 }
@@ -1632,17 +1647,15 @@ pub fn patch_rainbow() -> Theme {
         // Graphite rather than mid-grey. A genuinely mid grey cannot clear 3:1 against
         // saturated cables in either direction (measured: #33343a puts a red cable at 2.7:1),
         // so "grey" here means dark grey with the brushed gradient doing the rest.
-        panel: "#2a2b30".into(),
+        // Darkened from #2a2b30 (luminance 43). Cables are dimmed to SHEATH_IDLE when no signal
+        // flows, and against a MID grey the red and the violet landed at luminance 47 and 55 -
+        // within 4 and 12 of the panel, i.e. invisible on an idle patchbay, which is the one thing
+        // this family must never look like. Measured: a panel below luminance 22 clears all five by
+        // at least 26. It is still visibly grey rather than black.
+        panel: "#14151a".into(),
         panel_alpha: 1.0,
         edge: "#b0b6bf".into(),
         edge_alpha: 0.22,
-        zones: vec![
-            Zone { upto: 0.20, lit: "#ff4a3d".into(), hot: "#ffcdc7".into() },
-            Zone { upto: 0.40, lit: "#ffc21f".into(), hot: "#fff2c0".into() },
-            Zone { upto: 0.60, lit: "#3ddc5a".into(), hot: "#c6ffd4".into() },
-            Zone { upto: 0.80, lit: "#35c8ff".into(), hot: "#cdeeff".into() },
-            Zone { upto: 1.01, lit: "#b06aff".into(), hot: "#e6d2ff".into() },
-        ],
         tube: TubeParams {
             chassis_top: "#4a4c54".into(),
             chassis_bottom: "#1d1e22".into(),
@@ -1651,6 +1664,25 @@ pub fn patch_rainbow() -> Theme {
             collar: "#c4cad2".into(),
             glass: "#eef2f6".into(),
         },
+        // One stop per cable, so every cable is a different colour and the colourway is
+        // identifiable by its cables and not only by its panel. `lit_at` maps a cable's
+        // position along the row onto these, which is why they are zones rather than a new
+        // theme field.
+        zones: vec![
+            // Brightened from #ff4a3d. Dimmed to SHEATH_IDLE at silence it measured 70.6 against
+            // the brushed jack strip at 48.3 - a separation of 22 where the visibility floor is 25,
+            // so an idle cable faded into the panel. Note the strip's brightness comes from the
+            // jack row, NOT from `panel`: darkening the panel was the obvious fix and moved the
+            // measurement not at all, which is what the test proved.
+            //
+            // Latent until now - the old zone boundaries meant this red was never selected for any
+            // cable, so giving every cable its own colour is what surfaced it.
+            Zone { upto: 0.200, lit: "#ff6f5f".into(), hot: "#ff6f5f".into() },
+            Zone { upto: 0.400, lit: "#ffc21f".into(), hot: "#ffc21f".into() },
+            Zone { upto: 0.600, lit: "#3ddc5a".into(), hot: "#3ddc5a".into() },
+            Zone { upto: 0.800, lit: "#35c8ff".into(), hot: "#35c8ff".into() },
+            Zone { upto: 1.000, lit: "#b06aff".into(), hot: "#b06aff".into() },
+        ],
         ..patchbay_base()
     }
 }
@@ -1672,13 +1704,6 @@ pub fn patch_uv() -> Theme {
         edge: "#8f5fd0".into(),
         edge_alpha: 0.26,
         glow_strength: 0.72,
-        zones: vec![
-            Zone { upto: 0.20, lit: "#ff3df0".into(), hot: "#ffd6fb".into() },
-            Zone { upto: 0.40, lit: "#3dfff0".into(), hot: "#d6fffb".into() },
-            Zone { upto: 0.60, lit: "#c8ff3d".into(), hot: "#f0ffd6".into() },
-            Zone { upto: 0.80, lit: "#ff3df0".into(), hot: "#ffd6fb".into() },
-            Zone { upto: 1.01, lit: "#3dfff0".into(), hot: "#d6fffb".into() },
-        ],
         tube: TubeParams {
             chassis_top: "#241a3a".into(),
             chassis_bottom: "#070410".into(),
@@ -1687,135 +1712,21 @@ pub fn patch_uv() -> Theme {
             collar: "#7a5fd0".into(),
             glass: "#e0c8ff".into(),
         },
+        // One stop per cable, so every cable is a different colour and the colourway is
+        // identifiable by its cables and not only by its panel. `lit_at` maps a cable's
+        // position along the row onto these, which is why they are zones rather than a new
+        // theme field.
+        zones: vec![
+            Zone { upto: 0.200, lit: "#ff3df0".into(), hot: "#ff3df0".into() },
+            Zone { upto: 0.400, lit: "#3dfff0".into(), hot: "#3dfff0".into() },
+            Zone { upto: 0.600, lit: "#c8ff3d".into(), hot: "#c8ff3d".into() },
+            Zone { upto: 0.800, lit: "#9a5cff".into(), hot: "#9a5cff".into() },
+            Zone { upto: 1.000, lit: "#ff5c9a".into(), hot: "#ff5c9a".into() },
+        ],
         ..patchbay_base()
     }
 }
 
-// ===================== LED ladder =====================
-fn ladder_base() -> Theme {
-    Theme {
-        family: "ladder".into(),
-        // No panel texture. Every variant paints a full-width sheen or grille, and any of them
-        // lifts the near-black slot that the unlit LED lenses are read against - see the
-        // "no glass panel" note in the family's module docs.
-        texture: Texture::None_,
-        // Higher than the segmented family's 0.11, and doing a different job: this is not a
-        // dormant grid behind the bars, it is the tint of the unlit LENS itself, which is the
-        // only thing that tells you where the dark half of the scale is.
-        ghost: 0.20,
-        // Tight on purpose. The column gap is 3px and the family is capped at 3 internally
-        // anyway; anything wider welds the columns together and the ladder stops being
-        // countable.
-        bloom: 2.0,
-        glow_strength: 0.30,
-        edge: "#c8d2d7".into(),
-        edge_alpha: 0.16,
-        // Slightly slower decay than the VFD's, with a fast attack: an LED ladder that snaps
-        // back instantly flickers, and this family carries its own peak-hold anyway so the
-        // shared `peak_fall` only feeds `FrameData.peaks`, which it does not read.
-        ballistics: Ballistics { attack: 0.60, decay: 0.14, peak_fall: 0.0045 },
-        ..Theme::default()
-    }
-}
-
-/// The reference: the classic green-amber-red scale, same three hexes as the segmented
-/// `classic-three-colour` so the two families' idea of "loud" matches on screen.
-pub fn ladder_classic() -> Theme {
-    Theme {
-        id: "ladder-classic".into(),
-        name: "Classic green-amber-red".into(),
-        lit: "#3ddc5a".into(),
-        hot: "#d8ffe2".into(),
-        panel: "#0a0c0d".into(),
-        panel_alpha: 1.0,
-        zones: vec![
-            Zone { upto: 0.58, lit: "#3ddc5a".into(), hot: "#b6ffc6".into() },
-            Zone { upto: 0.84, lit: "#ffc21f".into(), hot: "#fff0b8".into() },
-            Zone { upto: 1.01, lit: "#ff3b30".into(), hot: "#ffc2bd".into() },
-        ],
-        ..ladder_base()
-    }
-}
-
-/// All-red vintage: the single-colour ladder off a 70s receiver, brightening rather than
-/// changing hue toward the top. Still uses zones - a scale that only gets brighter is exactly
-/// what zones express when all three are red.
-pub fn ladder_vintage() -> Theme {
-    Theme {
-        id: "ladder-vintage-red".into(),
-        name: "All-red vintage".into(),
-        lit: "#ff3b30".into(),
-        hot: "#ffd0cb".into(),
-        panel: "#0c0403".into(),
-        panel_alpha: 1.0,
-        edge: "#b8443a".into(),
-        edge_alpha: 0.18,
-        zones: vec![
-            Zone { upto: 0.58, lit: "#c62828".into(), hot: "#ff8a7a".into() },
-            Zone { upto: 0.84, lit: "#f0402c".into(), hot: "#ffb0a4".into() },
-            Zone { upto: 1.01, lit: "#ff6b52".into(), hot: "#ffe0d8".into() },
-        ],
-        ..ladder_base()
-    }
-}
-
-/// Blue-white modern: the studio-interface look, cool blue running to white at the top.
-pub fn ladder_modern() -> Theme {
-    Theme {
-        id: "ladder-modern-blue".into(),
-        name: "Blue-white modern".into(),
-        lit: "#4fc3ff".into(),
-        hot: "#ffffff".into(),
-        panel: "#05080c".into(),
-        panel_alpha: 1.0,
-        edge: "#8fd6ff".into(),
-        edge_alpha: 0.15,
-        zones: vec![
-            Zone { upto: 0.58, lit: "#4fc3ff".into(), hot: "#d8f2ff".into() },
-            Zone { upto: 0.84, lit: "#a8e4ff".into(), hot: "#e8f8ff".into() },
-            Zone { upto: 1.01, lit: "#ffffff".into(), hot: "#ffffff".into() },
-        ],
-        ..ladder_base()
-    }
-}
-
-/// Amber-only: one colour the whole way up, for a panel that reads as level and nothing else.
-/// The one colourway with NO zones, so `lit_at`'s fallback path ships too rather than only
-/// being exercised by tests.
-pub fn ladder_amber() -> Theme {
-    Theme {
-        id: "ladder-amber".into(),
-        name: "Amber only".into(),
-        lit: "#ffb02e".into(),
-        hot: "#ffe8bf".into(),
-        panel: "#0c0703".into(),
-        panel_alpha: 1.0,
-        edge: "#e0a04a".into(),
-        edge_alpha: 0.16,
-        ..ladder_base()
-    }
-}
-
-/// Plasma orange: hotter and more saturated than the amber, running to a pale yellow tip -
-/// the arcade-cabinet end of the range.
-pub fn ladder_plasma() -> Theme {
-    Theme {
-        id: "ladder-plasma".into(),
-        name: "Plasma orange".into(),
-        lit: "#ff6a18".into(),
-        hot: "#fff0d0".into(),
-        panel: "#0d0603".into(),
-        panel_alpha: 1.0,
-        edge: "#ff8c3a".into(),
-        edge_alpha: 0.18,
-        zones: vec![
-            Zone { upto: 0.58, lit: "#ff4d00".into(), hot: "#ffb07a".into() },
-            Zone { upto: 0.84, lit: "#ff8c1a".into(), hot: "#ffd9a8".into() },
-            Zone { upto: 1.01, lit: "#ffd166".into(), hot: "#fff6e0".into() },
-        ],
-        ..ladder_base()
-    }
-}
 
 // ===================== Radar =====================
 fn radar_base() -> Theme {

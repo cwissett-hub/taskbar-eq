@@ -181,6 +181,14 @@ fn plot(cx: i32, cy: i32, rx: f32, ry: f32, theta: f32, range: f32) -> (i32, i32
 pub struct Radar {
     /// Beam position, in cell units, 0..CELLS.
     pos: f32,
+    /// Monotonic sweep phase, 0..1 per there-and-back cycle.
+    ///
+    /// The position is DERIVED from this rather than accumulated directly, because the beam has to
+    /// reverse smoothly and an accumulator that wraps cannot: see the note in `draw`.
+    phase: f32,
+    /// Direction of travel, +1 outbound and -1 on the return leg. The wake trails behind the beam,
+    /// so it has to know which way behind is.
+    dir: f32,
     /// Per (face, cell) echo strength as painted - the value `range` and blip size derive
     /// from. Held separately from `glow` because a fading return must keep its SIZE and only
     /// lose brightness: deriving size from the decaying value instead made an old loud
@@ -314,16 +322,41 @@ impl Family for Radar {
         // the beam usually stays put, but a slow frame crosses two or three and skipping them
         // leaves permanent dead bearings - the picture would develop holes that only a
         // resize could clear.
+        // The beam OSCILLATES rather than resetting - a sector scan, which is what real hardware
+        // with a limited arc actually does (airport surface radar, marine sector scan, sonar).
+        //
+        // It used to advance linearly and wrap with `rem_euclid`, which snapped the beam from the
+        // far limit back to the near one in a single frame. That discontinuity is jarring on its
+        // own, and it is made worse by the wake: at the instant of the reset the beam is drawn on
+        // top of the OLDEST returns while its trail is clamped away, so the whole picture appears
+        // to lurch once per sweep.
+        //
+        // Derived from a raised cosine rather than a triangle wave, so angular velocity falls to
+        // zero at each limit instead of reversing instantaneously - a mechanical scanner has to
+        // decelerate and accelerate at the ends of its arc, and easing it is both smoother and
+        // more faithful. It also makes the beam DWELL at the limits, which keeps the end bearings
+        // refreshed rather than letting them fade while the beam spends its time mid-arc.
         let prev = self.pos;
-        let advanced = prev + dt / (SWEEP_MS / CELLS as f32);
-        let first = prev.floor() as i64;
-        let last = advanced.floor() as i64;
-        self.pos = advanced.rem_euclid(CELLS as f32);
+        // A full there-and-back cycle is two sweeps, so one sweep still takes SWEEP_MS.
+        self.phase = (self.phase + dt / (SWEEP_MS * 2.0)).rem_euclid(1.0);
+        if !self.phase.is_finite() {
+            self.phase = 0.0;
+        }
+        let ang = self.phase * std::f32::consts::TAU;
+        // Scaled by CELLS, not CELLS-1, and held just inside the top. With CELLS-1 the far cell
+        // was only reachable when the phase landed EXACTLY on 0.5, which discrete frames never do,
+        // so `floor` capped at CELLS-2 and the outermost bearing was never painted at all - the
+        // sweep test caught it as a permanent 0.0 at the last cell.
+        self.pos = ((0.5 - 0.5 * ang.cos()) * CELLS as f32).min(CELLS as f32 - 0.001);
+        self.dir = if ang.sin() >= 0.0 { 1.0 } else { -1.0 };
         if !self.pos.is_finite() {
             self.pos = 0.0;
         }
-        for k in first..=last.min(first + CELLS as i64) {
-            let ci = k.rem_euclid(CELLS as i64) as usize;
+        // Every cell between where the beam was and where it is now, in whichever direction. No
+        // wrapping: the beam no longer crosses the ends, it turns around at them.
+        let (lo, hi) = if self.pos >= prev { (prev, self.pos) } else { (self.pos, prev) };
+        for k in (lo.floor() as i64).max(0)..=(hi.floor() as i64).min(CELLS as i64 - 1) {
+            let ci = k as usize;
             for s in 0..scopes {
                 let resp = Self::response(Self::cell_level(d, s, scopes, ci), t.sensitivity);
                 let i = s * CELLS + ci;
@@ -469,8 +502,9 @@ impl Family for Radar {
             // wake is there to show.
             for step in 0..BEAM_STEPS {
                 let back = step as f32 * (BEAM_CELLS / BEAM_STEPS as f32);
-                let at = self.pos - back;
-                if at < -0.5 {
+                // Behind the beam means the opposite way on the return leg.
+                let at = self.pos - back * self.dir;
+                if at < -0.5 || at > CELLS as f32 - 0.5 {
                     break;
                 }
                 let th = bearing(at);

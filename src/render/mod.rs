@@ -1,7 +1,6 @@
 pub mod canvas;
 pub mod golden;
 pub mod scope;
-pub mod ladder;
 pub mod nixie;
 pub mod patchbay;
 pub mod radar;
@@ -101,8 +100,8 @@ pub fn tint(
 /// `segmented` for anything unrecognised, so a theme carrying a typo'd or unimplemented
 /// family name would silently render as the wrong meter instead of failing. This list is
 /// what lets that be asserted, and adding a family is a one-line change in one place.
-pub const KNOWN_FAMILIES: [&str; 11] = [
-    "segmented", "scope", "vu", "vapor", "tube", "nixie", "waterfall", "reel", "patchbay", "ladder", "radar",
+pub const KNOWN_FAMILIES: [&str; 10] = [
+    "segmented", "scope", "vu", "vapor", "tube", "nixie", "waterfall", "reel", "patchbay", "radar",
 ];
 
 pub fn family_for(id: &str) -> Box<dyn Family> {
@@ -124,7 +123,6 @@ pub fn family_for(id: &str) -> Box<dyn Family> {
         "waterfall" => Box::new(waterfall::Waterfall::default()),
         "reel" => Box::new(reel::Reel::default()),
         "patchbay" => Box::new(patchbay::Patchbay::default()),
-        "ladder" => Box::new(ladder::Ladder::default()),
         "radar" => Box::new(radar::Radar::default()),
         "vu" => Box::new(vu::Vu::default()),
         _ => Box::new(segmented::Segmented),
@@ -396,7 +394,7 @@ mod newfam_dump {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
         std::fs::create_dir_all(&dir).unwrap();
         let mut n = 0;
-        for fam in ["nixie", "waterfall", "reel", "patchbay", "ladder", "radar"] {
+        for fam in ["nixie", "waterfall", "reel", "patchbay", "radar"] {
             let theme = builtin::all().into_iter().find(|t| t.family == fam).unwrap();
             let mut f = family_for(fam);
             let mut c = Canvas::new(190, 60);

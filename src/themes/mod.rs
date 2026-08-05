@@ -49,7 +49,6 @@ pub fn family_label(family: &str) -> String {
         "waterfall" => "Spectrogram".into(),
         "reel" => "Reel-to-reel".into(),
         "patchbay" => "Patchbay".into(),
-        "ladder" => "LED ladder".into(),
         "radar" => "Radar".into(),
         other => {
             let mut c = other.chars();
