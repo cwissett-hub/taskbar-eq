@@ -6,6 +6,26 @@ use crate::themes::Theme;
 pub const VU_SMOOTHING: f32 = 0.085;
 const OVERLOAD_AT: f32 = 0.76;
 
+/// Bottom of the needle's scale, in dBFS.
+///
+/// A VU meter is a dB instrument, and the previous code fed it LINEAR rms. Typical music
+/// at an rms of 0.02-0.12 is -32 to -18 dBFS, which mapped linearly put the needle at
+/// 2-12% of travel - the meter looked broken. Mapping the same range across [-45, 0] dB
+/// puts normal listening around half to two-thirds of the arc, which is where a real VU
+/// sits and where its swing is legible.
+const VU_DB_FLOOR: f32 = -45.0;
+
+/// Maps a linear RMS to needle travel 0..=1 through dB, scaled by the theme's
+/// sensitivity. Silence maps to exactly 0 rather than -inf.
+fn needle_level(rms: f32, sensitivity: f32) -> f32 {
+    if !rms.is_finite() || rms <= 0.0 {
+        return 0.0;
+    }
+    let db = 20.0 * rms.log10();
+    let norm = (db - VU_DB_FLOOR) / -VU_DB_FLOOR;
+    (norm * sensitivity.max(0.0)).clamp(0.0, 1.0)
+}
+
 #[derive(Default)]
 pub struct Vu {
     l: f32,
@@ -32,8 +52,8 @@ impl Family for Vu {
         // collapsing the needle to a dot at the pivot until process restart.
         // Guard exactly like `dsp::ballistics::Smoother::update` already
         // does for the same pattern.
-        let l_in = if d.rms_l.is_finite() { d.rms_l } else { 0.0 }.clamp(0.0, 1.0);
-        let r_in = if d.rms_r.is_finite() { d.rms_r } else { 0.0 }.clamp(0.0, 1.0);
+        let l_in = needle_level(d.rms_l, t.sensitivity);
+        let r_in = needle_level(d.rms_r, t.sensitivity);
         self.l += (l_in - self.l) * VU_SMOOTHING;
         self.r += (r_in - self.r) * VU_SMOOTHING;
         self.pk_l = (self.pk_l - 0.004).max(self.l);
@@ -191,7 +211,18 @@ mod tests {
         for _ in 0..80 {
             v.draw(&mut c, &builtin::vu_cream(), &level(0.9, 0.1));
         }
-        assert!(v.l > v.r + 0.5, "L {} and R {} must differ", v.l, v.r);
+        // dB mapping deliberately COMPRESSES a wide linear range: rms 0.9 and 0.1 are
+        // -0.9 and -20 dBFS, which land at ~0.98 and ~0.56 of travel. That compression
+        // is the point of a dB scale - it is why quiet music is now visible at all - so
+        // the channels must clearly differ without the old linear gap of 0.5.
+        assert!(
+            v.l > v.r + 0.2,
+            "channels must read clearly differently: L {} vs R {}",
+            v.l,
+            v.r
+        );
+        assert!(v.l > 0.9, "a near-full-scale channel should be near the top, got {}", v.l);
+        assert!(v.r < 0.7, "a quiet channel should sit mid-arc, got {}", v.r);
     }
 
     #[test]
@@ -268,8 +299,12 @@ mod tests {
         for _ in 0..80 {
             v.draw(&mut c, &builtin::vu_cream(), &level(0.7, 0.7));
         }
-        assert!((v.l - 0.7).abs() < 0.01, "got {}", v.l);
-        assert!((v.r - 0.7).abs() < 0.01, "got {}", v.r);
+        // The needle tracks needle_level(rms), not rms itself - it is a dB
+        // instrument. An rms of 0.7 is -3.1 dBFS, which maps to ~0.93 of arc travel.
+        // Asserting 0.7 here would be asserting the old linear behaviour.
+        let want = needle_level(0.7, builtin::vu_cream().sensitivity);
+        assert!((v.l - want).abs() < 0.01, "want ~{want}, got {}", v.l);
+        assert!((v.r - want).abs() < 0.01, "want ~{want}, got {}", v.r);
     }
 
     #[test]

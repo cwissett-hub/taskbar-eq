@@ -257,6 +257,30 @@ impl Canvas {
         }
     }
 
+    /// Scales every pixel's alpha by `k`, for the reveal/hide fade.
+    ///
+    /// Scaling all four premultiplied channels by the same factor preserves the
+    /// r,g,b <= a invariant, so this cannot produce the opaque-dark pixels that
+    /// independent per-channel scaling caused in `bloom`.
+    pub fn scale_alpha(&mut self, k: f32) {
+        let k = k.clamp(0.0, 1.0);
+        if k >= 1.0 {
+            return;
+        }
+        if k <= 0.0 {
+            self.clear();
+            return;
+        }
+        for px in self.px.iter_mut() {
+            if *px == 0 {
+                continue;
+            }
+            let sc = |v: u32| ((v as f32 * k).round() as u32).min(255);
+            let (a, r, g, b) = (*px >> 24, (*px >> 16) & 0xff, (*px >> 8) & 0xff, *px & 0xff);
+            *px = (sc(a) << 24) | (sc(r) << 16) | (sc(g) << 8) | sc(b);
+        }
+    }
+
     pub fn bloom(&mut self, radius: i32, strength: f32) {
         if radius <= 0 || strength <= 0.0 {
             return;
@@ -813,6 +837,37 @@ mod tests {
         c.fill_rect(0, 0, 10, 10, Rgba::new(255, 255, 255, 255));
         c.clip_to_rounded_rect(0, 0, -4, 190, 5);
         assert!(c.bits().iter().all(|&p| p == 0), "degenerate rect clips everything");
+    }
+
+    #[test]
+    fn scale_alpha_fades_without_breaking_the_premultiplied_invariant() {
+        for k in [0.0f32, 0.25, 0.5, 0.75, 1.0] {
+            let mut c = Canvas::new(8, 8);
+            c.fill_rect(0, 0, 8, 8, Rgba::new(0x8f, 0xe4, 0xff, 255));
+            c.scale_alpha(k);
+            for i in 0..c.bits().len() {
+                let p = c.bits()[i];
+                let (a, r, g, b) = (p >> 24, (p >> 16) & 0xff, (p >> 8) & 0xff, p & 0xff);
+                assert!(r <= a && g <= a && b <= a, "invariant broken at k={k}");
+            }
+            let a = c.bits()[0] >> 24;
+            let want = (255.0 * k).round() as u32;
+            assert!(
+                a.abs_diff(want) <= 1,
+                "alpha should scale to ~{want} at k={k}, got {a}"
+            );
+        }
+    }
+
+    #[test]
+    fn scale_alpha_of_zero_clears_and_of_one_is_a_no_op() {
+        let mut c = Canvas::new(4, 4);
+        c.fill_rect(0, 0, 4, 4, Rgba::new(10, 20, 30, 200));
+        let before = c.bits().to_vec();
+        c.scale_alpha(1.0);
+        assert_eq!(c.bits(), &before[..], "k=1 must not touch the pixels");
+        c.scale_alpha(0.0);
+        assert!(c.bits().iter().all(|&p| p == 0), "k=0 must clear");
     }
 
     #[test]

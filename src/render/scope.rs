@@ -8,7 +8,16 @@ pub struct Scope {
     trail: Option<Canvas>,
 }
 
+/// Base gain on the raw waveform before it is drawn.
+///
+/// The waveform is raw PCM, and music that peaks around 0.2-0.3 deflected only ~7px of a
+/// 60px display - the trace looked like a flat line with a wobble. This lifts it to
+/// something legible; `tanh` then soft-clips so a loud transient rounds off at the
+/// graticule edge instead of clipping flat against it.
+const SCOPE_GAIN: f32 = 3.2;
+
 impl Scope {
+
     /// Draws the waveform polyline into `buf` after decaying what was there.
     ///
     /// Deliberately does NOT bloom `buf` itself. `Canvas::bloom` composites its
@@ -19,7 +28,7 @@ impl Scope {
     /// summed luminance at a fixed row GROW frame over frame (4499 -> 5701 over
     /// one decay step) instead of decay. Blooming happens once, on a disposable
     /// clone, at compose time in `draw` - see there.
-    fn stroke_into(buf: &mut Canvas, d: &FrameData, colour: Rgba, fade: f32) {
+    fn stroke_into(buf: &mut Canvas, d: &FrameData, colour: Rgba, fade: f32, sensitivity: f32) {
         // Decay what is already there. Scaling alpha keeps the buffer transparent,
         // which is what lets the panel show through the trail.
         let decay = (1.0 - fade.clamp(0.0, 1.0)).clamp(0.0, 1.0);
@@ -56,7 +65,8 @@ impl Scope {
         let mut prev_y: Option<i32> = None;
         for px in 0..span {
             let i = (px as usize * 255) / span.max(1) as usize;
-            let y = mid - (d.waveform[i.min(255)] * amp as f32) as i32;
+            let w = (d.waveform[i.min(255)] * SCOPE_GAIN * sensitivity.max(0.0)).tanh();
+            let y = mid - (w * amp as f32) as i32;
             let y = y.clamp(0, h - 1);
             let (lo, hi) = match prev_y {
                 Some(p) if p < y => (p, y),
@@ -95,10 +105,10 @@ impl Family for Scope {
 
         // Slow trail first (drawn underneath), then the fast trace.
         if let (Some((trail_hex, trail_fade)), Some(trail)) = (t.dual.clone(), self.trail.as_mut()) {
-            Self::stroke_into(trail, d, Rgba::from_hex(&trail_hex, 1.0), trail_fade);
+            Self::stroke_into(trail, d, Rgba::from_hex(&trail_hex, 1.0), trail_fade, t.sensitivity);
         }
         if let Some(trace) = self.trace.as_mut() {
-            Self::stroke_into(trace, d, Rgba::from_hex(&t.lit, 1.0), t.fade);
+            Self::stroke_into(trace, d, Rgba::from_hex(&t.lit, 1.0), t.fade, t.sensitivity);
         }
 
         // Compose: panel, graticule, trail, trace, bezel.

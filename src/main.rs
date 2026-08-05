@@ -237,7 +237,10 @@ fn main() -> Result<()> {
                 rms_r: latest.rms_r,
             };
             family.draw(&mut canvas, &theme, &data);
-            let _ = opacity; // applied via theme alpha in Task 11
+            // Apply the reveal/hide fade. The gate has computed this opacity - with
+            // tests - since it was written, but nothing ever consumed it, so the
+            // overlay popped in and out instead of fading. That is the whole bug.
+            canvas.scale_alpha(opacity);
             overlay.show(r, &canvas)?;
         } else {
             overlay.hide()?;

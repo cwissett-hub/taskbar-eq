@@ -52,6 +52,14 @@ pub struct Theme {
     /// Strength of the dim halo confined to the display's edge ring, as a fraction
     /// of `glow_strength`.
     pub edge_glow: f32,
+    /// Display gain applied to the audio level before it is mapped to the meter.
+    ///
+    /// Exists because the raw values are far smaller than they look: typical music sits
+    /// at an RMS of 0.02-0.12, so feeding that straight to a needle put it at 2-12% of
+    /// arc travel and the meter barely moved. Each family applies this on top of its own
+    /// sane default mapping, so 1.0 is already usable and this is the knob to reach for
+    /// if a meter feels dead.
+    pub sensitivity: f32,
     // Cross-fade duration for switching themes at runtime (Task 11+); the
     // segmented renderer draws every frame from scratch and has no
     // transition state to feed it yet.
@@ -89,6 +97,7 @@ impl Default for Theme {
             // 0.30 was not merely too dim, it was NEGATIVE - the ring measured darker
             // than the panel it sat on. 4.0 puts it ~60 luminance above.
             edge_glow: 4.0,
+            sensitivity: 1.0,
             fade: 0.30,
             texture: Texture::Glass,
             ballistics: Ballistics::default(),

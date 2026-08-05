@@ -59,6 +59,11 @@ struct RawLook {
     edge_glow: Option<f32>,
     fade: Option<f32>,
     texture: Option<String>,
+    /// Display gain on the audio level before it reaches the meter. Raise it if a
+    /// meter feels dead: the raw values are much smaller than they look (typical music
+    /// is an RMS of 0.02-0.12), which is why the VU needle and the scope trace both
+    /// barely moved before this existed.
+    sensitivity: Option<f32>,
 }
 
 #[derive(Deserialize, Default)]
@@ -141,6 +146,7 @@ pub fn parse(src: &str) -> Result<Theme, ThemeError> {
         bloom: raw.look.bloom.unwrap_or(d.bloom),
         glow_strength: raw.look.glow_strength.unwrap_or(d.glow_strength),
         edge_glow: raw.look.edge_glow.unwrap_or(d.edge_glow),
+        sensitivity: raw.look.sensitivity.unwrap_or(d.sensitivity),
         fade: raw.look.fade.unwrap_or(d.fade),
         texture: texture_from(raw.look.texture, d.texture),
         ballistics: Ballistics {

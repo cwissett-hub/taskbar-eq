@@ -24,8 +24,8 @@ impl Default for Config {
             saturation: 1.0,
             threshold_dbfs: -55.0,
             reveal_ms: 400,
-            hide_ms: 2000,
-            fade_ms: 250,
+            hide_ms: 4500,
+            fade_ms: 450,
             autostart: false,
         }
     }
@@ -89,8 +89,8 @@ mod tests {
         let c = Config::default();
         assert_eq!(c.threshold_dbfs, -55.0);
         assert_eq!(c.reveal_ms, 400);
-        assert_eq!(c.hide_ms, 2000);
-        assert_eq!(c.fade_ms, 250);
+        assert_eq!(c.hide_ms, 4500);
+        assert_eq!(c.fade_ms, 450);
         assert_eq!(c.theme, "vfd-ice");
     }
 
@@ -108,7 +108,7 @@ mod tests {
         // serde(default) means an old config missing new keys still loads.
         let c: Config = toml::from_str("theme = \"neon-pink\"").unwrap();
         assert_eq!(c.theme, "neon-pink");
-        assert_eq!(c.hide_ms, 2000, "missing keys must take defaults");
+        assert_eq!(c.hide_ms, 4500, "missing keys must take defaults");
     }
 
     #[test]

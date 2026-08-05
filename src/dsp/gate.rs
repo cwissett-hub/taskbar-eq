@@ -14,7 +14,15 @@ pub struct GateConfig {
 
 impl Default for GateConfig {
     fn default() -> Self {
-        GateConfig { threshold_dbfs: -55.0, reveal_ms: 400, hide_ms: 2000, fade_ms: 250 }
+        GateConfig {
+            threshold_dbfs: -55.0,
+            reveal_ms: 400,
+            // 2000 was not enough: the gap between tracks on an album is routinely
+            // longer than that, so the display popped out and back in between songs.
+            hide_ms: 4500,
+            // And 250 reads as a pop rather than a fade at 60fps.
+            fade_ms: 450,
+        }
     }
 }
 
@@ -142,12 +150,30 @@ mod tests {
     }
 
     #[test]
+    fn rides_through_a_realistic_gap_between_tracks() {
+        // The regression this guards: at hide_ms 2000 an ordinary album gap was long
+        // enough to make the overlay disappear and come back, once per song.
+        let mut g = Gate::new(GateConfig::default());
+        run(&mut g, loud(), 800);
+        assert!(g.is_visible());
+        run(&mut g, silent(), 3500);
+        assert!(
+            g.is_visible(),
+            "a 3.5s gap between tracks must not hide it (hide_ms is 4500)"
+        );
+        run(&mut g, loud(), 400);
+        assert!(g.is_visible(), "and it should still be up when the next track starts");
+    }
+
+    #[test]
     fn hides_after_sustained_silence() {
         let mut g = Gate::new(GateConfig::default());
         run(&mut g, loud(), 600);
-        run(&mut g, silent(), 2100);
-        run(&mut g, silent(), 300); // allow the fade to finish
-        assert!(!g.is_visible(), "should be fully hidden after 2s + fade");
+        // hide_ms is 4500: the gap between tracks on an album is routinely longer than
+        // two seconds, which made the display pop out and back in between songs.
+        run(&mut g, silent(), 4600);
+        run(&mut g, silent(), 600); // allow the 450ms fade to finish
+        assert!(!g.is_visible(), "should be fully hidden after hide_ms + fade");
     }
 
     #[test]
