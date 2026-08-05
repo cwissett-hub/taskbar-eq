@@ -160,7 +160,7 @@ pub fn parse(src: &str) -> Result<Theme, ThemeError> {
             .map(|z| Zone { upto: z.upto, lit: z.lit, hot: z.hot })
             .collect(),
         dual: raw.dual.and_then(|dl| {
-            dl.trail.map(|t| (t, dl.fade.unwrap_or(0.055)))
+            dl.trail.map(|t| (t, dl.fade.unwrap_or(0.20)))
         }),
     })
 }

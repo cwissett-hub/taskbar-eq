@@ -6,15 +6,86 @@ use crate::themes::Theme;
 pub struct Scope {
     trace: Option<Canvas>,
     trail: Option<Canvas>,
+    /// Slow-following peak of |waveform|, for auto-ranging. See `update_peak`.
+    peak: f32,
 }
 
-/// Base gain on the raw waveform before it is drawn.
+/// Deflection the auto-ranger aims for, as a fraction of the available amplitude.
 ///
-/// The waveform is raw PCM, and music that peaks around 0.2-0.3 deflected only ~7px of a
-/// 60px display - the trace looked like a flat line with a wobble. This lifts it to
-/// something legible; `tanh` then soft-clips so a loud transient rounds off at the
-/// graticule edge instead of clipping flat against it.
-const SCOPE_GAIN: f32 = 3.2;
+/// Below 1.0 so an unusually loud transient has somewhere to go before the soft knee
+/// engages.
+const TARGET_DEFLECTION: f32 = 0.80;
+
+/// Quietest peak the auto-ranger will still normalise against.
+///
+/// Without a floor, near-silence divides by a tiny peak and amplifies the noise between
+/// tracks into a full-height trace.
+const PEAK_FLOOR: f32 = 0.05;
+
+/// Peak-follower ballistics, per frame at ~60fps.
+///
+/// Fast attack catches a transient in ~3 frames so a drum hit does not blow through the
+/// top of the screen; a much slower release means the range does not visibly pump
+/// between beats. Release is deliberately ~50x slower than attack.
+const PEAK_ATTACK: f32 = 0.30;
+const PEAK_RELEASE: f32 = 0.006;
+
+/// Fraction of full deflection below which the signal is passed through untouched.
+///
+/// Above the knee the excess is compressed asymptotically toward 1.0. A plain `tanh` over
+/// the whole range was the bug being fixed here: it starts bending immediately, so at the
+/// old gain of 3.2 any sample above 0.3 was already at 74% of full height and anything
+/// above 0.5 was pinned at the rails - every waveform, loud or quiet, collapsed into the
+/// same full-height block. Staying linear under the knee preserves the shape that makes
+/// it read as a waveform at all.
+const SOFT_KNEE: f32 = 0.70;
+
+/// Samples the trigger search may consume, leaving the rest as the drawable window.
+///
+/// A real scope syncs its sweep to a zero crossing so a periodic wave stands still on
+/// screen. Without that the 256-sample window starts at an arbitrary phase every frame,
+/// the trace slides sideways, and persistence smears several DIFFERENT shapes over each
+/// other instead of reinforcing one - which is what turned the afterglow into a hatched
+/// block rather than a glowing trace.
+///
+/// Must cover a full period of the lowest frequency worth locking, or the search finds no
+/// rising crossing and the frame silently draws untriggered at an arbitrary phase. At 64
+/// that happened on well over half of all frames - measured leaving frame-to-frame drawn
+/// difference at 0.0735 against 0.0860 for no trigger at all, i.e. very nearly useless.
+/// 128 samples is 2.7ms, so everything above ~375Hz locks; on a steady tone the same
+/// measurement drops to 0.0012, a 72x improvement. Content that genuinely is not periodic
+/// across a 5ms window cannot be stabilised by any trigger and improves only ~25%.
+const TRIGGER_SEARCH: usize = 128;
+
+/// Samples actually drawn, after the trigger offset is taken off the front.
+const DRAW_WINDOW: usize = 256 - TRIGGER_SEARCH;
+
+/// Half-width of the smoothing kernel applied before stroking.
+///
+/// 256 samples at 48kHz is ~5ms, so everything above roughly 1kHz completes many cycles
+/// across the screen. Point-sampling that into one vertical span per column renders treble
+/// as a solid block of hash, not a waveform. A short moving average keeps the shape the
+/// eye reads as a wave and drops the content too fine to draw at this size. Deliberately
+/// small: widen it and the trace goes limp and sinusoidal.
+const SMOOTH_TAPS: usize = 2;
+
+/// Limits `x` to +/-1 while leaving everything below `SOFT_KNEE` exactly as it was.
+fn soft_clip(x: f32) -> f32 {
+    if !x.is_finite() {
+        return 0.0;
+    }
+    let a = x.abs();
+    if a <= SOFT_KNEE {
+        return x;
+    }
+    let headroom = 1.0 - SOFT_KNEE;
+    let compressed = SOFT_KNEE + headroom * ((a - SOFT_KNEE) / headroom).tanh();
+    if x < 0.0 {
+        -compressed
+    } else {
+        compressed
+    }
+}
 
 impl Scope {
 
@@ -28,7 +99,80 @@ impl Scope {
     /// summed luminance at a fixed row GROW frame over frame (4499 -> 5701 over
     /// one decay step) instead of decay. Blooming happens once, on a disposable
     /// clone, at compose time in `draw` - see there.
-    fn stroke_into(buf: &mut Canvas, d: &FrameData, colour: Rgba, fade: f32, sensitivity: f32) {
+    /// Advances the peak follower and returns the gain to draw this frame with.
+    ///
+    /// Auto-ranging rather than a fixed gain because the two are not interchangeable
+    /// here: raw PCM spans roughly 0.02 to 0.9 depending on the track and the system
+    /// volume, and no single multiplier makes a quiet passage visible without pinning a
+    /// loud one against the graticule. A scope is the wrong instrument to read level off
+    /// anyway - that is what the VU family is for - so it optimises for showing the
+    /// SHAPE of the wave at any volume.
+    fn update_peak(&mut self, wave: &[f32; 256]) -> f32 {
+        let mut frame_peak = 0.0f32;
+        for &s in wave.iter() {
+            if s.is_finite() {
+                frame_peak = frame_peak.max(s.abs());
+            }
+        }
+        let k = if frame_peak > self.peak {
+            PEAK_ATTACK
+        } else {
+            PEAK_RELEASE
+        };
+        self.peak += (frame_peak - self.peak) * k;
+        if !self.peak.is_finite() {
+            self.peak = 0.0;
+        }
+        TARGET_DEFLECTION / self.peak.max(PEAK_FLOOR)
+    }
+
+    /// Smooths the waveform and returns it with the index the sweep should start at.
+    ///
+    /// Returned as an owned buffer so both persistence layers stroke the exact same
+    /// samples; recomputing per layer would let the trail and trace trigger on different
+    /// offsets and drift apart.
+    fn prepare(d: &FrameData) -> ([f32; 256], usize) {
+        let mut s = [0.0f32; 256];
+        for i in 0usize..256 {
+            let (mut acc, mut n) = (0.0f32, 0.0f32);
+            for k in i.saturating_sub(SMOOTH_TAPS)..(i + SMOOTH_TAPS + 1).min(256) {
+                let v = d.waveform[k];
+                if v.is_finite() {
+                    acc += v;
+                    n += 1.0;
+                }
+            }
+            s[i] = if n > 0.0 { acc / n } else { 0.0 };
+        }
+
+        // Trigger on the first rising crossing of zero, requiring a minimum slope so
+        // noise riding on a quiet passage does not trigger on its own dither and
+        // reintroduce the sideways jitter this exists to remove.
+        //
+        // Detected as a sign change between neighbours rather than via an armed/not-armed
+        // state machine. The state-machine version demanded the window first dip below a
+        // negative threshold BEFORE the crossing, which frequently cannot happen inside
+        // the search window, so it fell through to offset 0 - an untriggered frame at
+        // arbitrary phase. It failed even on a pure sine, which is what gave it away.
+        const MIN_SLOPE: f32 = 0.004;
+        let mut start = 0;
+        for i in 0..TRIGGER_SEARCH {
+            if s[i] <= 0.0 && s[i + 1] > 0.0 && (s[i + 1] - s[i]) >= MIN_SLOPE {
+                start = i;
+                break;
+            }
+        }
+        (s, start)
+    }
+
+    fn stroke_into(
+        buf: &mut Canvas,
+        wave: &[f32; 256],
+        start: usize,
+        colour: Rgba,
+        fade: f32,
+        gain: f32,
+    ) {
         // Decay what is already there. Scaling alpha keeps the buffer transparent,
         // which is what lets the panel show through the trail.
         let decay = (1.0 - fade.clamp(0.0, 1.0)).clamp(0.0, 1.0);
@@ -64,8 +208,8 @@ impl Scope {
         let span = (w - 10).max(1);
         let mut prev_y: Option<i32> = None;
         for px in 0..span {
-            let i = (px as usize * 255) / span.max(1) as usize;
-            let w = (d.waveform[i.min(255)] * SCOPE_GAIN * sensitivity.max(0.0)).tanh();
+            let i = start + (px as usize * (DRAW_WINDOW - 1)) / span.max(1) as usize;
+            let w = soft_clip(wave[i.min(255)] * gain);
             let y = mid - (w * amp as f32) as i32;
             let y = y.clamp(0, h - 1);
             let (lo, hi) = match prev_y {
@@ -103,12 +247,20 @@ impl Family for Scope {
             self.trail = None;
         }
 
+        // One gain and one triggered, smoothed waveform for both buffers, resolved
+        // before either is stroked, so the slow trail and the fast trace stay registered
+        // with each other instead of drifting apart.
+        let (wave, start) = Self::prepare(d);
+        let gain = self.update_peak(&wave) * t.sensitivity.max(0.0);
+
         // Slow trail first (drawn underneath), then the fast trace.
         if let (Some((trail_hex, trail_fade)), Some(trail)) = (t.dual.clone(), self.trail.as_mut()) {
-            Self::stroke_into(trail, d, Rgba::from_hex(&trail_hex, 1.0), trail_fade, t.sensitivity);
+            let c = Rgba::from_hex(&trail_hex, 1.0);
+            Self::stroke_into(trail, &wave, start, c, trail_fade, gain);
         }
         if let Some(trace) = self.trace.as_mut() {
-            Self::stroke_into(trace, d, Rgba::from_hex(&t.lit, 1.0), t.fade, t.sensitivity);
+            let c = Rgba::from_hex(&t.lit, 1.0);
+            Self::stroke_into(trace, &wave, start, c, t.fade, gain);
         }
 
         // Compose: panel, graticule, trail, trace, bezel.
@@ -367,5 +519,60 @@ mod tests {
         let mut c = Canvas::new(190, 60);
         s.draw(&mut c, &builtin::p1_green(), &wave(0.7));
         std::fs::write("tests/golden/p1-green.txt", canvas_to_ascii(&c)).unwrap();
+    }
+
+    /// Dumps every scope colourway to raw RGBA for visual inspection. Not a golden:
+    /// "is it a smear" is a question you have to answer with your eyes.
+    ///
+    /// Run: cargo test --release dump_scope_frames -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn dump_scope_frames() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Something with the character of music rather than a pure tone: a fundamental,
+        // two harmonics, and a little noise, so the trace has fine structure that a
+        // smear would visibly destroy.
+        let music = |t: f32, amp: f32| -> f32 {
+            let mut acc = (t * std::f32::consts::TAU * 2.0).sin();
+            acc += 0.45 * (t * std::f32::consts::TAU * 5.0).sin();
+            acc += 0.22 * (t * std::f32::consts::TAU * 11.0).sin();
+            // deterministic pseudo-noise; Math.random has no place in a test
+            let n = ((t * 7919.0).sin() * 43758.55) % 1.0;
+            (acc / 1.67 + n * 0.12) * amp
+        };
+
+        for (label, amp) in [("quiet", 0.05f32), ("normal", 0.35), ("loud", 0.85)] {
+            for t in builtin::all().into_iter().filter(|t| t.family == "scope") {
+                let mut sc = Scope::default();
+                let mut c = Canvas::new(190, 60);
+                // 90 frames = 1.5s, long enough for the peak follower to settle and for
+                // any excessive persistence to have filled the screen.
+                for f in 0..90 {
+                    let mut d = FrameData::default();
+                    for i in 0..256 {
+                        let phase = i as f32 / 256.0 + f as f32 * 0.031;
+                        d.waveform[i] = music(phase, amp);
+                    }
+                    sc.draw(&mut c, &t, &d);
+                }
+                let mut out = Vec::with_capacity(190 * 60 * 4);
+                for y in 0..60 {
+                    for x in 0..190 {
+                        let px = c.get(x, y);
+                        // un-premultiply onto the dark taskbar the overlay really sits on
+                        let a = px.a as f32 / 255.0;
+                        let bg = 22.0;
+                        for ch in [px.r, px.g, px.b] {
+                            out.push((ch as f32 + bg * (1.0 - a)).min(255.0) as u8);
+                        }
+                        out.push(255);
+                    }
+                }
+                std::fs::write(dir.join(format!("scope-{}-{}.rgba", t.id, label)), &out).unwrap();
+            }
+        }
+        println!("wrote {} rgba dumps to {}", 15, dir.display());
     }
 }

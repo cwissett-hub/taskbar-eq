@@ -166,13 +166,20 @@ pub fn p1_green() -> Theme {
         panel_alpha: 1.0,
         edge: "#78ffb4".into(),
         edge_alpha: 0.14,
-        fade: 0.14,
-        // Distinct from the other four scope blooms below - see
-        // `each_colourway_has_a_distinct_texture_or_bloom`, which checks
-        // (texture, bloom) pairs across every theme in `all()`. All five
-        // phosphors share `Texture::None_`, so bloom is the only thing that
-        // can tell them apart for that guard; the brief left every phosphor
-        // at the same inherited bloom (6.0), which collided.
+        // 0.14 left 255ms of history on screen. Tolerable when the trace only
+        // wobbled a few pixels; a smear once auto-ranging made every frame a
+        // full-height sweep.
+        fade: 0.22,
+        // All five phosphors share this bloom deliberately: it is the tightest of
+        // the set and the only one that read as a glowing trace rather than a washed
+        // halo, so it is the reference the others were brought down to.
+        //
+        // They previously ran 5-9, spread apart to satisfy a guard named in a comment
+        // here - `each_colourway_has_a_distinct_texture_or_bloom` - that does not
+        // exist. The real guard is `colourways_are_visually_distinct_within_their_family`
+        // and its signature is (texture, bloom, lit, fade); `lit` already differs for
+        // every phosphor, so bloom never had to vary at all. Four themes were
+        // disfigured to satisfy a constraint that was never there.
         bloom: 5.0,
         ..scope_base()
     }
@@ -188,11 +195,16 @@ pub fn p7_dual() -> Theme {
         panel_alpha: 1.0,
         edge: "#aad7ff".into(),
         edge_alpha: 0.15,
-        fade: 0.30,
+        fade: 0.34,
         // The real P7 is two phosphor layers: a blue-white flash over a slow
-        // yellow-green tail. The trail fades far more slowly than the trace.
-        dual: Some(("#cfe86a".into(), 0.055)),
-        bloom: 8.0,
+        // yellow-green tail. The trail still fades slower than the trace, but 0.055
+        // held it for 680ms - 41 frames - and once auto-ranging made each of those
+        // frames a full-height sweep, 41 of them overlaid filled the screen solid.
+        // This is why P7 was the worst offender of the five: its afterglow ran 3-6x
+        // longer than any other phosphor here.
+        dual: Some(("#cfe86a".into(), 0.20)),
+        // was 8.0 - see the bloom note in `p1_green`
+        bloom: 5.0,
         ..scope_base()
     }
 }
@@ -207,8 +219,9 @@ pub fn p11_blue_violet() -> Theme {
         panel_alpha: 1.0,
         edge: "#96afff".into(),
         edge_alpha: 0.15,
-        fade: 0.20,
-        bloom: 6.0,
+        fade: 0.26,
+        // was 6.0 - see the bloom note in `p1_green`
+        bloom: 5.0,
         ..scope_base()
     }
 }
@@ -223,8 +236,9 @@ pub fn scope_amber() -> Theme {
         panel_alpha: 1.0,
         edge: "#ffc878".into(),
         edge_alpha: 0.15,
-        fade: 0.11,
-        bloom: 7.0,
+        fade: 0.20,
+        // was 7.0 - see the bloom note in `p1_green`
+        bloom: 5.0,
         ..scope_base()
     }
 }
@@ -239,8 +253,9 @@ pub fn scope_white() -> Theme {
         panel_alpha: 1.0,
         edge: "#dceeff".into(),
         edge_alpha: 0.15,
-        fade: 0.17,
-        bloom: 9.0,
+        fade: 0.24,
+        // was 9.0 - see the bloom note in `p1_green`
+        bloom: 5.0,
         ..scope_base()
     }
 }
