@@ -1,7 +1,13 @@
 pub mod canvas;
 pub mod golden;
 pub mod scope;
+pub mod ladder;
+pub mod nixie;
+pub mod patchbay;
+pub mod radar;
+pub mod reel;
 pub mod tube;
+pub mod waterfall;
 pub mod vapor;
 pub mod segmented;
 pub mod vu;
@@ -95,7 +101,9 @@ pub fn tint(
 /// `segmented` for anything unrecognised, so a theme carrying a typo'd or unimplemented
 /// family name would silently render as the wrong meter instead of failing. This list is
 /// what lets that be asserted, and adding a family is a one-line change in one place.
-pub const KNOWN_FAMILIES: [&str; 5] = ["segmented", "scope", "vu", "vapor", "tube"];
+pub const KNOWN_FAMILIES: [&str; 11] = [
+    "segmented", "scope", "vu", "vapor", "tube", "nixie", "waterfall", "reel", "patchbay", "ladder", "radar",
+];
 
 pub fn family_for(id: &str) -> Box<dyn Family> {
     // Say so when falling back. A theme file with a typo'd or not-yet-implemented family
@@ -112,6 +120,12 @@ pub fn family_for(id: &str) -> Box<dyn Family> {
         "scope" => Box::new(scope::Scope::default()),
         "vapor" => Box::new(vapor::Vapor::default()),
         "tube" => Box::new(tube::Tube::default()),
+        "nixie" => Box::new(nixie::Nixie::default()),
+        "waterfall" => Box::new(waterfall::Waterfall::default()),
+        "reel" => Box::new(reel::Reel::default()),
+        "patchbay" => Box::new(patchbay::Patchbay::default()),
+        "ladder" => Box::new(ladder::Ladder::default()),
+        "radar" => Box::new(radar::Radar::default()),
         "vu" => Box::new(vu::Vu::default()),
         _ => Box::new(segmented::Segmented),
     }
@@ -368,5 +382,57 @@ mod rainbow_dump {
             }
         }
         println!("wrote {n} rainbow dumps");
+    }
+}
+
+#[cfg(test)]
+mod newfam_dump {
+    use super::*;
+    use crate::themes::builtin;
+    /// Run: cargo test --release dump_new_families -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn dump_new_families() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut n = 0;
+        for fam in ["nixie", "waterfall", "reel", "patchbay", "ladder", "radar"] {
+            let theme = builtin::all().into_iter().find(|t| t.family == fam).unwrap();
+            let mut f = family_for(fam);
+            let mut c = Canvas::new(190, 60);
+            // 150 frames of varying spectrum: the history families need a filled buffer and the
+            // rotating ones need to be past their start pose.
+            for k in 0..150 {
+                let mut d = FrameData::default();
+                let t = k as f32 / 150.0;
+                for (i, v) in d.levels.iter_mut().enumerate() {
+                    let x = i as f32 / 63.0;
+                    *v = (0.20 + 0.45 * ((x * 7.0 + t * 9.0).sin().abs())) * (1.0 - x * 0.35);
+                }
+                d.peaks = d.levels;
+                d.rms_l = 0.10;
+                d.rms_r = 0.07;
+                for (i, v) in d.waveform.iter_mut().enumerate() {
+                    *v = 0.4 * ((i as f32 / 24.0).sin());
+                }
+                d.dt_ms = 16.7;
+                d.time_s = k as f32 * 0.0167;
+                f.draw(&mut c, &theme, &d);
+            }
+            let mut out = Vec::new();
+            for y in 0..60 {
+                for x in 0..190 {
+                    let px = c.get(x, y);
+                    let a = px.a as f32 / 255.0;
+                    for ch in [px.r, px.g, px.b] {
+                        out.push((ch as f32 + 22.0 * (1.0 - a)).min(255.0) as u8);
+                    }
+                    out.push(255);
+                }
+            }
+            std::fs::write(dir.join(format!("new-{fam}.rgba")), &out).unwrap();
+            n += 1;
+        }
+        println!("wrote {n} new-family dumps");
     }
 }

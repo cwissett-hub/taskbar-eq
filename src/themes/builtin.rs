@@ -32,6 +32,36 @@ pub fn all() -> Vec<Theme> {
         vu_hot_pink(),
         vu_lime(),
         vu_rgb_wave(),
+        nixie_orange(),
+        nixie_ice(),
+        nixie_neon_green(),
+        nixie_magenta(),
+        nixie_aged(),
+        waterfall_heat(),
+        waterfall_ice(),
+        waterfall_viridis(),
+        waterfall_mono(),
+        waterfall_inferno(),
+        reel_studio_grey(),
+        reel_wood_console(),
+        reel_black_chrome(),
+        reel_olive_military(),
+        reel_cream_domestic(),
+        patch_classic(),
+        patch_buchla(),
+        patch_noir(),
+        patch_rainbow(),
+        patch_uv(),
+        ladder_classic(),
+        ladder_vintage(),
+        ladder_modern(),
+        ladder_amber(),
+        ladder_plasma(),
+        radar_p1(),
+        radar_amber(),
+        radar_ice(),
+        radar_alert(),
+        radar_mono(),
         vapor_sunset(),
         vapor_miami(),
         vapor_outrun(),
@@ -1028,6 +1058,866 @@ pub fn tube_red_plate() -> Theme {
     }
 }
 
+// ===================== Nixie tubes =====================
+/// Shared skeleton for the nixie row.
+///
+/// `ghost` earns its keep here rather than being switched off as the valve row does: in a nixie the
+/// nine UNLIT cathodes are visible wire, and they are what tells you how high the struck digit is
+/// sitting. At 0.0 the family degenerates to a single floating digit with no scale behind it.
+fn nixie_base() -> Theme {
+    Theme {
+        family: "nixie".into(),
+        // No panel texture: the tubes already carry their own interior, rails and rim, and a
+        // scanline or grille pattern over a 3px glyph competes with the digit for the same pixels.
+        texture: Texture::None_,
+        ghost: 0.13,
+        // Tight, for the same reason as the valve row: the envelopes are 9px apart, and a wide
+        // blur welds the row into one bar. Brightness comes from glow_strength, not radius.
+        bloom: 4.0,
+        glow_strength: 0.60,
+        ..Theme::default()
+    }
+}
+
+/// The reference: IN-12 neon orange in clear glass on a dark chassis.
+pub fn nixie_orange() -> Theme {
+    Theme {
+        id: "nixie-orange".into(),
+        name: "Nixie orange".into(),
+        lit: "#ff7a1a".into(),
+        hot: "#ffd9a8".into(),
+        panel: "#0d0a06".into(),
+        panel_alpha: 1.0,
+        edge: "#8a5a28".into(),
+        edge_alpha: 0.22,
+        tube: TubeParams {
+            chassis_top: "#3a3128".into(),
+            chassis_bottom: "#14110c".into(),
+            internals: "#080604".into(),
+            socket: "#241a10".into(),
+            collar: "#8a6a2a".into(),
+            glass: "#e8dcc8".into(),
+            ..TubeParams::default()
+        },
+        ..nixie_base()
+    }
+}
+
+/// Cold blue-white - the argon-filled tubes, not the neon ones.
+pub fn nixie_ice() -> Theme {
+    Theme {
+        id: "nixie-ice".into(),
+        name: "Nixie ice".into(),
+        lit: "#a8dcff".into(),
+        hot: "#f0faff".into(),
+        panel: "#05090f".into(),
+        panel_alpha: 1.0,
+        edge: "#4a7ea8".into(),
+        edge_alpha: 0.22,
+        tube: TubeParams {
+            chassis_top: "#2a3440".into(),
+            chassis_bottom: "#0c1016".into(),
+            internals: "#04070a".into(),
+            socket: "#141a20".into(),
+            collar: "#8d9aa8".into(),
+            glass: "#dcecf8".into(),
+            ..TubeParams::default()
+        },
+        ..nixie_base()
+    }
+}
+
+/// Green, for a row that matches the Matrix VFD.
+pub fn nixie_neon_green() -> Theme {
+    Theme {
+        id: "nixie-green".into(),
+        name: "Nixie green".into(),
+        lit: "#5cff9a".into(),
+        hot: "#e0ffec".into(),
+        panel: "#050e08".into(),
+        panel_alpha: 1.0,
+        edge: "#3f8a58".into(),
+        edge_alpha: 0.22,
+        tube: TubeParams {
+            chassis_top: "#26362a".into(),
+            chassis_bottom: "#0a120c".into(),
+            internals: "#040806".into(),
+            socket: "#141c16".into(),
+            collar: "#7f9a84".into(),
+            glass: "#d8ece0".into(),
+            ..TubeParams::default()
+        },
+        ..nixie_base()
+    }
+}
+
+/// Magenta. No real nixie ever glowed this colour; it is here because the row reads well against a
+/// violet chassis and the family should not be five shades of orange.
+pub fn nixie_magenta() -> Theme {
+    Theme {
+        id: "nixie-magenta".into(),
+        name: "Nixie magenta".into(),
+        lit: "#ff5ce0".into(),
+        hot: "#ffd4f6".into(),
+        panel: "#0c0510".into(),
+        panel_alpha: 1.0,
+        edge: "#8a3f9a".into(),
+        edge_alpha: 0.24,
+        tube: TubeParams {
+            chassis_top: "#382a42".into(),
+            chassis_bottom: "#120c18".into(),
+            internals: "#080410".into(),
+            socket: "#1e1424".into(),
+            collar: "#9a7fa8".into(),
+            glass: "#ecdcf4".into(),
+            ..TubeParams::default()
+        },
+        ..nixie_base()
+    }
+}
+
+/// Sixty years in a drawer: a browned envelope, sputtered glass and a tired cathode.
+///
+/// The dim look is spent on the ENVELOPE rather than on `lit`, which stays bright enough to clear
+/// 3:1 against its own panel - an aged tube is one you read through cloudy glass, not one you
+/// cannot read. `glass` is a dirty grey-brown instead of near-white so the rim reads as sputtered
+/// deposit, `glow_strength` is down because a tired cathode's discharge does not reach the walls,
+/// and `ghost` is UP because on an old tube the unlit cathodes have gone visibly cloudy.
+pub fn nixie_aged() -> Theme {
+    Theme {
+        id: "nixie-aged".into(),
+        name: "Nixie aged".into(),
+        lit: "#d98a3a".into(),
+        hot: "#f2c68a".into(),
+        panel: "#0a0908".into(),
+        panel_alpha: 1.0,
+        edge: "#6a5540".into(),
+        edge_alpha: 0.18,
+        ghost: 0.18,
+        bloom: 5.0,
+        glow_strength: 0.34,
+        tube: TubeParams {
+            chassis_top: "#2e2a22".into(),
+            chassis_bottom: "#100e0a".into(),
+            internals: "#0a0806".into(),
+            socket: "#1e1810".into(),
+            collar: "#6e5a34".into(),
+            glass: "#8f8676".into(),
+            ..TubeParams::default()
+        },
+        ..nixie_base()
+    }
+}
+
+// ===================== Spectrogram =====================
+fn waterfall_base() -> Theme {
+    Theme {
+        family: "waterfall".into(),
+        texture: Texture::None_,
+        ghost: 0.0,
+        // Tight, and tighter than any other family's. The bloom kernel is separable and blurs
+        // along the TIME axis as well as the frequency axis, so a wide radius smears three
+        // seconds of history into a wash - a snare stops being a 1px column and becomes a
+        // gradient. At 2 it only softens the boundary between a lit cell and the dark panel
+        // beside it, which is where a spectrogram wants its glow.
+        bloom: 2.0,
+        glow_strength: 0.45,
+        // Snappier than the segmented defaults every family inherits. A spectrogram's whole
+        // subject is WHEN something happened, and a 143ms decay smears the onset across nine
+        // columns of the plot, which is 9px at the reference width.
+        ballistics: Ballistics { attack: 0.85, decay: 0.26, peak_fall: 0.006 },
+        ..Theme::default()
+    }
+}
+
+/// Classic heat: black through red and yellow to white.
+///
+/// `zones` are the ramp's authored stops - see `render::waterfall::ramp_stops`. There is no black
+/// stop because there does not need to be one: the ramp's bottom stop is synthesised fully
+/// transparent, so the near-black panel IS the black end. That is also what lets every authored
+/// stop stay bright enough to clear the project's 3:1 contrast rule against its own panel, which a
+/// real dark-red stop could not.
+pub fn waterfall_heat() -> Theme {
+    Theme {
+        id: "waterfall-heat".into(),
+        name: "Heat".into(),
+        // lit/hot are the fallback ramp for an external theme that declares no zones, so they are
+        // the mid and top of this ramp rather than an unrelated accent pair.
+        lit: "#ffb02a".into(),
+        hot: "#fff4de".into(),
+        panel: "#0a0503".into(),
+        panel_alpha: 1.0,
+        edge: "#d4622a".into(),
+        edge_alpha: 0.20,
+        zones: vec![
+            Zone { upto: 0.30, lit: "#ff3b0f".into(), hot: "#ff6a2a".into() },
+            Zone { upto: 0.64, lit: "#ffb02a".into(), hot: "#ffd06a".into() },
+            Zone { upto: 1.01, lit: "#fff4de".into(), hot: "#ffffff".into() },
+        ],
+        ..waterfall_base()
+    }
+}
+
+/// Ice: black through blue and cyan to white.
+pub fn waterfall_ice() -> Theme {
+    Theme {
+        id: "waterfall-ice".into(),
+        name: "Ice".into(),
+        lit: "#35e8ff".into(),
+        hot: "#eafcff".into(),
+        panel: "#02060c".into(),
+        panel_alpha: 1.0,
+        edge: "#3f8fd8".into(),
+        edge_alpha: 0.20,
+        zones: vec![
+            Zone { upto: 0.30, lit: "#2f6cff".into(), hot: "#5f8fff".into() },
+            Zone { upto: 0.64, lit: "#35e8ff".into(), hot: "#8ff2ff".into() },
+            Zone { upto: 1.01, lit: "#eafcff".into(), hot: "#ffffff".into() },
+        ],
+        ..waterfall_base()
+    }
+}
+
+/// Viridis, the perceptually-uniform default of every scientific spectrogram.
+///
+/// The real viridis starts at #440154, a dark purple with a contrast of 1.4:1 against a near-black
+/// panel - it would be invisible AND would fail the project's contrast rule. The ramp therefore
+/// starts at viridis' teal (#31688e, 3.3:1) and lets the transparent floor supply the dark end,
+/// which is the same thing the eye sees on a scientific plot anyway: the deep purple there is
+/// doing the job of "background".
+pub fn waterfall_viridis() -> Theme {
+    Theme {
+        id: "waterfall-viridis".into(),
+        name: "Viridis".into(),
+        lit: "#35b779".into(),
+        hot: "#fde725".into(),
+        panel: "#04080a".into(),
+        panel_alpha: 1.0,
+        edge: "#3f8f7a".into(),
+        edge_alpha: 0.20,
+        zones: vec![
+            Zone { upto: 0.30, lit: "#31688e".into(), hot: "#3f86b4".into() },
+            Zone { upto: 0.62, lit: "#35b779".into(), hot: "#6fd89a".into() },
+            Zone { upto: 1.01, lit: "#fde725".into(), hot: "#ffffff".into() },
+        ],
+        ..waterfall_base()
+    }
+}
+
+/// Monochrome, for the sonagraph look - and the one colourway where the ramp cannot hide a
+/// mistake, since every step differs only in luminance.
+pub fn waterfall_mono() -> Theme {
+    Theme {
+        id: "waterfall-mono".into(),
+        name: "Monochrome".into(),
+        lit: "#c2cad2".into(),
+        hot: "#ffffff".into(),
+        panel: "#060708".into(),
+        panel_alpha: 1.0,
+        edge: "#8a949e".into(),
+        edge_alpha: 0.20,
+        zones: vec![
+            Zone { upto: 0.32, lit: "#7f8a94".into(), hot: "#9aa4ae".into() },
+            Zone { upto: 0.66, lit: "#c2cad2".into(), hot: "#dde2e8".into() },
+            Zone { upto: 1.01, lit: "#ffffff".into(), hot: "#ffffff".into() },
+        ],
+        ..waterfall_base()
+    }
+}
+
+/// Inferno: purple through orange to pale yellow.
+///
+/// Same compromise as viridis at the dark end - inferno's #420a68 and #932667 are both under
+/// 3:1 against this panel (2.5:1 for the magenta), so the ramp opens at a brighter magenta and
+/// the transparent floor carries the near-black.
+pub fn waterfall_inferno() -> Theme {
+    Theme {
+        id: "waterfall-inferno".into(),
+        name: "Inferno".into(),
+        lit: "#f2701e".into(),
+        hot: "#fcffa4".into(),
+        panel: "#08040a".into(),
+        panel_alpha: 1.0,
+        edge: "#a8407e".into(),
+        edge_alpha: 0.20,
+        zones: vec![
+            Zone { upto: 0.28, lit: "#b5307a".into(), hot: "#d0559a".into() },
+            Zone { upto: 0.60, lit: "#f2701e".into(), hot: "#ffa04a".into() },
+            Zone { upto: 1.01, lit: "#fcffa4".into(), hot: "#ffffff".into() },
+        ],
+        ..waterfall_base()
+    }
+}
+
+// ===================== Reel-to-reel =====================
+/// The reel-to-reel family reuses `TubeParams` rather than introducing a table of its own, and
+/// the mapping is close enough to be worth stating once here instead of in five colourways:
+///
+/// | field | on a tape deck |
+/// |---|---|
+/// | `chassis_top` / `chassis_bottom` | the deck plate, lit from above |
+/// | `internals` | the tape itself, and the head stack - the darkest thing on the deck |
+/// | `socket` | the reel flange (the visible disc) |
+/// | `collar` | rim, hub, screws and the head's top face - chrome or brass |
+/// | `glass` | the sheen along the top edge of the tape, and the head gap |
+///
+/// `internals` must stay clearly DARKER than `chassis_bottom`: the tape is read as a dark curve
+/// against the plate, and the plate's gradient is at its darkest exactly where the tape sags to
+/// at full level. A theme that gets this wrong loses the family's position cue, not just some
+/// contrast.
+fn reel_base() -> Theme {
+    Theme {
+        family: "reel".into(),
+        // The plate has its own gradient; a segmented-style overlay texture on top of it just
+        // muddies the reels.
+        texture: Texture::None_,
+        // Dormant strip bars. Without them the record-level meter reads as switched off between
+        // notes, which on a deck is the one thing that should never look off.
+        ghost: 0.12,
+        // Tight, for the same reason as the valve row: the spokes are 3-6px wide and a wide blur
+        // welds the three arms into a bright disc, which is precisely the invisible-rotation
+        // failure the spokes exist to avoid.
+        bloom: 4.0,
+        glow_strength: 0.55,
+        ..Theme::default()
+    }
+}
+
+/// The reference: a grey broadcast machine, chrome rims, cold blue-white meters.
+pub fn reel_studio_grey() -> Theme {
+    Theme {
+        id: "reel-studio-grey".into(),
+        name: "Studio grey".into(),
+        lit: "#b9d8ff".into(),
+        hot: "#eaf4ff".into(),
+        panel: "#22252a".into(),
+        panel_alpha: 1.0,
+        edge: "#7d8894".into(),
+        edge_alpha: 0.20,
+        tube: TubeParams {
+            chassis_top: "#4a505c".into(),
+            chassis_bottom: "#191c22".into(),
+            internals: "#0a0b0e".into(),
+            socket: "#2e333c".into(),
+            collar: "#aab4c2".into(),
+            glass: "#dfe8f2".into(),
+            ..TubeParams::default()
+        },
+        ..reel_base()
+    }
+}
+
+/// Walnut end cheeks and brass - the domestic hi-fi console.
+pub fn reel_wood_console() -> Theme {
+    Theme {
+        id: "reel-wood-console".into(),
+        name: "Warm wood console".into(),
+        lit: "#ffd08a".into(),
+        hot: "#fff2d8".into(),
+        panel: "#2a1d12".into(),
+        panel_alpha: 1.0,
+        edge: "#9a7040".into(),
+        edge_alpha: 0.22,
+        tube: TubeParams {
+            chassis_top: "#5a3d24".into(),
+            chassis_bottom: "#1b1108".into(),
+            internals: "#0d0906".into(),
+            socket: "#3a2716".into(),
+            collar: "#c79a4a".into(),
+            glass: "#f0dcb8".into(),
+            ..TubeParams::default()
+        },
+        ..reel_base()
+    }
+}
+
+/// Near-black plate, bright chrome, white meters - the mastering deck.
+pub fn reel_black_chrome() -> Theme {
+    Theme {
+        id: "reel-black-chrome".into(),
+        name: "Black and chrome".into(),
+        lit: "#e8f2ff".into(),
+        hot: "#ffffff".into(),
+        panel: "#0e1013".into(),
+        panel_alpha: 1.0,
+        edge: "#98a6b6".into(),
+        edge_alpha: 0.20,
+        tube: TubeParams {
+            chassis_top: "#33383f".into(),
+            // Not black. The plate's gradient bottoms out where the tape sags to, and at
+            // #0a0c0f the tape and the plate were within 4 luminance of each other there - the
+            // sag was invisible at exactly the levels it matters most.
+            chassis_bottom: "#141821".into(),
+            internals: "#06070b".into(),
+            socket: "#1c2027".into(),
+            collar: "#c2ccd8".into(),
+            glass: "#ffffff".into(),
+            ..TubeParams::default()
+        },
+        ..reel_base()
+    }
+}
+
+/// Olive drab and brass - the field recorder.
+pub fn reel_olive_military() -> Theme {
+    Theme {
+        id: "reel-olive-military".into(),
+        name: "Olive military".into(),
+        lit: "#d4e8a8".into(),
+        hot: "#f2ffd8".into(),
+        panel: "#232a1c".into(),
+        panel_alpha: 1.0,
+        edge: "#6f7a52".into(),
+        edge_alpha: 0.22,
+        tube: TubeParams {
+            chassis_top: "#47513a".into(),
+            chassis_bottom: "#171c11".into(),
+            internals: "#090b07".into(),
+            socket: "#333c26".into(),
+            collar: "#8a6a2a".into(),
+            glass: "#cfe0d8".into(),
+            ..TubeParams::default()
+        },
+        ..reel_base()
+    }
+}
+
+/// Cream plastic reels and gold trim - the 1960s domestic machine. The only colourway where the
+/// FLANGE is the lightest thing on the deck, which is why the wound tape pack has to stay dark:
+/// the spokes are read against the pack, not against the flange.
+pub fn reel_cream_domestic() -> Theme {
+    Theme {
+        id: "reel-cream-domestic".into(),
+        name: "Cream domestic".into(),
+        lit: "#ffe2aa".into(),
+        hot: "#fff6e0".into(),
+        panel: "#1b1610".into(),
+        panel_alpha: 1.0,
+        edge: "#b89a68".into(),
+        edge_alpha: 0.20,
+        tube: TubeParams {
+            chassis_top: "#3e372c".into(),
+            chassis_bottom: "#14110c".into(),
+            internals: "#0b0806".into(),
+            socket: "#d8cbb0".into(),
+            collar: "#b8a888".into(),
+            glass: "#fff6e0".into(),
+            ..TubeParams::default()
+        },
+        ..reel_base()
+    }
+}
+
+// ===================== Patchbay =====================
+fn patchbay_base() -> Theme {
+    Theme {
+        family: "patchbay".into(),
+        texture: Texture::None_,
+        ghost: 0.0,
+        // Tight. The only thing that blooms is a 1px core down each cable, and a wider blur
+        // welds neighbouring cables into one band - at which point the SAG, which is the whole
+        // cue this family rests on, cannot be read at all.
+        bloom: 4.0,
+        glow_strength: 0.50,
+        ..Theme::default()
+    }
+}
+
+/// The reference: black anodised panel, nickel hardware, primary-coloured cables.
+///
+/// The cables are coloured through `zones`, not by `lit` alone. A patchbay with one cable
+/// colour reads as a harp; the whole point of the hardware is that you can tell one patch from
+/// another at a glance, and `lit_at`/`hot_at` already exist to index a colour by position, so
+/// this needs nothing added to the theme schema. Five zones cycling three primaries, so the
+/// row alternates rather than running a gradient.
+pub fn patch_classic() -> Theme {
+    Theme {
+        id: "patch-classic".into(),
+        name: "Classic black".into(),
+        lit: "#ff4a3d".into(),
+        hot: "#ffcdc7".into(),
+        panel: "#0e0f11".into(),
+        panel_alpha: 1.0,
+        edge: "#9aa3ad".into(),
+        edge_alpha: 0.20,
+        zones: vec![
+            Zone { upto: 0.20, lit: "#ff4a3d".into(), hot: "#ffcdc7".into() },
+            Zone { upto: 0.40, lit: "#ffd22e".into(), hot: "#fff2c0".into() },
+            Zone { upto: 0.60, lit: "#4a9cff".into(), hot: "#cfe4ff".into() },
+            Zone { upto: 0.80, lit: "#ff4a3d".into(), hot: "#ffcdc7".into() },
+            Zone { upto: 1.01, lit: "#ffd22e".into(), hot: "#fff2c0".into() },
+        ],
+        tube: TubeParams {
+            chassis_top: "#2a2c30".into(),
+            chassis_bottom: "#0a0b0d".into(),
+            internals: "#050607".into(),
+            socket: "#08090a".into(),
+            collar: "#b9bfc7".into(),
+            glass: "#e6ecf2".into(),
+        },
+        ..patchbay_base()
+    }
+}
+
+/// Buchla-ish: an aged ivory panel with deep saturated cables.
+///
+/// The one deliberate inversion in the set, and it is forced by the contrast floor rather than
+/// chosen: on a cream panel a cable has to be DARK to clear 3:1, so real Buchla's bright banana
+/// leads are not available here. The consequence to know about is that the brightening cue runs
+/// backwards on this colourway - an idle cable is near-black and therefore at its most contrasty,
+/// and driving it lightens the body while the `hot` core appears as a highlight down its middle.
+/// The sag is unaffected, which is why this is acceptable: position is the primary cue and
+/// brightness was only ever the confirmation.
+pub fn patch_buchla() -> Theme {
+    Theme {
+        id: "patch-buchla".into(),
+        name: "Buchla cream".into(),
+        lit: "#7d2b1c".into(),
+        hot: "#d4643a".into(),
+        panel: "#c0b49c".into(),
+        panel_alpha: 1.0,
+        edge: "#6a5f4a".into(),
+        edge_alpha: 0.38,
+        zones: vec![
+            Zone { upto: 0.20, lit: "#7d2b1c".into(), hot: "#d4643a".into() },
+            Zone { upto: 0.40, lit: "#1f4f52".into(), hot: "#54a0a4".into() },
+            Zone { upto: 0.60, lit: "#3f4a1e".into(), hot: "#8ea052".into() },
+            Zone { upto: 0.80, lit: "#2a2f6b".into(), hot: "#6f78c8".into() },
+            Zone { upto: 1.01, lit: "#5a2350".into(), hot: "#b060a4".into() },
+        ],
+        tube: TubeParams {
+            chassis_top: "#d6cbb4".into(),
+            chassis_bottom: "#a89a80".into(),
+            internals: "#3a3226".into(),
+            socket: "#4a4132".into(),
+            collar: "#8f8570".into(),
+            glass: "#fffaf0".into(),
+        },
+        ..patchbay_base()
+    }
+}
+
+/// All-black panel, white cables. The austere one.
+pub fn patch_noir() -> Theme {
+    Theme {
+        id: "patch-noir".into(),
+        name: "Noir".into(),
+        lit: "#f2f5f8".into(),
+        hot: "#ffffff".into(),
+        panel: "#08080a".into(),
+        panel_alpha: 1.0,
+        edge: "#7e838a".into(),
+        edge_alpha: 0.18,
+        // No zones: one cable colour is the point here, so the sag is carrying the whole
+        // reading. Also the case that proves `lit_at` degrades to `lit` with no special case.
+        tube: TubeParams {
+            chassis_top: "#1c1c20".into(),
+            chassis_bottom: "#050506".into(),
+            internals: "#000000".into(),
+            socket: "#040405".into(),
+            collar: "#9ba0a6".into(),
+            glass: "#f4f7fa".into(),
+        },
+        ..patchbay_base()
+    }
+}
+
+/// Rainbow cables on graphite grey - the "which one is which" panel.
+pub fn patch_rainbow() -> Theme {
+    Theme {
+        id: "patch-rainbow".into(),
+        name: "Rainbow on grey".into(),
+        lit: "#ffc21f".into(),
+        hot: "#fff2c0".into(),
+        // Graphite rather than mid-grey. A genuinely mid grey cannot clear 3:1 against
+        // saturated cables in either direction (measured: #33343a puts a red cable at 2.7:1),
+        // so "grey" here means dark grey with the brushed gradient doing the rest.
+        panel: "#2a2b30".into(),
+        panel_alpha: 1.0,
+        edge: "#b0b6bf".into(),
+        edge_alpha: 0.22,
+        zones: vec![
+            Zone { upto: 0.20, lit: "#ff4a3d".into(), hot: "#ffcdc7".into() },
+            Zone { upto: 0.40, lit: "#ffc21f".into(), hot: "#fff2c0".into() },
+            Zone { upto: 0.60, lit: "#3ddc5a".into(), hot: "#c6ffd4".into() },
+            Zone { upto: 0.80, lit: "#35c8ff".into(), hot: "#cdeeff".into() },
+            Zone { upto: 1.01, lit: "#b06aff".into(), hot: "#e6d2ff".into() },
+        ],
+        tube: TubeParams {
+            chassis_top: "#4a4c54".into(),
+            chassis_bottom: "#1d1e22".into(),
+            internals: "#111216".into(),
+            socket: "#16171a".into(),
+            collar: "#c4cad2".into(),
+            glass: "#eef2f6".into(),
+        },
+        ..patchbay_base()
+    }
+}
+
+/// Blacklight: a violet-black panel with UV-reactive cables.
+///
+/// The only colourway with the glow turned up. Everything else in the set keeps `glow_strength`
+/// at 0.50 so the cables stay separable, but a UV look is the one case where the halo IS the
+/// look, so the trade is taken knowingly: the bloom radius stays at the family's 4.0, since
+/// widening that (rather than brightening it) is what merges neighbouring cables.
+pub fn patch_uv() -> Theme {
+    Theme {
+        id: "patch-uv".into(),
+        name: "Blacklight".into(),
+        lit: "#ff3df0".into(),
+        hot: "#ffd6fb".into(),
+        panel: "#0a0618".into(),
+        panel_alpha: 1.0,
+        edge: "#8f5fd0".into(),
+        edge_alpha: 0.26,
+        glow_strength: 0.72,
+        zones: vec![
+            Zone { upto: 0.20, lit: "#ff3df0".into(), hot: "#ffd6fb".into() },
+            Zone { upto: 0.40, lit: "#3dfff0".into(), hot: "#d6fffb".into() },
+            Zone { upto: 0.60, lit: "#c8ff3d".into(), hot: "#f0ffd6".into() },
+            Zone { upto: 0.80, lit: "#ff3df0".into(), hot: "#ffd6fb".into() },
+            Zone { upto: 1.01, lit: "#3dfff0".into(), hot: "#d6fffb".into() },
+        ],
+        tube: TubeParams {
+            chassis_top: "#241a3a".into(),
+            chassis_bottom: "#070410".into(),
+            internals: "#050208".into(),
+            socket: "#0d0720".into(),
+            collar: "#7a5fd0".into(),
+            glass: "#e0c8ff".into(),
+        },
+        ..patchbay_base()
+    }
+}
+
+// ===================== LED ladder =====================
+fn ladder_base() -> Theme {
+    Theme {
+        family: "ladder".into(),
+        // No panel texture. Every variant paints a full-width sheen or grille, and any of them
+        // lifts the near-black slot that the unlit LED lenses are read against - see the
+        // "no glass panel" note in the family's module docs.
+        texture: Texture::None_,
+        // Higher than the segmented family's 0.11, and doing a different job: this is not a
+        // dormant grid behind the bars, it is the tint of the unlit LENS itself, which is the
+        // only thing that tells you where the dark half of the scale is.
+        ghost: 0.20,
+        // Tight on purpose. The column gap is 3px and the family is capped at 3 internally
+        // anyway; anything wider welds the columns together and the ladder stops being
+        // countable.
+        bloom: 2.0,
+        glow_strength: 0.30,
+        edge: "#c8d2d7".into(),
+        edge_alpha: 0.16,
+        // Slightly slower decay than the VFD's, with a fast attack: an LED ladder that snaps
+        // back instantly flickers, and this family carries its own peak-hold anyway so the
+        // shared `peak_fall` only feeds `FrameData.peaks`, which it does not read.
+        ballistics: Ballistics { attack: 0.60, decay: 0.14, peak_fall: 0.0045 },
+        ..Theme::default()
+    }
+}
+
+/// The reference: the classic green-amber-red scale, same three hexes as the segmented
+/// `classic-three-colour` so the two families' idea of "loud" matches on screen.
+pub fn ladder_classic() -> Theme {
+    Theme {
+        id: "ladder-classic".into(),
+        name: "Classic green-amber-red".into(),
+        lit: "#3ddc5a".into(),
+        hot: "#d8ffe2".into(),
+        panel: "#0a0c0d".into(),
+        panel_alpha: 1.0,
+        zones: vec![
+            Zone { upto: 0.58, lit: "#3ddc5a".into(), hot: "#b6ffc6".into() },
+            Zone { upto: 0.84, lit: "#ffc21f".into(), hot: "#fff0b8".into() },
+            Zone { upto: 1.01, lit: "#ff3b30".into(), hot: "#ffc2bd".into() },
+        ],
+        ..ladder_base()
+    }
+}
+
+/// All-red vintage: the single-colour ladder off a 70s receiver, brightening rather than
+/// changing hue toward the top. Still uses zones - a scale that only gets brighter is exactly
+/// what zones express when all three are red.
+pub fn ladder_vintage() -> Theme {
+    Theme {
+        id: "ladder-vintage-red".into(),
+        name: "All-red vintage".into(),
+        lit: "#ff3b30".into(),
+        hot: "#ffd0cb".into(),
+        panel: "#0c0403".into(),
+        panel_alpha: 1.0,
+        edge: "#b8443a".into(),
+        edge_alpha: 0.18,
+        zones: vec![
+            Zone { upto: 0.58, lit: "#c62828".into(), hot: "#ff8a7a".into() },
+            Zone { upto: 0.84, lit: "#f0402c".into(), hot: "#ffb0a4".into() },
+            Zone { upto: 1.01, lit: "#ff6b52".into(), hot: "#ffe0d8".into() },
+        ],
+        ..ladder_base()
+    }
+}
+
+/// Blue-white modern: the studio-interface look, cool blue running to white at the top.
+pub fn ladder_modern() -> Theme {
+    Theme {
+        id: "ladder-modern-blue".into(),
+        name: "Blue-white modern".into(),
+        lit: "#4fc3ff".into(),
+        hot: "#ffffff".into(),
+        panel: "#05080c".into(),
+        panel_alpha: 1.0,
+        edge: "#8fd6ff".into(),
+        edge_alpha: 0.15,
+        zones: vec![
+            Zone { upto: 0.58, lit: "#4fc3ff".into(), hot: "#d8f2ff".into() },
+            Zone { upto: 0.84, lit: "#a8e4ff".into(), hot: "#e8f8ff".into() },
+            Zone { upto: 1.01, lit: "#ffffff".into(), hot: "#ffffff".into() },
+        ],
+        ..ladder_base()
+    }
+}
+
+/// Amber-only: one colour the whole way up, for a panel that reads as level and nothing else.
+/// The one colourway with NO zones, so `lit_at`'s fallback path ships too rather than only
+/// being exercised by tests.
+pub fn ladder_amber() -> Theme {
+    Theme {
+        id: "ladder-amber".into(),
+        name: "Amber only".into(),
+        lit: "#ffb02e".into(),
+        hot: "#ffe8bf".into(),
+        panel: "#0c0703".into(),
+        panel_alpha: 1.0,
+        edge: "#e0a04a".into(),
+        edge_alpha: 0.16,
+        ..ladder_base()
+    }
+}
+
+/// Plasma orange: hotter and more saturated than the amber, running to a pale yellow tip -
+/// the arcade-cabinet end of the range.
+pub fn ladder_plasma() -> Theme {
+    Theme {
+        id: "ladder-plasma".into(),
+        name: "Plasma orange".into(),
+        lit: "#ff6a18".into(),
+        hot: "#fff0d0".into(),
+        panel: "#0d0603".into(),
+        panel_alpha: 1.0,
+        edge: "#ff8c3a".into(),
+        edge_alpha: 0.18,
+        zones: vec![
+            Zone { upto: 0.58, lit: "#ff4d00".into(), hot: "#ffb07a".into() },
+            Zone { upto: 0.84, lit: "#ff8c1a".into(), hot: "#ffd9a8".into() },
+            Zone { upto: 1.01, lit: "#ffd166".into(), hot: "#fff6e0".into() },
+        ],
+        ..ladder_base()
+    }
+}
+
+// ===================== Radar =====================
+fn radar_base() -> Theme {
+    Theme {
+        family: "radar".into(),
+        texture: Texture::None_,
+        ghost: 0.0,
+        // Tight, and dimmer than the valve row's. The face carries up to 32 blips plus a
+        // beam, and a wide halo on that many small marks welds neighbouring bearings into one
+        // arc - which destroys the only thing the display is for.
+        bloom: 4.0,
+        glow_strength: 0.42,
+        // Repurposed as phosphor persistence by the radar family (as `scope` already does for
+        // its trace), so it is the knob for how much history the wake shows. 0.30 puts the
+        // oldest return at ~12% brightness after one sweep.
+        fade: 0.30,
+        ..Theme::default()
+    }
+}
+
+/// The reference: P1 phosphor, the green every real PPI used.
+pub fn radar_p1() -> Theme {
+    Theme {
+        id: "radar-p1".into(),
+        name: "P1 green".into(),
+        lit: "#3dff7a".into(),
+        hot: "#d8ffe6".into(),
+        panel: "#020a05".into(),
+        panel_alpha: 1.0,
+        edge: "#3f8a58".into(),
+        edge_alpha: 0.20,
+        ..radar_base()
+    }
+}
+
+/// Amber, the later CRT stock - warmer and easier to read for long watches.
+pub fn radar_amber() -> Theme {
+    Theme {
+        id: "radar-amber".into(),
+        name: "Amber".into(),
+        lit: "#ffb43c".into(),
+        hot: "#ffe8c4".into(),
+        panel: "#0f0902".into(),
+        panel_alpha: 1.0,
+        edge: "#a8762a".into(),
+        edge_alpha: 0.20,
+        // A longer wake than P1: amber tubes were the slow ones, and it also gives a second
+        // colourway with visibly more history rather than just a different hue.
+        fade: 0.46,
+        ..radar_base()
+    }
+}
+
+pub fn radar_ice() -> Theme {
+    Theme {
+        id: "radar-ice".into(),
+        name: "Ice blue".into(),
+        lit: "#7fdcff".into(),
+        hot: "#e4f8ff".into(),
+        panel: "#020b12".into(),
+        panel_alpha: 1.0,
+        edge: "#3f83a8".into(),
+        edge_alpha: 0.20,
+        ..radar_base()
+    }
+}
+
+/// Red alert. Red is the darkest usable accent here, so the halo is pushed up to compensate -
+/// at the shared 0.42 the blips read as maroon smudges against the panel rather than as
+/// contacts.
+pub fn radar_alert() -> Theme {
+    Theme {
+        id: "radar-alert".into(),
+        name: "Red alert".into(),
+        lit: "#ff4436".into(),
+        hot: "#ffcac4".into(),
+        panel: "#0d0303".into(),
+        panel_alpha: 1.0,
+        edge: "#a83028".into(),
+        edge_alpha: 0.22,
+        glow_strength: 0.55,
+        // Short: an alert display should look urgent, and less history means the beam is the
+        // dominant feature.
+        fade: 0.20,
+        ..radar_base()
+    }
+}
+
+pub fn radar_mono() -> Theme {
+    Theme {
+        id: "radar-mono".into(),
+        name: "Monochrome".into(),
+        lit: "#dbe6f2".into(),
+        hot: "#ffffff".into(),
+        panel: "#05070b".into(),
+        panel_alpha: 1.0,
+        edge: "#8fa4b8".into(),
+        edge_alpha: 0.18,
+        ..radar_base()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1231,11 +2121,36 @@ mod tests {
     }
 
     #[test]
-    fn only_the_classic_theme_uses_zones() {
-        for t in all() {
+    fn within_the_segmented_family_only_the_classic_theme_uses_zones() {
+        // Narrowed from "only the classic theme uses zones", which was true when `zones` existed
+        // solely to express green/amber/red headroom on a bar meter. It is now also the natural way
+        // to declare a multi-stop COLOUR RAMP, which the spectrogram and the LED ladder both need -
+        // so the old premise is false by design rather than by accident.
+        //
+        // What is still worth guarding is the original intent: inside the segmented family, zones
+        // change what a bar MEANS, so a second segmented colourway acquiring them by a stray
+        // `..classic_three_colour()` would silently turn a plain meter into a headroom meter.
+        for t in all().iter().filter(|t| t.family == "segmented") {
             let expect_zones = t.id == "classic-three-colour";
-            assert_eq!(!t.zones.is_empty(), expect_zones, "{}", t.id);
+            assert_eq!(
+                !t.zones.is_empty(),
+                expect_zones,
+                "{} is a segmented theme; only classic-three-colour should carry zones",
+                t.id
+            );
         }
+        // And any family that does use them as a ramp must have them in ascending order reaching
+        // the top - already asserted by `zones_ascend_and_reach_the_top`, which covers every family.
+        let themes = all();
+        let rampers: std::collections::BTreeSet<&str> = themes
+            .iter()
+            .filter(|t| !t.zones.is_empty() && t.family != "segmented")
+            .map(|t| t.family.as_str())
+            .collect();
+        assert!(
+            !rampers.is_empty(),
+            "if no family uses zones as a ramp any more, fold this test back into the strict version"
+        );
     }
 
     #[test]

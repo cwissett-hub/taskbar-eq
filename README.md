@@ -81,7 +81,7 @@ overlay does not exist, so the tray icon is all that is left to click.
 **Last updated: 2026-08-05.** Full test suite green (199 at the time of writing), release
 build warning-free. The colourway and family counts below are asserted by a test; the test
 count itself is a snapshot and can drift.
-**44 colourways across 5 families.**
+**74 colourways across 11 families.**
 
 | | Feature | State |
 |---|---|---|
@@ -103,6 +103,54 @@ count itself is a snapshot and can drift.
 | ✅ | Frame-rate-independent animation (`dt_ms`), so scroll and the gate's timings do not drift with load | working |
 | ✅ | **Wide display** — claims the dead taskbar left of the widget, clamped to real clearance | **unseen** |
 | ✅ | Layouts scale with width: 4 VU dials and 20 valves at 380 px, 2 and 10 at 190 px | **unseen** |
+
+**Nixie tubes** — a rank of nixies, each with ten stacked cathode digits. The *struck digit climbs*
+with the band, and the other nine stay visible as dim unlit wire, which is both what makes it
+recognisable and the scale the eye reads the lit digit's height against. Brightness carries no
+information at all. 7 tubes at 190 px, 14 at 380 px — a legible digit needs more glass than a valve
+does.
+
+| Colourway | Character |
+|---|---|
+| Nixie orange · Nixie ice · Nixie green · Nixie magenta · Nixie aged | IN-12 neon, argon blue-white, matched to Matrix Green, violet, and one with sputtered cloudy glass |
+
+**Spectrogram** — the only family that shows *history*: frequency up the vertical axis, time scrolling
+sideways, intensity as colour. A ring buffer of 512 past spectra holds raw levels rather than colours,
+so changing theme or sensitivity recolours the whole visible history instead of leaving a seam.
+
+| Colourway | Character |
+|---|---|
+| Heat · Ice · Viridis · Monochrome · Inferno | Classic sonagraph ramps. Viridis' and inferno's true dark ends measure 1.4:1 and 2.5:1 against the panel, below the 3:1 rule, so the transparent floor carries the darkest end instead |
+
+**Reel-to-reel** — two spinning reels over a VU strip. The reels *rotate*, with spokes so the rotation
+is actually visible, and the tape sag responds to level. Motion is the cue.
+
+| Colourway | Character |
+|---|---|
+| Studio grey · Warm wood · Black and chrome · Olive military · Cream domestic | |
+
+**Patchbay** — a modular synth panel: jack sockets top and bottom, curved patch cables whose *sag* and
+brightness track a band group, and LEDs that blink on bass transients.
+
+| Colourway | Character |
+|---|---|
+| Classic · Cream · All-black · Rainbow cables · Neon UV | |
+
+**LED ladder** — the hi-fi amplifier front panel: chunky discrete LEDs with *visible unlit housings*,
+so you can see where the dark ones are, plus a slow-falling peak dot above each column. Crisp rather
+than glowy, and the most readable of all of them.
+
+| Colourway | Character |
+|---|---|
+| Classic green-amber-red · Vintage red · Modern blue-white · Amber · Plasma orange | |
+
+**Radar** — a PPI sweep. The sweep line rotates leaving a decaying phosphor wake, painting blips where
+energy is as it passes each bearing, so the display builds a whole picture over one revolution. A
+180° fan from the bottom centre, because a circle does not fit a 190×60 panel.
+
+| Colourway | Character |
+|---|---|
+| P1 green · Amber · Ice blue · Red alert · Monochrome | |
 
 ### RGB wave
 
@@ -198,6 +246,17 @@ The app also writes that log on every normal launch, so a failure can be reporte
   tuned from a file. Fixed, and the parser now reads the renderer's own family list so it cannot
   fall behind again. If you wrote a theme file for either family before then, it was being
   skipped with a warning.
+- **Six families are new and only lightly reviewed.** An adversarial pass on each found real defects
+  and two are still open: the **Patchbay**'s cables fold 12.8 of the 64 bands each (only 5 cables fit
+  at 190 px), so its sag cue flattens on real music; and the **Spectrogram**'s max-fold of 64 bands
+  into ~56 rows is implemented correctly but its only test is vacuous — it passes with `max` replaced
+  by `mean`. Fixed already: the Reel's peak lamp needed rms ≥ 0.508 against a real ceiling of 0.12,
+  so it was permanently dark, and the LED ladder painted its square bezel outside the rounded panel.
+- **Every family leaks a few bezel pixels outside the rounded panel.** The bezel is drawn after
+  `clip_to_rounded_rect`, and it is square while the panel's corners are not, so ~4 pixels per corner
+  land on the bare taskbar. Measured, pre-existing, and cosmetically invisible against a dark
+  taskbar — the LED ladder was the exception worth fixing because it also drew full-height verticals
+  through both rounded corners.
 - The width is **clamped by what UI Automation reports**, so an element it cannot see is an
   element the overlay may cover. Every named taskbar element on the test machine was accounted
   for, but this has not been tried on a taskbar with third-party shell extensions.
@@ -210,7 +269,7 @@ The app also writes that log on every normal launch, so a failure can be reporte
 
 ## Themes
 
-**44 colourways across 5 families.** A *family* is a renderer with fixed geometry — code. A
+**74 colourways across 11 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
 **Segmented VFD** — a smoked-glass panel with discrete stacked segments, a faint dormant grid,
@@ -292,7 +351,7 @@ Drop a `.toml` file (any filename — the `id` inside is what matters) into
 watched, so saving the file updates the live overlay without a restart — edit a colour, hit
 save, and watch the taskbar change.
 
-A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 44
+A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 74
 built-ins, which are always embedded in the exe regardless of whether that folder exists.
 
 Failure modes are all deliberately soft, because these files are hand-authored:
@@ -353,7 +412,7 @@ PICK A FAMILY - a renderer with fixed geometry. You cannot invent one in data.
 
 FILE FORMAT - one `.toml` file per theme, saved under `%APPDATA%\taskbar-eq\themes\`
 (filename does not matter; `id` inside is the identity, and the override key - a file
-whose `id` matches one of the 44 built-ins REPLACES it, any other `id` is added):
+whose `id` matches one of the 74 built-ins REPLACES it, any other `id` is added):
 
   schema = 1
   id     = "my-theme"
