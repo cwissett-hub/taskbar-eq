@@ -63,6 +63,20 @@ const RESP_SPAN: f32 = 0.52;
 /// which is precisely what every test in this file used to do.
 const GROUP_MAX_BIAS: f32 = 0.65;
 
+/// Fraction of the envelope the cathode glow fills with no audio at all.
+///
+/// The second visual cue, and the one the brightness fix could not supply: level now drives how
+/// far the light CLIMBS the glass, not just how bright it is. The lit area used to be identical at
+/// every level - only the alphas moved - so reading the row meant comparing ten brightnesses
+/// pairwise. Ten columns of light growing from a common baseline read as one profile in a single
+/// glance instead, which is the same reason the segmented VFD is legible.
+///
+/// The bottom of the glow stays pinned where it already was, so the valve still lights from its
+/// cathode upward. Not 0.0: at idle the plate must still be backlit enough to read as a
+/// silhouette, which is part of the approved look. Raising this restores more of the idle
+/// silhouette at the cost of travel.
+const GLOW_SPAN_IDLE: f32 = 0.42;
+
 /// Per-frame fall of a valve's peak marker.
 ///
 /// Sourced from the displayed response with its own fast fall, NOT from `FrameData.peaks`. The
@@ -227,13 +241,26 @@ impl Family for Tube {
             // look like a contained light source was invisible.
             let plate_top = top + dome + glass_h / 12;
             let plate_h = (glass_h - dome - glass_h / 6).max(4);
-            let plate_mid = plate_top + plate_h / 2;
-            let reach = (glass_w as f32 * 1.15) as i32;
-            lit.radial_gradient(
+            let reach = (glass_w as f32 * 1.15).max(3.0);
+
+            // ANCHORED at the cathode, growing upward. `rx` never changes, so the glow climbs
+            // rather than fattening sideways into its neighbour.
+            //
+            // The gradient's centre sits ON the cathode and only its vertical radius grows. A
+            // centred ellipse whose centre rose with level was the obvious-looking version and it
+            // is wrong: pinning the bottom EDGE of a centred ellipse makes the bottom the dim
+            // outer stop, so the light migrates upward and vacates the cathode instead of
+            // extending from it. Measured, that version moved the interior's luminance centroid by
+            // 0.3 rows - the mechanism was there and did nothing.
+            let glow_bot = (plate_top + plate_h - 1) as f32;
+            let glow_ceil = (top + dome / 3) as f32;
+            let span = (glow_bot - glow_ceil).max(2.0)
+                * (GLOW_SPAN_IDLE + (1.0 - GLOW_SPAN_IDLE) * resp);
+            lit.elliptical_gradient(
                 cx,
-                plate_mid,
-                1,
-                reach.max(3),
+                glow_bot as i32,
+                reach,
+                span.max(2.0),
                 &[
                     // Floorless: the glow starts from nothing and gets the whole range. The
                     // "never fully out" property is carried by the filaments below instead.
@@ -267,7 +294,19 @@ impl Family for Tube {
             );
 
             // Getter flash: the silvery mirror deposited inside the dome of a real valve.
-            lit.fill_rect(cx - glass_w / 4, top + 1, (glass_w / 2).max(1), 1, Rgba::from_hex(&t.tube.glass, 0.34));
+            //
+            // Scaled by the response rather than fixed. A mirror does not emit, but it REFLECTS
+            // the cathode below it, so a constant one is wrong physically as well as visually:
+            // measured at a fixed 0.34 alpha it was the brightest thing in the centre column at
+            // 146 luminance, identical at silence and at full drive, sitting right where the
+            // climbing glow needs to be read against.
+            lit.fill_rect(
+                cx - glass_w / 4,
+                top + 1,
+                (glass_w / 2).max(1),
+                1,
+                Rgba::from_hex(&t.tube.glass, (0.16 + 0.30 * resp).clamp(0.0, 1.0)),
+            );
 
             // Peak marker. INSIDE the clip region, as a short bar no wider than the envelope
             // is at that row - see the note on `half_at`.
@@ -486,6 +525,67 @@ mod tests {
     }
 
     #[test]
+    fn the_glow_climbs_the_envelope_as_the_band_drives_it() {
+        // The second cue, and the one brightness could not provide. Position is resolved far more
+        // readily than intensity at 11px wide, and ten columns growing from a common baseline read
+        // as a profile in one glance where ten brightnesses must be compared pairwise.
+        //
+        // Measured as the TOTAL light in the upper envelope - the rows between the dome and the top
+        // of the plate, which the glow only reaches when it is driven. Three earlier metrics were
+        // each wrong in an instructive way, and the profile dump is what settled it:
+        //   - topmost lit row over the whole valve: reported row 6 at every level, because it found
+        //     the getter flash, which does not move with level;
+        //   - the interior's luminance centroid: moved the WRONG WAY once the glow was correctly
+        //     anchored at the cathode, because total luminance grows with level too, so a brighter
+        //     cathode drags the weighted mean back down;
+        //   - topmost row over an absolute threshold: the dome carries a fixed ~50-luminance
+        //     pedestal from the chassis and the bloom, so any threshold either triggers at idle or
+        //     never triggers at all.
+        let t = builtin::tube_soviet();
+        let upper_light = |level: f32| -> f64 {
+            let mut tube = Tube::default();
+            let mut c = Canvas::new(190, 60);
+            tube.draw(&mut c, &t, &frame(level));
+            let cx = 4 + ((190 - 8) as f32 / 10.0 * 0.5) as i32;
+            let mut sum = 0.0f64;
+            // Rows 10..20 sit below the getter and above the plate, so light here is glow.
+            for y in 10..20 {
+                for x in (cx - 3)..(cx + 4) {
+                    let p = c.get(x, y);
+                    sum += 0.2126 * p.r as f64 + 0.7152 * p.g as f64 + 0.0722 * p.b as f64;
+                }
+            }
+            sum
+        };
+        let idle = upper_light(0.12);
+        let driven = upper_light(0.95);
+        assert!(
+            driven > idle * 1.6,
+            "driving the band must push light up the envelope: upper-envelope light {idle:.0} at \
+             idle vs {driven:.0} when driven"
+        );
+    }
+
+    #[test]
+    fn an_idle_valve_still_shows_its_plate_backlit() {
+        // The cost of the climbing glow, and the thing to watch: at idle the glow must still back
+        // the plate, or the valve reads as two hairlines with an ember rather than as a valve.
+        // GLOW_SPAN_IDLE is the knob if this ever fails.
+        let t = builtin::tube_soviet();
+        let mut tube = Tube::default();
+        let mut c = Canvas::new(190, 60);
+        tube.draw(&mut c, &t, &frame(0.0));
+        let cx = 4 + ((190 - 8) as f32 / 10.0 * 0.5) as i32;
+        let lit_mid = (26..34).any(|y| {
+            ((cx - 4)..(cx + 5)).any(|x| {
+                let p = c.get(x, y);
+                (p.r as u32 + p.g as u32 + p.b as u32) > 90
+            })
+        });
+        assert!(lit_mid, "an idle valve must still be backlit across its plate");
+    }
+
+    #[test]
     fn tubes_glow_brighter_as_the_band_drives_them() {
         let t = builtin::tube_soviet();
         let quiet = brightness(&t, &frame(0.05));
@@ -623,5 +723,43 @@ mod tests {
             n += 1;
         }
         println!("wrote {} tube dumps to {}", n, dir.display());
+    }
+}
+
+#[cfg(test)]
+mod ladder {
+    use super::*;
+    use crate::themes::builtin;
+    /// Run: cargo test --release dump_tube_ladder -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn dump_tube_ladder() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
+        std::fs::create_dir_all(&dir).unwrap();
+        let t = builtin::tube_soviet();
+        // a staircase across the row, so each valve sits at a different level
+        let mut d = FrameData::default();
+        let n = d.levels.len();
+        for (i, v) in d.levels.iter_mut().enumerate() {
+            let tube = i * 10 / n;
+            *v = 0.12 + 0.075 * tube as f32;
+        }
+        d.peaks = d.levels;
+        let mut tube = Tube::default();
+        let mut c = Canvas::new(190, 60);
+        tube.draw(&mut c, &t, &d);
+        let mut out = Vec::new();
+        for y in 0..60 {
+            for x in 0..190 {
+                let px = c.get(x, y);
+                let a = px.a as f32 / 255.0;
+                for ch in [px.r, px.g, px.b] {
+                    out.push((ch as f32 + 22.0 * (1.0 - a)).min(255.0) as u8);
+                }
+                out.push(255);
+            }
+        }
+        std::fs::write(dir.join("tube-ladder.rgba"), &out).unwrap();
+        println!("wrote tube-ladder.rgba (valves 0..9 at rising levels)");
     }
 }

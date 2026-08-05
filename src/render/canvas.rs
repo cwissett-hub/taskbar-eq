@@ -677,6 +677,60 @@ impl Canvas {
         }
     }
 
+    /// Gradient over an ELLIPSE, so the vertical and horizontal extents can differ.
+    ///
+    /// A strict generalisation of `radial_gradient`: with `rx == ry` it produces byte-identical
+    /// output, which is asserted by a test. It exists because a meter needs to be able to grow the
+    /// LIT AREA and not only its brightness - position is resolved far more readily than intensity
+    /// at these sizes, and a light column growing from a fixed baseline reads as a profile at a
+    /// glance where ten brightnesses have to be compared pairwise.
+    ///
+    /// Distance is measured in normalised ellipse units, so `1.0` is the boundary regardless of
+    /// aspect. The inner stop is applied within one pixel of the centre, matching
+    /// `radial_gradient`'s `r_inner = 1` behaviour.
+    pub fn elliptical_gradient(&mut self, cx: i32, cy: i32, rx: f32, ry: f32, stops: &[(f32, Rgba)]) {
+        if stops.is_empty() || rx <= 0.0 || ry <= 0.0 {
+            return;
+        }
+        // Bounds in f32 before casting, for the same reason radial_gradient does it: a centre far
+        // off-canvas makes the i32 arithmetic overflow.
+        let x0 = (cx as f32 - rx).floor().max(0.0) as i32;
+        let x1 = ((cx as f32 + rx).ceil() as i32).min(self.w - 1);
+        let y0 = (cy as f32 - ry).floor().max(0.0) as i32;
+        let y1 = ((cy as f32 + ry).ceil() as i32).min(self.h - 1);
+        if x0 > x1 || y0 > y1 {
+            return;
+        }
+        // Matches radial_gradient's inner radius of 1 expressed in normalised units.
+        let inner = (1.0 / rx.max(1.0)).min(0.999);
+        for py in y0..=y1 {
+            for px in x0..=x1 {
+                let dx = (px as f32 - cx as f32) / rx;
+                let dy = (py as f32 - cy as f32) / ry;
+                let e = (dx * dx + dy * dy).sqrt();
+                if e > 1.0 {
+                    continue;
+                }
+                let (r, g, b, a) = if e <= inner {
+                    let c = stops[0].1;
+                    (c.r as f32, c.g as f32, c.b as f32, c.a as f32)
+                } else {
+                    Self::sample_stops(stops, ((e - inner) / (1.0 - inner)).clamp(0.0, 1.0))
+                };
+                self.blend_px(
+                    px,
+                    py,
+                    Rgba::new(
+                        r.clamp(0.0, 255.0).round() as u8,
+                        g.clamp(0.0, 255.0).round() as u8,
+                        b.clamp(0.0, 255.0).round() as u8,
+                        a.clamp(0.0, 255.0).round() as u8,
+                    ),
+                );
+            }
+        }
+    }
+
     /// Scanline fill of a full disc. `r <= 0` draws nothing; a centre far
     /// off-canvas draws nothing but does not panic, since each row still
     /// goes through `fill_rect`'s own clipping.
@@ -896,6 +950,50 @@ mod tests {
         c.fill_rect(0, 0, 10, 10, Rgba::new(255, 255, 255, 255));
         c.clip_to_rounded_rect(0, 0, -4, 190, 5);
         assert!(c.bits().iter().all(|&p| p == 0), "degenerate rect clips everything");
+    }
+
+    #[test]
+    fn an_elliptical_gradient_with_equal_radii_is_exactly_a_radial_one() {
+        // The whole safety argument for replacing radial_gradient in the valve family is that the
+        // ellipse is a STRICT generalisation - so with equal radii it must be byte-identical, not
+        // merely similar. If this drifts, the approved valve look drifts with it.
+        let stops = [
+            (0.0, Rgba::new(0xff, 0xd9, 0xa0, 240)),
+            (0.40, Rgba::new(0xff, 0x8a, 0x2a, 170)),
+            (1.0, Rgba::new(0xff, 0x8a, 0x2a, 0)),
+        ];
+        for r in [3i32, 7, 12, 25] {
+            let mut a = Canvas::new(64, 64);
+            a.radial_gradient(30, 34, 1, r, &stops);
+            let mut b = Canvas::new(64, 64);
+            b.elliptical_gradient(30, 34, r as f32, r as f32, &stops);
+            assert_eq!(a.bits(), b.bits(), "radii {r}: the ellipse must reduce to the circle");
+        }
+    }
+
+    #[test]
+    fn an_elliptical_gradient_grows_only_the_axis_it_is_told_to() {
+        // The point of the primitive: a taller ry must extend the light vertically WITHOUT
+        // fattening it sideways, or a valve's glow would bleed into its neighbour as it lights.
+        let stops = [(0.0, Rgba::new(255, 255, 255, 255)), (1.0, Rgba::new(255, 255, 255, 0))];
+        let extent = |rx: f32, ry: f32| -> (i32, i32) {
+            let mut c = Canvas::new(64, 64);
+            c.elliptical_gradient(32, 40, rx, ry, &stops);
+            let (mut wide, mut tall) = (0, 0);
+            for y in 0..64 {
+                for x in 0..64 {
+                    if c.get(x, y).a > 8 {
+                        wide = wide.max((x - 32).abs());
+                        tall = tall.max((y - 40).abs());
+                    }
+                }
+            }
+            (wide, tall)
+        };
+        let (w1, h1) = extent(10.0, 6.0);
+        let (w2, h2) = extent(10.0, 20.0);
+        assert!(h2 > h1 + 8, "ry must extend it vertically: {h1} -> {h2}");
+        assert_eq!(w1, w2, "rx unchanged must leave the horizontal extent identical");
     }
 
     #[test]

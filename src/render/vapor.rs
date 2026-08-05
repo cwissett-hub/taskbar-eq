@@ -74,6 +74,17 @@ pub struct Vapor {
     bolt_seed: u32,
     /// Slow-following peak of the smoothed band levels, for terrain auto-ranging.
     band_peak: f32,
+    /// One spectrum snapshot per grid line, newest first - index 0 is the line at the horizon.
+    ///
+    /// THE reason the ground read as static, and it is structural rather than a matter of
+    /// amplitude. Every line used to sample the CURRENT frame's spectrum, so all twelve rendered
+    /// the same curve at different scales: the entire surface flexed in unison and nothing ever
+    /// travelled. Raising the displacement made that flex bigger without making it move, which is
+    /// why it still looked like the ground was not doing much.
+    ///
+    /// A real terrain has history. Each line now keeps the spectrum from when it was born at the
+    /// horizon, so a bass hit raises one ridge that then scrolls toward the viewer.
+    rows: Vec<Vec<f32>>,
 }
 
 /// Deterministic value hash. Used for bolt paths instead of a real RNG so a given seed
@@ -314,7 +325,31 @@ impl Family for Vapor {
         let bolt = self.update_bolt(&levels, t, dt);
         let band_gain = self.update_band_gain(&levels, theme.sensitivity, dt);
 
+        let before_scroll = self.scroll;
         self.scroll = (self.scroll + t.scroll * 0.010 * dt).fract();
+
+        // Advance the terrain history. `f = (k + scroll) / lines`, so when the phase wraps every
+        // line inherits the position of the one behind it - which means the shapes must rotate by
+        // one at the same moment, or they would visibly jump.
+        let want_rows = (t.lines.max(1) + 4) as usize;
+        let stale_rows = self.rows.len() != want_rows
+            || self.rows.first().map(|r| r.len() != levels.len()).unwrap_or(true);
+        if stale_rows {
+            // A theme reload can change `lines`; start every row from the live spectrum rather
+            // than from zeros, or the grid flattens for a full scroll cycle after a reload.
+            self.rows = vec![levels.clone(); want_rows];
+        }
+        if self.scroll < before_scroll {
+            self.rows.pop();
+            self.rows.insert(0, levels.clone());
+        } else {
+            // The horizon line keeps tracking the live spectrum until it is born, so the leading
+            // edge of the terrain responds immediately instead of being up to one line-period
+            // stale. Every line behind it is frozen at its own birth.
+            if let Some(front) = self.rows.first_mut() {
+                front.copy_from_slice(&levels);
+            }
+        }
 
         let horizon = (h as f32 * t.horizon).round() as i32;
         let ground_h = (h - horizon - 2).max(1);
@@ -380,6 +415,8 @@ impl Family for Vapor {
             }
             let x0 = vpx as f32 - half_w;
             let x1 = vpx as f32 + half_w;
+            // This line's own snapshot, not the live spectrum - see `rows`.
+            let row = &self.rows[(k as usize).min(self.rows.len() - 1)];
 
             // Sample the spectrum across THIS line's own width, so the same frequency sits
             // at the same fraction of every line and the ridges line up into hills.
@@ -396,12 +433,12 @@ impl Family for Vapor {
                 // Nearest-neighbour made each 2px column jump to a new band level, so the
                 // ridge stepped up and down by a pixel or two between samples and rendered
                 // as a stipple rather than a line.
-                let fb = x01 * (levels.len() - 1) as f32;
-                let i0 = (fb.floor() as usize).min(levels.len() - 1);
-                let i1 = (i0 + 1).min(levels.len() - 1);
+                let fb = x01 * (row.len() - 1) as f32;
+                let i0 = (fb.floor() as usize).min(row.len() - 1);
+                let i1 = (i0 + 1).min(row.len() - 1);
                 let frac = fb - i0 as f32;
-                let v = ((levels[i0] * (1.0 - frac) + levels[i1] * frac) * band_gain)
-                    .clamp(0.0, 1.0);
+                let v =
+                    ((row[i0] * (1.0 - frac) + row[i1] * frac) * band_gain).clamp(0.0, 1.0);
                 let y = depth_y - v * amp_max * f;
                 pts.push((x, y.round() as i32));
                 vals.push(v);
@@ -489,6 +526,66 @@ mod tests {
         v.draw(&mut c, &builtin::vapor_sunset(), &spectrum(0.6));
         let lit = c.bits().iter().filter(|p| **p != 0).count();
         assert!(lit > 190 * 40, "the scene should cover the panel, got {lit} px");
+    }
+
+    #[test]
+    fn the_terrain_remembers_a_transient_after_the_sound_has_gone() {
+        // The defect this guards is why the ground read as static: every line sampled the CURRENT
+        // spectrum, so all of them drew the same curve and the whole surface flexed in unison -
+        // nothing ever travelled toward the viewer, at any amplitude.
+        //
+        // A terrain with memory must still show the ridge some frames AFTER the sound stops.
+        let t = builtin::vapor_sunset();
+        let quiet = spectrum(0.05);
+
+        let mut hit = Vapor::default();
+        let mut c_hit = Canvas::new(190, 60);
+        for _ in 0..6 {
+            hit.draw(&mut c_hit, &t, &quiet);
+        }
+        hit.draw(&mut c_hit, &t, &spectrum(0.95));
+        for _ in 0..4 {
+            hit.draw(&mut c_hit, &t, &quiet);
+        }
+
+        let mut calm = Vapor::default();
+        let mut c_calm = Canvas::new(190, 60);
+        for _ in 0..11 {
+            calm.draw(&mut c_calm, &t, &quiet);
+        }
+
+        let differing = c_hit
+            .bits()
+            .iter()
+            .zip(c_calm.bits().iter())
+            .filter(|(a, b)| a != b)
+            .count();
+        assert!(
+            differing > 150,
+            "four frames after the transient the ridge must still be on screen, but only \
+             {differing} pixels differ from a run that never saw it"
+        );
+    }
+
+    #[test]
+    fn each_grid_line_holds_its_own_snapshot_not_the_live_spectrum() {
+        // Checks the mechanism directly: after a loud frame followed by quiet ones the rows must
+        // hold DIFFERENT spectra. Identical rows mean the ring is not rotating and the surface is
+        // back to flexing in unison.
+        let t = builtin::vapor_sunset();
+        let mut v = Vapor::default();
+        let mut c = Canvas::new(190, 60);
+        v.draw(&mut c, &t, &spectrum(0.9));
+        for _ in 0..140 {
+            v.draw(&mut c, &t, &spectrum(0.08));
+        }
+        let front: f32 = v.rows[0].iter().sum();
+        let distinct = v.rows.iter().any(|r| (r.iter().sum::<f32>() - front).abs() > 0.5);
+        assert!(
+            distinct,
+            "rows must hold different moments, but all {} carry the same spectrum",
+            v.rows.len()
+        );
     }
 
     #[test]
