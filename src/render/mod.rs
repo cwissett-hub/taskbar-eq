@@ -1,6 +1,7 @@
 pub mod canvas;
 pub mod golden;
 pub mod scope;
+pub mod vapor;
 pub mod segmented;
 pub mod vu;
 
@@ -22,6 +23,13 @@ pub struct FrameData {
     pub rms_l: f32,
     #[allow(dead_code)]
     pub rms_r: f32,
+    /// Milliseconds since the previous frame.
+    ///
+    /// The render loop sleeps a fixed 16ms, so its real period is that plus however long
+    /// the frame took - a per-frame animation step drifts with load. Only the vaporwave
+    /// family reads this; the older families' ballistics were tuned per-frame and are left
+    /// alone rather than silently retimed.
+    pub dt_ms: f32,
 }
 
 impl Default for FrameData {
@@ -32,6 +40,7 @@ impl Default for FrameData {
             waveform: [0.0; 256],
             rms_l: 0.0,
             rms_r: 0.0,
+            dt_ms: 16.7,
         }
     }
 }
@@ -48,9 +57,18 @@ pub trait Family {
     fn draw(&mut self, c: &mut Canvas, t: &Theme, d: &FrameData);
 }
 
+/// Every family the renderer can dispatch on.
+///
+/// Shared with the theme tests rather than duplicated there: `family_for` falls back to
+/// `segmented` for anything unrecognised, so a theme carrying a typo'd or unimplemented
+/// family name would silently render as the wrong meter instead of failing. This list is
+/// what lets that be asserted, and adding a family is a one-line change in one place.
+pub const KNOWN_FAMILIES: [&str; 4] = ["segmented", "scope", "vu", "vapor"];
+
 pub fn family_for(id: &str) -> Box<dyn Family> {
     match id {
         "scope" => Box::new(scope::Scope::default()),
+        "vapor" => Box::new(vapor::Vapor::default()),
         "vu" => Box::new(vu::Vu::default()),
         _ => Box::new(segmented::Segmented),
     }

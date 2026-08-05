@@ -1,4 +1,4 @@
-use super::{Texture, Theme, Zone};
+use super::{Texture, Theme, VaporParams, Zone};
 use crate::dsp::ballistics::Ballistics;
 use serde::Deserialize;
 use std::fmt;
@@ -73,6 +73,79 @@ struct RawBallistics {
     peak_fall: Option<f32>,
 }
 
+/// The `[vaporwave]` table. Every field optional, so a theme file overrides only what it
+/// cares about; names match the design spec's schema exactly and must not be renamed
+/// without bumping `schema`.
+#[derive(Deserialize, Default)]
+struct RawVapor {
+    horizon: Option<f32>,
+    amp: Option<f32>,
+    lines: Option<i32>,
+    verts: Option<i32>,
+    scroll: Option<f32>,
+    persp: Option<f32>,
+    spread: Option<f32>,
+    glow: Option<f32>,
+    smoothing: Option<f32>,
+    sun: Option<f32>,
+    slots: Option<i32>,
+    slot_bias: Option<f32>,
+    slot_top: Option<f32>,
+    halo: Option<f32>,
+    warmth: Option<f32>,
+    bolt_sens: Option<f32>,
+    bolt_bright: Option<f32>,
+    sky_flash: Option<f32>,
+    grid_flash: Option<f32>,
+    bolt_decay: Option<f32>,
+    occlusion: Option<bool>,
+    crisp: Option<bool>,
+    sun_rim: Option<bool>,
+    sky_top: Option<String>,
+    sky_horizon: Option<String>,
+    ground: Option<String>,
+    sun_crown: Option<String>,
+    sun_upper: Option<String>,
+    sun_lower: Option<String>,
+    sun_base: Option<String>,
+}
+
+fn vapor_from(raw: Option<RawVapor>, d: VaporParams) -> VaporParams {
+    let Some(r) = raw else { return d };
+    VaporParams {
+        horizon: r.horizon.unwrap_or(d.horizon),
+        amp: r.amp.unwrap_or(d.amp),
+        lines: r.lines.unwrap_or(d.lines),
+        verts: r.verts.unwrap_or(d.verts),
+        scroll: r.scroll.unwrap_or(d.scroll),
+        persp: r.persp.unwrap_or(d.persp),
+        spread: r.spread.unwrap_or(d.spread),
+        glow: r.glow.unwrap_or(d.glow),
+        smoothing: r.smoothing.unwrap_or(d.smoothing),
+        sun: r.sun.unwrap_or(d.sun),
+        slots: r.slots.unwrap_or(d.slots),
+        slot_bias: r.slot_bias.unwrap_or(d.slot_bias),
+        slot_top: r.slot_top.unwrap_or(d.slot_top),
+        halo: r.halo.unwrap_or(d.halo),
+        warmth: r.warmth.unwrap_or(d.warmth),
+        bolt_sens: r.bolt_sens.unwrap_or(d.bolt_sens),
+        bolt_bright: r.bolt_bright.unwrap_or(d.bolt_bright),
+        sky_flash: r.sky_flash.unwrap_or(d.sky_flash),
+        grid_flash: r.grid_flash.unwrap_or(d.grid_flash),
+        bolt_decay: r.bolt_decay.unwrap_or(d.bolt_decay),
+        occlusion: r.occlusion.unwrap_or(d.occlusion),
+        crisp: r.crisp.unwrap_or(d.crisp),
+        sun_rim: r.sun_rim.unwrap_or(d.sun_rim),
+        sky_top: r.sky_top.unwrap_or(d.sky_top),
+        sky_horizon: r.sky_horizon.unwrap_or(d.sky_horizon),
+        ground: r.ground.unwrap_or(d.ground),
+        sun_crown: r.sun_crown.unwrap_or(d.sun_crown),
+        sun_upper: r.sun_upper.unwrap_or(d.sun_upper),
+        sun_lower: r.sun_lower.unwrap_or(d.sun_lower),
+        sun_base: r.sun_base.unwrap_or(d.sun_base),
+    }
+}
+
 #[derive(Deserialize, Default)]
 struct RawDual {
     trail: Option<String>,
@@ -95,6 +168,7 @@ struct RawTheme {
     ballistics: RawBallistics,
     #[serde(default)]
     dual: Option<RawDual>,
+    vaporwave: Option<RawVapor>,
     #[serde(default)]
     zone: Vec<RawZone>,
 }
@@ -162,6 +236,7 @@ pub fn parse(src: &str) -> Result<Theme, ThemeError> {
         dual: raw.dual.and_then(|dl| {
             dl.trail.map(|t| (t, dl.fade.unwrap_or(0.20)))
         }),
+        vapor: vapor_from(raw.vaporwave, d.vapor),
     })
 }
 

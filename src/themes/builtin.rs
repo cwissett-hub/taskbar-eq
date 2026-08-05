@@ -1,4 +1,4 @@
-use super::{Texture, Theme, Zone};
+use super::{Texture, Theme, VaporParams, Zone};
 
 pub fn all() -> Vec<Theme> {
     vec![
@@ -24,6 +24,11 @@ pub fn all() -> Vec<Theme> {
         vu_cyan(),
         vu_hot_pink(),
         vu_lime(),
+        vapor_sunset(),
+        vapor_miami(),
+        vapor_outrun(),
+        vapor_toxic(),
+        vapor_mono(),
     ]
 }
 
@@ -474,6 +479,134 @@ pub fn vu_lime() -> Theme {
     }
 }
 
+fn vapor_base() -> Theme {
+    Theme {
+        family: "vapor".into(),
+        texture: Texture::None_,
+        ghost: 0.0,
+        // Modest: the scene is already a gradient, and a wide blur on a 60px-tall sunset
+        // turns the whole panel into fog.
+        bloom: 3.0,
+        ..Theme::default()
+    }
+}
+
+/// The tuned reference scene - magenta sunset over a violet grid.
+pub fn vapor_sunset() -> Theme {
+    Theme {
+        id: "vapor-sunset".into(),
+        name: "Sunset".into(),
+        lit: "#ff53c8".into(),
+        hot: "#eafcff".into(),
+        panel: "#0a0416".into(),
+        panel_alpha: 1.0,
+        edge: "#ff5f93".into(),
+        edge_alpha: 0.18,
+        ..vapor_base()
+    }
+}
+
+pub fn vapor_miami() -> Theme {
+    Theme {
+        id: "vapor-miami".into(),
+        name: "Miami".into(),
+        lit: "#38e8ff".into(),
+        hot: "#f2ffff".into(),
+        panel: "#04121c".into(),
+        panel_alpha: 1.0,
+        edge: "#2fb8d8".into(),
+        edge_alpha: 0.18,
+        vapor: VaporParams {
+            sky_top: "#05203a".into(),
+            sky_horizon: "#ff9c6e".into(),
+            ground: "#04121c".into(),
+            sun_crown: "#fffbe0".into(),
+            sun_upper: "#ffe07a".into(),
+            sun_lower: "#ff8f5a".into(),
+            sun_base: "#ff5f7d".into(),
+            ..VaporParams::default()
+        },
+        ..vapor_base()
+    }
+}
+
+pub fn vapor_outrun() -> Theme {
+    Theme {
+        id: "vapor-outrun".into(),
+        name: "Outrun".into(),
+        lit: "#ff2f6d".into(),
+        hot: "#fff0f5".into(),
+        panel: "#0d0119".into(),
+        panel_alpha: 1.0,
+        edge: "#ff2f6d".into(),
+        edge_alpha: 0.20,
+        vapor: VaporParams {
+            sky_top: "#12002b".into(),
+            sky_horizon: "#7a1a8c".into(),
+            ground: "#0d0119".into(),
+            sun_crown: "#ffe9f6".into(),
+            sun_upper: "#ff9ad5".into(),
+            sun_lower: "#ff4d9e".into(),
+            sun_base: "#8f1f6b".into(),
+            ..VaporParams::default()
+        },
+        ..vapor_base()
+    }
+}
+
+/// Toxic green, and the calm one: no lightning, so there is a colourway for anyone who
+/// finds the strikes distracting. `bolt_bright = 0` disables them without special-casing.
+pub fn vapor_toxic() -> Theme {
+    Theme {
+        id: "vapor-toxic".into(),
+        name: "Toxic".into(),
+        lit: "#7dff5a".into(),
+        hot: "#eaffe0".into(),
+        panel: "#020d05".into(),
+        panel_alpha: 1.0,
+        edge: "#5fbf3a".into(),
+        edge_alpha: 0.18,
+        vapor: VaporParams {
+            sky_top: "#03140a".into(),
+            sky_horizon: "#2f8f4a".into(),
+            ground: "#020d05".into(),
+            sun_crown: "#f2ffd8".into(),
+            sun_upper: "#c8ff7a".into(),
+            sun_lower: "#7dd44a".into(),
+            sun_base: "#2f8f4a".into(),
+            bolt_bright: 0.0,
+            sky_flash: 0.0,
+            grid_flash: 0.0,
+            ..VaporParams::default()
+        },
+        ..vapor_base()
+    }
+}
+
+pub fn vapor_mono() -> Theme {
+    Theme {
+        id: "vapor-mono".into(),
+        name: "Monochrome".into(),
+        lit: "#d8e4f0".into(),
+        hot: "#ffffff".into(),
+        panel: "#06080c".into(),
+        panel_alpha: 1.0,
+        edge: "#8fa4b8".into(),
+        edge_alpha: 0.18,
+        vapor: VaporParams {
+            sky_top: "#080b12".into(),
+            sky_horizon: "#5a6a7d".into(),
+            ground: "#06080c".into(),
+            sun_crown: "#ffffff".into(),
+            sun_upper: "#d8e4f0".into(),
+            sun_lower: "#8fa4b8".into(),
+            sun_base: "#4a5a6d".into(),
+            ..VaporParams::default()
+        },
+        ..vapor_base()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -510,9 +643,11 @@ mod tests {
         // actually worth guarding is that no family silently loses its colourways and
         // that no theme carries a family name the renderer cannot dispatch on.
         let all = all();
-        const FAMILIES: [&str; 3] = ["segmented", "scope", "vu"];
+        // Taken from the renderer rather than restated here, so adding a family cannot
+        // leave this test asserting against a stale list - which is exactly what happened
+        // when the vaporwave family landed.
         let mut counted = 0;
-        for fam in FAMILIES {
+        for fam in crate::render::KNOWN_FAMILIES {
             let n = all.iter().filter(|t| t.family == fam).count();
             assert!(n >= 5, "family {fam} should ship at least 5 colourways, has {n}");
             counted += n;

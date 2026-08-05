@@ -73,6 +73,9 @@ fn main() -> Result<()> {
     const RELOAD_DEBOUNCE_MS: u64 = 150;
     let mut reload_pending = false;
     let mut last_change: Option<std::time::Instant> = None;
+    // Real frame interval. The loop sleeps a fixed 16ms, so the actual period is that plus
+    // however long the frame's capture, DSP and render took - measured, not assumed.
+    let mut last_frame = std::time::Instant::now();
 
     loop {
         while let Ok(f) = rx.try_recv() {
@@ -223,7 +226,18 @@ fn main() -> Result<()> {
             taskbar_visible: win::placement::taskbar_visible(),
         };
 
-        let opacity = gate.update(latest.rms, 16);
+        let now = std::time::Instant::now();
+        // Clamped: a debugger pause or a suspend/resume can hand back an enormous interval,
+        // which would otherwise jump the gate straight through its hide delay and snap the
+        // scroll phase forward.
+        let dt_ms = (now.duration_since(last_frame).as_secs_f32() * 1000.0).clamp(1.0, 100.0);
+        last_frame = now;
+
+        // Previously a hardcoded 16, which meant the gate's configured millisecond timings
+        // were really being applied against an assumed frame rate the loop does not hit -
+        // the 4500ms hide delay actually ran nearer 5.5s. Feeding the measured interval
+        // makes the configured values mean what they say.
+        let opacity = gate.update(latest.rms, dt_ms.round() as u32);
         smoother.update(&latest.bands);
 
         if win::visibility::should_show(&inputs) && gate.is_visible() {
@@ -235,6 +249,7 @@ fn main() -> Result<()> {
                 waveform: latest.waveform,
                 rms_l: latest.rms_l,
                 rms_r: latest.rms_r,
+                dt_ms,
             };
             family.draw(&mut canvas, &theme, &data);
             // Apply the reveal/hide fade. The gate has computed this opacity - with

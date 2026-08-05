@@ -32,12 +32,128 @@ pub fn family_label(family: &str) -> String {
         "segmented" => "Segmented VFD".into(),
         "scope" => "Oscilloscope".into(),
         "vu" => "VU dials".into(),
+        "vapor" => "Vaporwave grid".into(),
         other => {
             let mut c = other.chars();
             match c.next() {
                 Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
                 None => "Other".into(),
             }
+        }
+    }
+}
+
+/// Scene parameters for the vaporwave grid family.
+///
+/// Every default here was tuned by the user in a live browser tuner, not chosen by me - see
+/// `docs/superpowers/specs/2026-07-31-vaporwave-grid-family-design.md` §1 for the raw
+/// output and §7 for which of my own guesses it overrode. The tuner reported percentages
+/// and hundredths; these are the same numbers as fractions, so `amp = 101` there is 1.01
+/// here.
+///
+/// These names are a published schema the moment a theme file sets one, so they match the
+/// spec exactly and must not be renamed without bumping `schema`.
+#[derive(Debug, Clone)]
+pub struct VaporParams {
+    /// Horizon height as a fraction of panel height.
+    pub horizon: f32,
+    /// Displacement scale for the terrain.
+    pub amp: f32,
+    /// Receding horizontal grid lines.
+    pub lines: i32,
+    /// Converging vertical lines.
+    pub verts: i32,
+    /// Scroll speed.
+    pub scroll: f32,
+    /// Depth-spacing exponent. Higher bunches lines toward the horizon.
+    pub persp: f32,
+    /// Width spread of the near edge.
+    pub spread: f32,
+    /// Peak-glow brightness.
+    pub glow: f32,
+    /// Spectral smoothing, 0..1. Higher gives rolling hills over spikes.
+    pub smoothing: f32,
+    /// Sun radius, as a fraction of the base radius.
+    pub sun: f32,
+    /// Horizontal slots cut in the sun.
+    pub slots: i32,
+    /// Slot widening toward the horizon. The user chose ZERO - uniform 1px slots.
+    pub slot_bias: f32,
+    /// How far down the sun the first slot sits.
+    pub slot_top: f32,
+    /// Halo strength.
+    pub halo: f32,
+    /// Gradient warmth; higher is pinker at the horizon.
+    pub warmth: f32,
+    /// Rise in bass needed to fire a bolt.
+    pub bolt_sens: f32,
+    pub bolt_bright: f32,
+    pub sky_flash: f32,
+    pub grid_flash: f32,
+    pub bolt_decay: f32,
+    /// Hidden-line removal. Off looks like overlapping spaghetti; see the family docs.
+    pub occlusion: bool,
+    pub crisp: bool,
+    pub sun_rim: bool,
+    pub sky_top: String,
+    pub sky_horizon: String,
+    pub ground: String,
+    pub sun_crown: String,
+    pub sun_upper: String,
+    pub sun_lower: String,
+    pub sun_base: String,
+}
+
+impl Default for VaporParams {
+    fn default() -> Self {
+        VaporParams {
+            horizon: 0.48,
+            // amp, lines and persp are the three values re-tuned from the tuner's output.
+            //
+            // The tuner ran in a browser canvas far taller than 60px, and all three crush
+            // at this size. Measured at the tuner's amp=1.01/lines=16/persp=2.07: SEVEN of
+            // the sixteen lines collapsed onto just two pixel rows (28 and 29), so the far
+            // half of the grid was a solid band rather than a receding grid - and that is
+            // also why hidden-line removal had no measurable effect, since lines sharing an
+            // integer row cannot occlude one another.
+            //
+            // persp 1.40 is the highest value at which the STATIC grid keeps one row per
+            // line at every scroll phase (2.07 manages 88%). lines 12 keeps the smallest
+            // static gap at ~0.9px. amp 0.55 puts the peak displacement near 7.6px - about
+            // two to three line gaps - where 1.01 gave 13.9px, half the entire 29px ground.
+            //
+            // The FORMULAS are left exactly as the spec published them, so `amp = 1.01`
+            // still means what the spec says it means; only these defaults are adapted, and
+            // they remain overridable per colourway from TOML.
+            amp: 0.55,
+            lines: 12,
+            verts: 18,
+            scroll: 1.24,
+            persp: 1.40,
+            spread: 1.50,
+            glow: 0.98,
+            smoothing: 0.65,
+            sun: 0.83,
+            slots: 6,
+            slot_bias: 0.0,
+            slot_top: 0.18,
+            halo: 0.84,
+            warmth: 0.63,
+            bolt_sens: 0.55,
+            bolt_bright: 0.90,
+            sky_flash: 0.35,
+            grid_flash: 0.60,
+            bolt_decay: 0.55,
+            occlusion: true,
+            crisp: true,
+            sun_rim: true,
+            sky_top: "#1a0b2e".into(),
+            sky_horizon: "#ff5f93".into(),
+            ground: "#12061f".into(),
+            sun_crown: "#fff6d0".into(),
+            sun_upper: "#ffd76e".into(),
+            sun_lower: "#ff9c4a".into(),
+            sun_base: "#ff5f93".into(),
         }
     }
 }
@@ -82,6 +198,8 @@ pub struct Theme {
     /// sane default mapping, so 1.0 is already usable and this is the knob to reach for
     /// if a meter feels dead.
     pub sensitivity: f32,
+    /// Vaporwave-only scene parameters; inert for the other families.
+    pub vapor: VaporParams,
     // Cross-fade duration for switching themes at runtime (Task 11+); the
     // segmented renderer draws every frame from scratch and has no
     // transition state to feed it yet.
@@ -120,6 +238,7 @@ impl Default for Theme {
             // than the panel it sat on. 4.0 puts it ~60 luminance above.
             edge_glow: 4.0,
             sensitivity: 1.0,
+            vapor: VaporParams::default(),
             fade: 0.30,
             texture: Texture::Glass,
             ballistics: Ballistics::default(),

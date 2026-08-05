@@ -279,9 +279,9 @@ mod tests {
         FrameData {
             levels: [level; NUM_BANDS],
             peaks: [level; NUM_BANDS],
-            waveform: [0.0; 256],
             rms_l: level,
             rms_r: level,
+            ..FrameData::default()
         }
     }
 
