@@ -153,8 +153,17 @@ pub fn write(msg: &str) {
 mod tests {
     use super::*;
 
+    /// Serialises the tests that touch the process-wide logger.
+    ///
+    /// Cargo runs tests in parallel threads and this module's subject is a global, so without this
+    /// one test's `write` resets the `last`/`repeats` pair another test is in the middle of
+    /// measuring. That is exactly how the repeat-collapse test failed - intermittently, and on the
+    /// test's own design rather than on the code under test.
+    static SERIAL: Mutex<()> = Mutex::new(());
+
     #[test]
     fn writing_before_init_does_not_panic() {
+        let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         // Ordering matters: several subsystems log during construction, and some of them run before
         // main has had a chance to call init - notably the capture thread.
         write("a message with no log file behind it");
@@ -173,6 +182,7 @@ mod tests {
 
     #[test]
     fn repeated_messages_collapse_instead_of_filling_the_file() {
+        let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("tbeq-log-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let p = dir.join("t.log");

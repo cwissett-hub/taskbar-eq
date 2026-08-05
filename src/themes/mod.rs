@@ -130,6 +130,19 @@ pub struct VaporParams {
     pub occlusion: bool,
     pub crisp: bool,
     pub sun_rim: bool,
+    /// True: the grid recedes, and the newest audio lands on the NEAREST lines.
+    ///
+    /// This is the difference between a terrain that reacts and one that does not, and the two
+    /// properties are inseparable. Displacement scales with depth, so the nearest lines move most -
+    /// and a line only keeps the spectrum from when it was born. With the grid flowing toward the
+    /// viewer, new audio is born at the horizon, where it is rendered at the SMALLEST displacement,
+    /// and it then needs a full scroll cycle - about 1.3s - to reach the front where it would be
+    /// biggest. Both penalties at once, which reads as a calm grid that lags the music.
+    ///
+    /// Receding puts the newest spectrum on the nearest, largest lines immediately. The cost is the
+    /// direction of travel: set this false for the classic flying-forward look, and accept that the
+    /// front of the grid shows what the music did a second ago.
+    pub recede: bool,
     pub sky_top: String,
     pub sky_horizon: String,
     pub ground: String,
@@ -174,7 +187,11 @@ impl Default for VaporParams {
             persp: 1.40,
             spread: 1.50,
             glow: 0.98,
-            smoothing: 0.65,
+            // 0.65 was a radius-3 moving average over 64 bands, which is a lot of averaging: it
+            // was chosen to stop the ridges reading as spaghetti, but it flattens exactly the peaks
+            // that make the terrain look like it is reacting. Lowering it SHARPENS the ridges and
+            // raises fidelity at the same time, which is the direction asked for.
+            smoothing: 0.40,
             sun: 0.83,
             slots: 6,
             slot_bias: 0.0,
@@ -189,6 +206,7 @@ impl Default for VaporParams {
             occlusion: true,
             crisp: true,
             sun_rim: true,
+            recede: true,
             sky_top: "#1a0b2e".into(),
             sky_horizon: "#ff5f93".into(),
             ground: "#12061f".into(),

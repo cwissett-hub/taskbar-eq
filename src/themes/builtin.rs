@@ -1,4 +1,5 @@
 use super::{Texture, Theme, TubeParams, VaporParams, Zone};
+use crate::dsp::ballistics::Ballistics;
 
 pub fn all() -> Vec<Theme> {
     vec![
@@ -489,6 +490,11 @@ fn vapor_base() -> Theme {
         family: "vapor".into(),
         texture: Texture::None_,
         ghost: 0.0,
+        // Snappier than the shared defaults, which every vapor colourway was silently inheriting
+        // from the VFD family (attack 0.55, decay 0.11 - about 143ms to fall). Ballistics are
+        // applied upstream in dsp::ballistics, so they are per-theme rather than per-family, and a
+        // meter tuned for a smooth bar graph is not tuned for a terrain that should spike on a hit.
+        ballistics: Ballistics { attack: 0.88, decay: 0.30, peak_fall: 0.006 },
         // Modest: the scene is already a gradient, and a wide blur on a 60px-tall sunset
         // turns the whole panel into fog.
         bloom: 3.0,

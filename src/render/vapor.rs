@@ -59,7 +59,13 @@ const TERRAIN_FLOOR: f32 = 0.14;
 /// scope's follower, because a scope trace redraws every frame while these ridges persist on
 /// screen as they scroll toward the viewer - a gain that moved quickly would bend ridges that
 /// are already drawn.
-const TERRAIN_ATTACK: f32 = 0.22;
+/// Attack is deliberately slow - slower than the transients this scene is meant to show.
+///
+/// At 0.22 the follower moved 22% of the way to a new peak in a single frame, which meant a kick
+/// dropped the gain from 5.75 to 2.76 on the very frame it landed: the auto-ranger cancelled the
+/// hit it existed to make visible. The gain's job here is to adapt to how loud a TRACK is, over
+/// about a second, not to respond to individual hits.
+const TERRAIN_ATTACK: f32 = 0.03;
 const TERRAIN_RELEASE: f32 = 0.004;
 
 #[derive(Default)]
@@ -326,7 +332,14 @@ impl Family for Vapor {
         let band_gain = self.update_band_gain(&levels, theme.sensitivity, dt);
 
         let before_scroll = self.scroll;
-        self.scroll = (self.scroll + t.scroll * 0.010 * dt).fract();
+        let step = t.scroll * 0.010 * dt;
+        // `rem_euclid` rather than `fract`: fract of a negative value is negative, which would send
+        // every line's depth negative and collapse the grid onto the horizon.
+        self.scroll = if t.recede {
+            (self.scroll - step).rem_euclid(1.0)
+        } else {
+            (self.scroll + step).rem_euclid(1.0)
+        };
 
         // Advance the terrain history. `f = (k + scroll) / lines`, so when the phase wraps every
         // line inherits the position of the one behind it - which means the shapes must rotate by
@@ -339,15 +352,43 @@ impl Family for Vapor {
             // than from zeros, or the grid flattens for a full scroll cycle after a reload.
             self.rows = vec![levels.clone(); want_rows];
         }
-        if self.scroll < before_scroll {
-            self.rows.pop();
-            self.rows.insert(0, levels.clone());
+        // Which END new spectra enter at is what makes the terrain feel responsive - see
+        // `VaporParams::recede`. Receding: lines travel toward the horizon, so they are born at the
+        // near edge and the newest audio lands on the biggest, closest ridges at once. Advancing:
+        // lines travel toward the viewer, so they are born at the horizon.
+        //
+        // The rotation has to happen on the same frame as the wrap. `f = (k + scroll) / lines`, so
+        // when the phase wraps every line inherits a neighbour's position; if the snapshots did not
+        // shift with them the shapes would visibly jump once per cycle.
+        let wrapped = if t.recede {
+            self.scroll > before_scroll
         } else {
-            // The horizon line keeps tracking the live spectrum until it is born, so the leading
-            // edge of the terrain responds immediately instead of being up to one line-period
-            // stale. Every line behind it is frozen at its own birth.
-            if let Some(front) = self.rows.first_mut() {
-                front.copy_from_slice(&levels);
+            self.scroll < before_scroll
+        };
+        if wrapped {
+            if t.recede {
+                self.rows.remove(0);
+                self.rows.push(levels.clone());
+            } else {
+                self.rows.pop();
+                self.rows.insert(0, levels.clone());
+            }
+        } else if let Some(newest) = if t.recede {
+            self.rows.last_mut()
+        } else {
+            self.rows.first_mut()
+        } {
+            // PEAK-HOLD, not the instantaneous level, for the whole time this line is the newest.
+            //
+            // A line is only born once per scroll-cycle-over-lines: measured at the shipped scroll
+            // and 12 lines that is every 6.7 frames, so the terrain samples the spectrum at just
+            // 8.9Hz. Sampling instantaneously at that rate means a kick lasting ~50ms can fall
+            // entirely between two births and never be recorded anywhere - the terrain would
+            // silently skip the transient the user is watching for. Holding the maximum seen during
+            // the line's life captures every hit at full height, on the line that was newest when
+            // it happened.
+            for (dst, src) in newest.iter_mut().zip(levels.iter()) {
+                *dst = dst.max(*src);
             }
         }
 
@@ -526,6 +567,52 @@ mod tests {
         v.draw(&mut c, &builtin::vapor_sunset(), &spectrum(0.6));
         let lit = c.bits().iter().filter(|p| **p != 0).count();
         assert!(lit > 190 * 40, "the scene should cover the panel, got {lit} px");
+    }
+
+    #[test]
+    fn a_transient_lands_on_the_nearest_lines_not_at_the_horizon() {
+        // The complaint this guards: "I need to see the closer lines spiking up as the audio hits.
+        // it's too slow and calm."
+        //
+        // Displacement scales with depth, so the nearest lines move most - and a line only ever
+        // shows the spectrum from when it was born. With the grid flowing toward the viewer, new
+        // audio was born at the HORIZON, rendered at the smallest displacement, and needed a full
+        // scroll cycle to reach the front. Both penalties at once.
+        //
+        // Measures where a transient's effect actually lands, as the vertical centroid of the pixels
+        // that changed. It must sit in the near half of the ground.
+        let t = builtin::vapor_sunset();
+        assert!(t.vapor.recede, "test premise: the shipped scene puts new audio at the near edge");
+
+        let quiet = spectrum(0.06);
+        let mut v = Vapor::default();
+        let mut c = Canvas::new(190, 60);
+        for _ in 0..30 {
+            v.draw(&mut c, &t, &quiet);
+        }
+        let before = c.bits().to_vec();
+        v.draw(&mut c, &t, &spectrum(0.95));
+        let after = c.bits().to_vec();
+
+        let horizon = (60.0 * t.vapor.horizon).round() as i32;
+        let bottom = 58;
+        let midway = horizon + (bottom - horizon) / 2;
+        let (mut wsum, mut w) = (0.0f64, 0.0f64);
+        for y in horizon..bottom {
+            for x in 0..190 {
+                let i = (y * 190 + x) as usize;
+                if before[i] != after[i] {
+                    wsum += y as f64;
+                    w += 1.0;
+                }
+            }
+        }
+        assert!(w > 40.0, "the transient must change the terrain at all; {w} pixels changed");
+        let centroid = wsum / w;
+        assert!(
+            centroid > midway as f64,
+            "a transient must land on the NEAR lines: centroid row {centroid:.1}, near half starts              at {midway} (ground {horizon}..{bottom})"
+        );
     }
 
     #[test]
@@ -895,5 +982,56 @@ mod sweep {
             }
             std::fs::write(dir.join(format!("amp-{:.2}.rgba", amp)), &out).unwrap();
         }
+    }
+}
+
+#[cfg(test)]
+mod strip {
+    use super::*;
+    use crate::themes::builtin;
+    /// Run: cargo test --release dump_vapor_strip -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn dump_vapor_strip() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
+        std::fs::create_dir_all(&dir).unwrap();
+        let t = builtin::vapor_sunset();
+        let mut v = Vapor::default();
+        let mut c = Canvas::new(190, 60);
+        let quiet = {
+            let mut d = FrameData::default();
+            for (i, x) in d.levels.iter_mut().enumerate() {
+                *x = 0.10 + 0.06 * ((i as f32 / 9.0).sin().abs());
+            }
+            d
+        };
+        let hit = {
+            let mut d = FrameData::default();
+            for (i, x) in d.levels.iter_mut().enumerate() {
+                let f = i as f32 / 63.0;
+                *x = (0.20 + 0.75 * (1.0 - f).powf(1.4)).min(1.0);
+            }
+            d
+        };
+        for _ in 0..40 {
+            v.draw(&mut c, &t, &quiet);
+        }
+        // frame 0 = just before, then the hit, then its aftermath
+        for (n, d) in [(0, &quiet), (1, &hit), (2, &quiet), (3, &quiet), (4, &quiet), (5, &quiet)] {
+            v.draw(&mut c, &t, d);
+            let mut out = Vec::new();
+            for y in 0..60 {
+                for x in 0..190 {
+                    let px = c.get(x, y);
+                    let a = px.a as f32 / 255.0;
+                    for ch in [px.r, px.g, px.b] {
+                        out.push((ch as f32 + 22.0 * (1.0 - a)).min(255.0) as u8);
+                    }
+                    out.push(255);
+                }
+            }
+            std::fs::write(dir.join(format!("strip-{n}.rgba")), &out).unwrap();
+        }
+        println!("wrote strip-0..5 (0 before, 1 = the hit, 2..5 aftermath)");
     }
 }

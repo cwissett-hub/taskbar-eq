@@ -221,10 +221,22 @@ ballistics. The needle is dB-mapped across [−45, 0] dBFS, because a VU is a dB
 | Neon cyan · Hot pink · Lime | Near-black panels so the needle has something to contrast against |
 
 **Vaporwave grid** — not an instrument but a scene: a slotted sun over a scrolling perspective
-grid, the terrain displaced by the spectrum, lightning fired by bass transients. The terrain
-auto-ranges against the frame's loudest band, so the hills show the *shape* of the spectrum at any
-volume; the lightning deliberately reads the raw signal instead, because it fires on a bass rise
-and normalising would partly cancel the very rise it triggers on.
+grid, the terrain displaced by the spectrum, lightning fired by bass transients.
+
+The grid **recedes** by default, which is a deliberate reversal of the classic flying-forward look.
+Displacement scales with depth, so the nearest lines move most — and a line only ever shows the
+spectrum from when it was born. Flowing toward the viewer, new audio is born at the horizon where it
+is drawn at the *smallest* displacement, then needs a full scroll cycle (~1.3 s) to reach the front
+where it would be biggest: both penalties at once, which reads as a calm grid lagging the music. Set
+`recede = false` in `[vaporwave]` for the classic direction, accepting that the front of the grid
+shows what the music did a second ago.
+
+Each line peak-holds while it is the newest, because the terrain only samples the spectrum at about
+9 Hz (one line born every ~112 ms) — instantaneous sampling at that rate lets a 50 ms kick fall
+entirely between births and never be recorded. The terrain also auto-ranges against the frame's
+loudest band so the hills show the *shape* of the spectrum at any volume, but with a deliberately
+slow attack: a fast follower dropped the gain from 5.75 to 2.76 on the very frame a kick landed,
+cancelling the hit it existed to reveal. The lightning reads the raw signal for the same reason.
 
 | Colourway | Character |
 |---|---|
