@@ -24,7 +24,13 @@ impl fmt::Display for ThemeError {
             ),
             ThemeError::MissingField(k) => write!(f, "missing required field `{k}`"),
             ThemeError::BadFamily(fam) => {
-                write!(f, "unknown family `{fam}` (expected segmented, scope or vu)")
+                // Lists the renderer's families rather than a hardcoded three, so the message
+                // cannot go stale the way the gate itself did.
+                write!(
+                    f,
+                    "unknown family `{fam}` (expected one of: {})",
+                    crate::render::KNOWN_FAMILIES.join(", ")
+                )
             }
         }
     }
@@ -223,7 +229,21 @@ pub fn parse(src: &str) -> Result<Theme, ThemeError> {
     let id = raw.id.ok_or(ThemeError::MissingField("id"))?;
     let name = raw.name.ok_or(ThemeError::MissingField("name"))?;
     let family = raw.family.ok_or(ThemeError::MissingField("family"))?;
-    if !matches!(family.as_str(), "segmented" | "scope" | "vu") {
+    // Gated on the renderer's own list rather than a hand-written one. This was
+    // `matches!(family.as_str(), "segmented" | "scope" | "vu")`, which silently made the two
+    // newest families impossible to author: `family = "tube"` and `family = "vapor"` were both
+    // REJECTED, so the entire `[tube]` and `[vaporwave]` tables this file already parses were
+    // unreachable, and `sensitivity` could not be set for them no matter what the renderer did.
+    // The README documented all five families and both tables as supported the whole time.
+    //
+    // The failure mode was worse than inert. To load at all a file must declare a legal family,
+    // so the obvious workaround - copying a built-in tube theme and setting family =
+    // "segmented" to make it parse - matches a built-in `id` and REPLACES it, leaving a menu
+    // entry with the valve name that draws a segmented bar meter.
+    //
+    // Third hardcoded list in this project to go stale (after the family test's own array and a
+    // dump harness's colourway count), hence pointing at KNOWN_FAMILIES instead of restating it.
+    if !crate::render::KNOWN_FAMILIES.contains(&family.as_str()) {
         return Err(ThemeError::BadFamily(family));
     }
 
@@ -416,5 +436,89 @@ mod tests {
         let (themes, warnings) = load_dir(Path::new("tests/does-not-exist"));
         assert!(themes.is_empty());
         assert!(warnings.is_empty(), "a missing themes dir is normal, not a warning");
+    }
+}
+
+#[cfg(test)]
+mod family_gate {
+    use super::*;
+
+    #[test]
+    fn every_family_the_renderer_knows_can_be_authored_in_toml() {
+        // The bug this guards shipped: the gate was a hand-written list of three families, so
+        // `family = "tube"` and `family = "vapor"` were rejected outright - both documented in
+        // the README as supported, along with the whole [tube] and [vaporwave] tables this file
+        // already parses. Driving it from KNOWN_FAMILIES means adding a family cannot leave the
+        // parser behind.
+        for fam in crate::render::KNOWN_FAMILIES {
+            let toml = format!(
+                "schema = 1
+id = \"probe-{fam}\"
+name = \"Probe\"
+family = \"{fam}\"
+"
+            );
+            let t = parse(&toml).unwrap_or_else(|e| panic!("family {fam:?} must parse, got: {e}"));
+            assert_eq!(t.family, fam);
+        }
+    }
+
+    #[test]
+    fn a_tube_theme_round_trips_its_own_table_and_sensitivity() {
+        // Until the gate was fixed none of this was reachable, so a colourway author had no way
+        // to tune the valve row at all - which is the whole reason `sensitivity` being unwired in
+        // tube.rs mattered so much.
+        let toml = r##"
+schema = 1
+id     = "my-valves"
+name   = "My Valves"
+family = "tube"
+[look]
+sensitivity = 1.6
+[tube]
+glass  = "#ffffff"
+collar = "#123456"
+"##;
+        let t = parse(toml).expect("a tube theme must load");
+        assert_eq!(t.family, "tube");
+        assert!((t.sensitivity - 1.6).abs() < 1e-6, "sensitivity must round-trip");
+        assert_eq!(t.tube.glass, "#ffffff");
+        assert_eq!(t.tube.collar, "#123456");
+        // Unset keys must keep their defaults rather than being zeroed.
+        assert_eq!(t.tube.socket, crate::themes::TubeParams::default().socket);
+    }
+
+    #[test]
+    fn a_vaporwave_theme_round_trips_its_own_table() {
+        let toml = r##"
+schema = 1
+id     = "my-sunset"
+name   = "My Sunset"
+family = "vapor"
+[vaporwave]
+amp    = 1.4
+lines  = 14
+sky_top = "#010203"
+"##;
+        let t = parse(toml).expect("a vapor theme must load");
+        assert_eq!(t.family, "vapor");
+        assert!((t.vapor.amp - 1.4).abs() < 1e-6);
+        assert_eq!(t.vapor.lines, 14);
+        assert_eq!(t.vapor.sky_top, "#010203");
+    }
+
+    #[test]
+    fn a_genuinely_unknown_family_is_still_rejected_and_names_the_real_options() {
+        let toml = "schema = 1
+id = \"x\"
+name = \"X\"
+family = \"hologram\"
+";
+        let err = parse(toml).expect_err("an unknown family must still fail");
+        let msg = err.to_string();
+        assert!(msg.contains("hologram"), "the message must name the offender: {msg}");
+        for fam in crate::render::KNOWN_FAMILIES {
+            assert!(msg.contains(fam), "the message must list {fam}: {msg}");
+        }
     }
 }

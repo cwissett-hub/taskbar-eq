@@ -147,6 +147,11 @@ Layouts scale rather than stretch, because at 60 px tall some of them cannot sim
   them; the `persp` needed for legibility at 60 px removes that condition. Measured: `persp`
   1.4 changes 0 pixels, 2.07 changes 83. Kept for the wider variant and for theme files that
   raise `persp`.
+- Until 2026-08-05 the TOML parser **rejected `family = "tube"` and `family = "vapor"`** even
+  though this README documented both, so neither of the newest families could be authored or
+  tuned from a file. Fixed, and the parser now reads the renderer's own family list so it cannot
+  fall behind again. If you wrote a theme file for either family before then, it was being
+  skipped with a warning.
 - The width is **clamped by what UI Automation reports**, so an element it cannot see is an
   element the overlay may cover. Every named taskbar element on the test machine was accounted
   for, but this has not been tried on a taskbar with third-party shell extensions.
@@ -211,7 +216,8 @@ and normalising would partly cancel the very rise it triggers on.
 
 **Valve row** — a rank of vacuum tubes bolted through a milled chassis, each glowing with its
 band. The heaters never go fully out, because a tube that goes black at silence looks broken
-rather than quiet.
+rather than quiet. Unlike the oscilloscope and the grid, this family deliberately does **not**
+auto-range: it is a level meter, so a quiet passage should look quiet.
 
 | Colourway | Character |
 |---|---|

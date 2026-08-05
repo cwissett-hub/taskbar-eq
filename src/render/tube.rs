@@ -21,8 +21,56 @@ use super::canvas::{Canvas, Rgba};
 use super::{Family, FrameData};
 use crate::themes::Theme;
 
-/// Floor glow every tube keeps, before any audio. See the heater note in the module docs.
-const HEATER_FLOOR: f32 = 0.17;
+/// Floor alpha the heater hairlines keep before any audio. See the heater note in the module
+/// docs.
+///
+/// Applied ONCE, and only to the two 1px filaments - not to the cathode glow. It used to be
+/// folded into a shared `drive` term that the filament then floored again on top of
+/// (`0.30 + 0.70 * drive` where `drive` was already `0.17 + 0.83 * level`), which expands to
+/// `0.419 + 0.581 * level`: 42% of a near-white alpha spent before a single sample arrived, and
+/// only 58% of the range left for the music. The valves still never go fully out, because these
+/// hairlines still glow at silence - but the big cathode glow now starts from zero and gets the
+/// whole range.
+const HEATER_FLOOR: f32 = 0.10;
+
+/// Band level at which a valve starts to light, and the span it lights over.
+///
+/// The mapping was `HEATER_FLOOR + (1 - HEATER_FLOOR) * level` - linear over the whole 0..1 range
+/// - but the DSP only ever delivers about 0.15..0.65 for active bands, so a valve used barely a
+/// third of its range on real music. Measured on the shipped code: across that window the cathode
+/// core moved from 0.289 to 0.695 alpha, worth 3.70 dL* on the composited pixels, and the
+/// filaments moved only 1.60x. Remapping the window the DSP actually produces onto the full alpha
+/// range is worth 3.70 -> 5.56 dL* on its own.
+///
+/// A FIXED window, deliberately, not a peak follower. The scope and the vaporwave grid both
+/// auto-range because they show the SHAPE of a signal and absolute level is the VU family's job -
+/// but a valve row is a level meter, like the segmented VFD. A follower here would present the
+/// same band level at very different brightnesses depending on what came before it, i.e. it would
+/// make a quiet passage look like a loud one, which is the opposite of what this family is for.
+const RESP_FLOOR: f32 = 0.10;
+const RESP_SPAN: f32 = 0.52;
+
+/// Weight given to a group's LOUDEST band rather than its mean.
+///
+/// Each valve covers about 6.4 of the 64 log bands, and averaging them flattens exactly the
+/// single-band peaks that make one valve differ from its neighbour. Measured on the case that
+/// matches the complaint - one band peaking inside an otherwise quiet group - a plain mean gave
+/// 1.46 dL* between the driven valve and its neighbour, which is BELOW the ~2.3 dL* threshold at
+/// which a difference is visible at all. That is why the row looked static. Biasing toward the
+/// max takes the same case to 9.47 dL*.
+///
+/// Invisible to any test that drives every band to the same level, because mean == max there -
+/// which is precisely what every test in this file used to do.
+const GROUP_MAX_BIAS: f32 = 0.65;
+
+/// Per-frame fall of a valve's peak marker.
+///
+/// Sourced from the displayed response with its own fast fall, NOT from `FrameData.peaks`. The
+/// shared peak-hold falls at 0.0055 per frame (see dsp::ballistics), which needs about 1.8s to
+/// drop from 0.65 to this marker's 0.05 visibility threshold - so under continuous music the bar
+/// was drawn every frame at a near-constant alpha on every valve, adding a uniform bright feature
+/// worth ~16 dL* that made the row read MORE uniform, not less.
+const MARKER_FALL: f32 = 0.035;
 
 /// Pitch one valve wants, in pixels.
 ///
@@ -44,7 +92,13 @@ fn tube_count(w: i32) -> usize {
 }
 
 #[derive(Default)]
-pub struct Tube;
+pub struct Tube {
+    /// Fast-falling peak hold per valve, in displayed-response units.
+    ///
+    /// A `Vec` rather than an array because `tube_count` scales to 40 and `#[derive(Default)]`
+    /// does not exist for `[f32; 40]` - the std impls stop at 32.
+    marker: Vec<f32>,
+}
 
 impl Tube {
     /// Mean of the bands feeding one tube.
@@ -59,31 +113,31 @@ impl Tube {
         let hi = (((i + 1) * n / tubes).max(lo + 1)).min(n);
         let mut acc = 0.0;
         let mut cnt = 0.0;
+        let mut peak = 0.0f32;
         for v in &d.levels[lo..hi] {
             if v.is_finite() {
                 acc += *v;
                 cnt += 1.0;
+                peak = peak.max(*v);
             }
         }
-        if cnt > 0.0 {
-            (acc / cnt).clamp(0.0, 1.0)
-        } else {
-            0.0
+        if cnt <= 0.0 {
+            return 0.0;
         }
+        let mean = acc / cnt;
+        // Blended toward the peak - see GROUP_MAX_BIAS. A pure mean hides single-band peaks; a
+        // pure max makes neighbouring valves jump independently of anything musical.
+        (mean * (1.0 - GROUP_MAX_BIAS) + peak * GROUP_MAX_BIAS).clamp(0.0, 1.0)
     }
 
-    fn peak_for(d: &FrameData, i: usize, tubes: usize) -> f32 {
-        let n = d.peaks.len();
-        let tubes = tubes.max(1);
-        let lo = i * n / tubes;
-        let hi = (((i + 1) * n / tubes).max(lo + 1)).min(n);
-        d.peaks[lo..hi]
-            .iter()
-            .copied()
-            .filter(|v| v.is_finite())
-            .fold(0.0f32, f32::max)
-            .clamp(0.0, 1.0)
+    /// Maps a group level onto the valve's usable alpha range.
+    fn response(level: f32, sensitivity: f32) -> f32 {
+        if !level.is_finite() {
+            return 0.0;
+        }
+        (((level - RESP_FLOOR) / RESP_SPAN) * sensitivity.max(0.0)).clamp(0.0, 1.0)
     }
+
 }
 
 impl Family for Tube {
@@ -159,8 +213,13 @@ impl Family for Tube {
         for i in 0..tubes {
             let cx = margin + (pitch * (i as f32 + 0.5)) as i32;
             let level = Self::level_for(d, i, tubes);
-            let peak = Self::peak_for(d, i, tubes);
-            let drive = HEATER_FLOOR + (1.0 - HEATER_FLOOR) * level;
+            let resp = Self::response(level, t.sensitivity);
+            // Marker hold, from the DISPLAYED response rather than the shared slow peak-hold.
+            if self.marker.len() != tubes {
+                self.marker.resize(tubes, 0.0);
+            }
+            self.marker[i] = (self.marker[i] - MARKER_FALL).max(resp);
+            let peak = self.marker[i];
 
             // Cathode glow, centred on the plate. The radius is tied to the ENVELOPE, not to
             // the larger of width/height - at `glass_w.max(glass_h/2)` it exceeded the glass
@@ -176,8 +235,10 @@ impl Family for Tube {
                 1,
                 reach.max(3),
                 &[
-                    (0.0, Rgba::from_hex(&t.hot, (drive * 0.98).clamp(0.0, 1.0))),
-                    (0.40, Rgba::from_hex(&t.lit, (drive * 0.72).clamp(0.0, 1.0))),
+                    // Floorless: the glow starts from nothing and gets the whole range. The
+                    // "never fully out" property is carried by the filaments below instead.
+                    (0.0, Rgba::from_hex(&t.hot, (resp * 0.98).clamp(0.0, 1.0))),
+                    (0.40, Rgba::from_hex(&t.lit, (resp * 0.72).clamp(0.0, 1.0))),
                     (1.0, Rgba::from_hex(&t.lit, 0.0)),
                 ],
             );
@@ -185,7 +246,11 @@ impl Family for Tube {
             // Heater: two bright hairlines flanking the plate, which is where the light
             // actually escapes on a real valve. A single line up the centre with the dark
             // plate either side of it read as a domino, not a filament.
-            let fil = Rgba::from_hex(&t.hot, (0.30 + 0.70 * drive).clamp(0.0, 1.0));
+            // HEATER_FLOOR applied ONCE, here and nowhere else - see its own doc comment.
+            let fil = Rgba::from_hex(
+                &t.hot,
+                (HEATER_FLOOR + (1.0 - HEATER_FLOOR) * resp).clamp(0.0, 1.0),
+            );
             let pw = (glass_w / 2).max(1);
             for dx in [-(pw / 2 + 1), pw / 2 + 1] {
                 lit.fill_rect(cx + dx, plate_top + 1, 1, plate_h - 2, fil);
@@ -304,7 +369,7 @@ mod tests {
 
     /// Total light emitted, as a stand-in for "how lit does this look".
     fn brightness(t: &Theme, d: &FrameData) -> u64 {
-        let mut tube = Tube;
+        let mut tube = Tube::default();
         let mut c = Canvas::new(190, 60);
         tube.draw(&mut c, t, d);
         let mut sum = 0u64;
@@ -315,6 +380,86 @@ mod tests {
             }
         }
         sum
+    }
+
+    /// One band peaking inside an otherwise quiet group - the case that matches the complaint
+    /// "the valves need to glow for intensity at different eq bands".
+    ///
+    /// Every other test in this file drives EVERY band to the same level, where a group's mean
+    /// equals its max, so the group reducer is a mathematical no-op and none of them can see this
+    /// at all. That blind spot is why the row shipped looking static.
+    fn one_loud_band(tubes: usize, loud_tube: usize, loud: f32, quiet: f32) -> FrameData {
+        let mut d = FrameData::default();
+        let n = d.levels.len();
+        for v in d.levels.iter_mut() {
+            *v = quiet;
+        }
+        // a single band, in the middle of the target valve's group
+        let lo = loud_tube * n / tubes;
+        let hi = ((loud_tube + 1) * n / tubes).min(n);
+        d.levels[(lo + hi) / 2] = loud;
+        d.peaks = d.levels;
+        d
+    }
+
+    #[test]
+    fn a_single_peaking_band_visibly_lights_its_own_valve() {
+        // Mean-only reduction gave 1.46 dL* between the driven valve and its neighbour, below the
+        // ~2.3 dL* at which a difference is perceptible at all. Measured as a luminance ratio here
+        // rather than dL*, but the point is the same: the driven valve must clearly out-glow the
+        // one beside it.
+        let t = builtin::tube_soviet();
+        let d = one_loud_band(10, 4, 0.65, 0.20);
+        let mut tube = Tube::default();
+        let mut c = Canvas::new(190, 60);
+        tube.draw(&mut c, &t, &d);
+
+        let pitch = (190 - 8) as f32 / 10.0;
+        let valve = |i: usize| -> f64 {
+            let cx = 4 + (pitch * (i as f32 + 0.5)) as i32;
+            let mut s = 0.0f64;
+            for y in 6..50 {
+                for x in (cx - 6)..(cx + 7) {
+                    let p = c.get(x, y);
+                    s += 0.2126 * p.r as f64 + 0.7152 * p.g as f64 + 0.0722 * p.b as f64;
+                }
+            }
+            s
+        };
+        let driven = valve(4);
+        let neighbour = valve(5);
+        assert!(
+            driven > neighbour * 1.35,
+            "a peaking band must visibly light its own valve: driven {driven:.0} vs neighbour {neighbour:.0}"
+        );
+    }
+
+    #[test]
+    fn the_group_reducer_is_biased_toward_the_peak_not_the_mean() {
+        // Guards GROUP_MAX_BIAS directly. A group of one loud band among six quiet ones has a mean
+        // far below its max; the reducer must land nearer the max or single-band peaks vanish.
+        let d = one_loud_band(10, 0, 0.9, 0.1);
+        let n = d.levels.len();
+        let hi = (n / 10).max(1);
+        let mean = d.levels[..hi].iter().sum::<f32>() / hi as f32;
+        let peak = d.levels[..hi].iter().copied().fold(0.0f32, f32::max);
+        let got = Tube::level_for(&d, 0, 10);
+        assert!(got > mean + (peak - mean) * 0.5, "must sit above the midpoint: {got} in [{mean}, {peak}]");
+        assert!(got <= peak + 1e-6, "but never above the peak itself: {got} vs {peak}");
+    }
+
+    #[test]
+    fn the_response_window_spends_its_range_on_levels_the_dsp_actually_produces() {
+        // The mapping was linear over 0..1 while the DSP delivers roughly 0.15-0.65, so a valve
+        // used about a third of its range. Across that window the response must now travel most
+        // of 0..1.
+        let lo = Tube::response(0.15, 1.0);
+        let hi = Tube::response(0.65, 1.0);
+        assert!(hi - lo > 0.75, "the music window must cover most of the range: {lo} -> {hi}");
+        assert_eq!(Tube::response(0.0, 1.0), 0.0, "silence must map to zero, not a pedestal");
+        assert_eq!(Tube::response(1.0, 1.0), 1.0, "full scale must reach the top");
+        // sensitivity is the user-facing knob and must actually do something
+        assert!(Tube::response(0.3, 2.0) > Tube::response(0.3, 1.0), "sensitivity must scale it");
     }
 
     #[test]
@@ -389,7 +534,7 @@ mod tests {
             s
         };
         let render = |d: &FrameData| {
-            let mut tube = Tube;
+            let mut tube = Tube::default();
             let mut c = Canvas::new(190, 60);
             tube.draw(&mut c, &t, d);
             c
@@ -419,7 +564,7 @@ mod tests {
         d.levels[0] = f32::NAN;
         d.levels[9] = f32::INFINITY;
         d.peaks[3] = f32::NAN;
-        let mut tube = Tube;
+        let mut tube = Tube::default();
         let mut c = Canvas::new(190, 60);
         tube.draw(&mut c, &t, &d);
         let mut tiny = Canvas::new(10, 8);
@@ -432,7 +577,7 @@ mod tests {
     fn every_tube_colourway_renders_and_differs() {
         let mut seen: Vec<Vec<u32>> = Vec::new();
         for t in builtin::all().into_iter().filter(|t| t.family == "tube") {
-            let mut tube = Tube;
+            let mut tube = Tube::default();
             let mut c = Canvas::new(190, 60);
             tube.draw(&mut c, &t, &frame(0.6));
             let bits = c.bits().to_vec();
@@ -460,7 +605,7 @@ mod tests {
                 *v = (0.15 + 0.85 * (x * 9.0).sin().abs()) * (1.0 - x * 0.45);
             }
             d.peaks = d.levels;
-            let mut tube = Tube;
+            let mut tube = Tube::default();
             let mut c = Canvas::new(190, 60);
             tube.draw(&mut c, &t, &d);
             let mut out = Vec::with_capacity(190 * 60 * 4);
