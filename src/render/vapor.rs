@@ -25,13 +25,42 @@ use crate::themes::Theme;
 /// Bass level below which a lightning strike will not fire regardless of the transient.
 const BOLT_FLOOR: f32 = 0.35;
 
-/// Level a segment's mean must exceed before it is re-stroked as a peak glow.
-const GLOW_AT: f32 = 0.55;
+/// Normalised level a segment's mean must exceed before it is re-stroked as a peak glow.
+///
+/// Raised from 0.55 when the terrain gained auto-ranging. 0.55 was a threshold on the RAW band
+/// level, where real music rarely passed it; against a normalised level - where the loudest band
+/// now sits at 0.92 by construction - it caught everything above about 60% of the frame peak, so
+/// most of the grid was re-stroked white and the left half of the scene washed out. This keeps
+/// the glow on the genuine peaks it was meant to mark.
+const GLOW_AT: f32 = 0.82;
 
 /// Reference frame duration. The render loop sleeps a fixed 16ms per tick, so its real
 /// period is 16ms plus however long the frame took; scroll and bolt decay are scaled by the
 /// measured `dt_ms` against this so they run at the same speed when the loop slows.
 const NOMINAL_DT_MS: f32 = 16.7;
+
+/// Normalised band level the loudest band is driven toward.
+///
+/// Below 1.0 so an unusually loud band still has somewhere to go before it clips flat against
+/// the top of its displacement range.
+const TERRAIN_TARGET: f32 = 0.92;
+
+/// Quietest band peak the terrain will normalise against.
+///
+/// Without a floor, the silence between tracks divides by a tiny peak and lifts the noise floor
+/// into full-scale hills - the failure this project already hit once in the scope family when it
+/// gained an auto-ranger.
+const TERRAIN_FLOOR: f32 = 0.14;
+
+/// Peak-follower ballistics for the terrain normaliser, per frame at ~60fps.
+///
+/// Fast enough to catch a chorus arriving within a few frames, and released far more slowly so
+/// the hills do not visibly breathe between beats. Deliberately slower on release than the
+/// scope's follower, because a scope trace redraws every frame while these ridges persist on
+/// screen as they scroll toward the viewer - a gain that moved quickly would bend ridges that
+/// are already drawn.
+const TERRAIN_ATTACK: f32 = 0.22;
+const TERRAIN_RELEASE: f32 = 0.004;
 
 #[derive(Default)]
 pub struct Vapor {
@@ -43,6 +72,8 @@ pub struct Vapor {
     bolt: f32,
     /// Advanced on each strike so successive bolts take different paths.
     bolt_seed: u32,
+    /// Slow-following peak of the smoothed band levels, for terrain auto-ranging.
+    band_peak: f32,
 }
 
 /// Deterministic value hash. Used for bolt paths instead of a real RNG so a given seed
@@ -89,6 +120,39 @@ impl Vapor {
                 }
             })
             .collect()
+    }
+
+    /// Advances the band-peak follower and returns the gain to scale the terrain by.
+    ///
+    /// The terrain was linear in band level, and that is the same mistake already fixed twice in
+    /// this project - once in the VU needle and once in the scope trace. Measured at the shipped
+    /// settings: real music sits at band levels of roughly 0.15 to 0.65, so the nearest ridge
+    /// moved between 1.1px and 4.9px on a 29px-tall ground, while the STATIC gap between grid
+    /// lines is already 0.9 to 3.2px. On a quiet passage the terrain therefore moved less than
+    /// one line gap, which is indistinguishable from a flat grid - the lightning read as
+    /// responsive only because it is triggered by a transient rather than scaled by a level.
+    ///
+    /// Normalising against the frame's own loudest band means the terrain shows the SHAPE of the
+    /// spectrum at any volume. That is the right trade for a scene: absolute level is what the VU
+    /// family is for.
+    fn update_band_gain(&mut self, levels: &[f32], sensitivity: f32, dt: f32) -> f32 {
+        let frame_peak = levels
+            .iter()
+            .copied()
+            .filter(|v| v.is_finite())
+            .fold(0.0f32, f32::max);
+        let k = if frame_peak > self.band_peak {
+            TERRAIN_ATTACK
+        } else {
+            TERRAIN_RELEASE
+        };
+        // dt-scaled so the follower behaves the same when the render loop slows, and clamped
+        // because `clamp` alone does not sanitise a NaN dt (see the note in `draw`).
+        self.band_peak += (frame_peak - self.band_peak) * (k * dt).clamp(0.0, 1.0);
+        if !self.band_peak.is_finite() {
+            self.band_peak = 0.0;
+        }
+        (TERRAIN_TARGET / self.band_peak.max(TERRAIN_FLOOR)) * sensitivity.max(0.0)
     }
 
     /// Advances the bass-transient detector and returns the current strike brightness.
@@ -233,6 +297,9 @@ impl Family for Vapor {
         // `clamp` does NOT sanitise NaN - every comparison against NaN is false, so it
         // falls through and returns NaN, which then poisons the scroll phase permanently.
         // Caught by this family's own NaN test.
+        // NOTE: `band_gain` below scales the band levels the terrain and the peak glow both
+        // read, so the GLOW_AT threshold is applied to the normalised value - a glow threshold
+        // left on the raw level would almost never trigger once the terrain was normalised.
         let dt = if d.dt_ms.is_finite() {
             (d.dt_ms / NOMINAL_DT_MS).clamp(0.25, 4.0)
         } else {
@@ -240,7 +307,12 @@ impl Family for Vapor {
         };
 
         let levels = Self::smoothed(d, t.smoothing);
+        // Lightning reads off the RAW smoothed levels, not the normalised ones. It fires on a
+        // RISE in bass, and normalising against the frame peak partly cancels exactly that rise -
+        // the strikes are the one part of this scene the user reported as already working, so
+        // they are deliberately left on the untouched signal.
         let bolt = self.update_bolt(&levels, t, dt);
+        let band_gain = self.update_band_gain(&levels, theme.sensitivity, dt);
 
         self.scroll = (self.scroll + t.scroll * 0.010 * dt).fract();
 
@@ -328,7 +400,8 @@ impl Family for Vapor {
                 let i0 = (fb.floor() as usize).min(levels.len() - 1);
                 let i1 = (i0 + 1).min(levels.len() - 1);
                 let frac = fb - i0 as f32;
-                let v = (levels[i0] * (1.0 - frac) + levels[i1] * frac).clamp(0.0, 1.0);
+                let v = ((levels[i0] * (1.0 - frac) + levels[i1] * frac) * band_gain)
+                    .clamp(0.0, 1.0);
                 let y = depth_y - v * amp_max * f;
                 pts.push((x, y.round() as i32));
                 vals.push(v);
@@ -627,5 +700,103 @@ mod tests {
             n += 1;
         }
         println!("wrote {} vapor dumps to {}", n, dir.display());
+    }
+}
+
+#[cfg(test)]
+mod sweep {
+    use super::*;
+    use crate::themes::builtin;
+
+    /// Realistic music: band levels in the 0.15-0.65 band the DSP actually produces, with a
+    /// spectral shape rather than a flat line.
+    fn realistic(loudness: f32) -> FrameData {
+        let mut d = FrameData::default();
+        for (i, v) in d.levels.iter_mut().enumerate() {
+            let x = i as f32 / 63.0;
+            // bass-heavy with a couple of mid peaks, rolling off at the top
+            let shape = 0.55 * (1.0 - x).powf(1.6) + 0.30 * (-(((x - 0.32) / 0.09).powi(2))).exp()
+                + 0.22 * (-(((x - 0.62) / 0.07).powi(2))).exp();
+            *v = (shape * loudness).clamp(0.0, 1.0);
+        }
+        d.peaks = d.levels;
+        d
+    }
+
+    /// Reports the gain the normaliser settles on, and the resulting ridge displacement.
+    #[test]
+    #[ignore]
+    fn probe_terrain_gain() {
+        let t = builtin::vapor_sunset();
+        let horizon = (60.0f32 * t.vapor.horizon).round();
+        println!("{:>9} {:>10} {:>12} {:>16}", "loudness", "peak band", "settled gain", "nearest ridge px");
+        for loudness in [0.15f32, 0.3, 0.45, 0.62, 0.85, 1.0] {
+            let d = realistic(loudness);
+            let mut v = Vapor::default();
+            let mut c = Canvas::new(380, 60);
+            for _ in 0..240 { v.draw(&mut c, &t, &d); }
+            let levels = Vapor::smoothed(&d, t.vapor.smoothing);
+            let peak = levels.iter().copied().fold(0.0f32, f32::max);
+            let gain = (0.92 / v.band_peak.max(0.14)) * t.sensitivity;
+            // displacement of the nearest ridge (f=1) at the loudest band
+            let amp_max = (horizon - 4.0) * t.vapor.amp * 0.55;
+            let px = (peak * gain).min(1.0) * amp_max;
+            println!("{loudness:>9.2} {peak:>10.3} {gain:>12.2} {px:>15.1}");
+        }
+    }
+
+    /// Renders the terrain at a range of `amp` values so the right one can be chosen by eye.
+    /// Run: cargo test --release sweep_terrain_amp -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn sweep_terrain_amp() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
+        std::fs::create_dir_all(&dir).unwrap();
+        println!("{:>5} {:>14} {:>16}", "amp", "peak ridge px", "as % of ground");
+        for amp in [0.55f32, 0.85, 1.15, 1.5] {
+            let mut t = builtin::vapor_sunset();
+            t.vapor.amp = amp;
+            let mut v = Vapor::default();
+            let mut c = Canvas::new(380, 60);
+            let d = realistic(0.62);
+            for _ in 0..60 {
+                v.draw(&mut c, &t, &d);
+            }
+            let horizon = (60.0 * t.vapor.horizon).round() as i32;
+            let ground = 60 - horizon - 2;
+            // topmost grid ink above the horizon line tells us how far a ridge actually lifted
+            let ground_col = Rgba::from_hex(&t.vapor.ground, 1.0);
+            let mut highest = horizon;
+            for y in 4..(horizon + ground) {
+                for x in 6..374 {
+                    let p = c.get(x, y);
+                    let off = p.r.abs_diff(ground_col.r) as u32
+                        + p.g.abs_diff(ground_col.g) as u32
+                        + p.b.abs_diff(ground_col.b) as u32;
+                    if y > horizon && off > 90 {
+                        highest = highest.min(y);
+                    }
+                }
+            }
+            let lift = horizon - highest;
+            println!(
+                "{amp:>5.2} {:>14} {:>15.0}%",
+                (horizon + ground) - highest,
+                ((horizon + ground - highest) as f32 / ground as f32) * 100.0
+            );
+            let _ = lift;
+            let mut out = Vec::with_capacity(380 * 60 * 4);
+            for y in 0..60 {
+                for x in 0..380 {
+                    let px = c.get(x, y);
+                    let a = px.a as f32 / 255.0;
+                    for ch in [px.r, px.g, px.b] {
+                        out.push((ch as f32 + 22.0 * (1.0 - a)).min(255.0) as u8);
+                    }
+                    out.push(255);
+                }
+            }
+            std::fs::write(dir.join(format!("amp-{:.2}.rgba", amp)), &out).unwrap();
+        }
     }
 }

@@ -126,7 +126,8 @@ Layouts scale rather than stretch, because at 60 px tall some of them cannot sim
   to 112 on a 60 px panel and the arc, ticks and scale all vanished, leaving two bare needle
   lines. Height caps the radius, so extra width buys extra dials. Dials 0 and 1 are always the
   stereo pair; the rest are frequency bands, the way a console carries a stereo pair plus band
-  meters.
+  meters. Each dial carries a silkscreen label — `L`, `R`, then `LO`/`HI` — because unlabelled
+  dials give no clue that two of them are channels and two are bands.
 - **Valve row** — 10 at 190 px, 20 at 380 px, each valve the size it was tuned at. A fixed count
   stretched to a 37 px pitch with 20 px glass, which read as arched windows rather than valves.
 - **Segmented, oscilloscope and vaporwave** scale directly and gain from the room.
@@ -195,7 +196,10 @@ ballistics. The needle is dB-mapped across [−45, 0] dBFS, because a VU is a dB
 | Neon cyan · Hot pink · Lime | Near-black panels so the needle has something to contrast against |
 
 **Vaporwave grid** — not an instrument but a scene: a slotted sun over a scrolling perspective
-grid, the terrain displaced by the spectrum, lightning fired by bass transients.
+grid, the terrain displaced by the spectrum, lightning fired by bass transients. The terrain
+auto-ranges against the frame's loudest band, so the hills show the *shape* of the spectrum at any
+volume; the lightning deliberately reads the raw signal instead, because it fires on a bass rise
+and normalising would partly cancel the very rise it triggers on.
 
 | Colourway | Character |
 |---|---|

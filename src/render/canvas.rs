@@ -257,6 +257,65 @@ impl Canvas {
         }
     }
 
+    /// One 3x5 glyph, as five rows of three bits with bit 2 leftmost. `None` for anything
+    /// not in the set.
+    ///
+    /// A hand-rolled bitmap font rather than a text API because there is no text API available
+    /// here: the canvas is a raw premultiplied-BGRA buffer composited with UpdateLayeredWindow,
+    /// and GDI text at this size would be anti-aliased into grey mush against a dark panel.
+    /// 3x5 is the smallest cell in which these particular glyphs stay unambiguous, and the
+    /// panel is only 60px tall - a taller font would not fit under the dial arc.
+    ///
+    /// Deliberately covers only the characters the meter labels use. An unsupported character
+    /// advances the cursor and draws nothing, so a future label with a stray character degrades
+    /// to a gap rather than a panic or a wrong glyph.
+    fn glyph_3x5(ch: char) -> Option<[u8; 5]> {
+        Some(match ch.to_ascii_uppercase() {
+            'L' => [0b100, 0b100, 0b100, 0b100, 0b111],
+            'R' => [0b110, 0b101, 0b110, 0b101, 0b101],
+            'O' => [0b111, 0b101, 0b101, 0b101, 0b111],
+            'H' => [0b101, 0b101, 0b111, 0b101, 0b101],
+            'I' => [0b111, 0b010, 0b010, 0b010, 0b111],
+            'M' => [0b101, 0b111, 0b111, 0b101, 0b101],
+            'D' => [0b110, 0b101, 0b101, 0b101, 0b110],
+            'B' => [0b110, 0b101, 0b110, 0b101, 0b110],
+            '1' => [0b010, 0b110, 0b010, 0b010, 0b111],
+            '2' => [0b111, 0b001, 0b111, 0b100, 0b111],
+            '3' => [0b111, 0b001, 0b111, 0b001, 0b111],
+            '4' => [0b101, 0b101, 0b111, 0b001, 0b001],
+            '5' => [0b111, 0b100, 0b111, 0b001, 0b111],
+            '6' => [0b111, 0b100, 0b111, 0b101, 0b111],
+            ' ' => [0, 0, 0, 0, 0],
+            _ => return None,
+        })
+    }
+
+    /// Draws `text` in the 3x5 font with its top-left at (x, y). 4px cell pitch.
+    ///
+    /// Returns the width drawn, so a caller can centre or right-align without duplicating the
+    /// pitch arithmetic.
+    pub fn text_3x5(&mut self, x: i32, y: i32, text: &str, c: Rgba) -> i32 {
+        let mut cx = x;
+        for ch in text.chars() {
+            if let Some(rows) = Self::glyph_3x5(ch) {
+                for (dy, row) in rows.iter().enumerate() {
+                    for dx in 0..3 {
+                        if row & (0b100 >> dx) != 0 {
+                            self.fill_rect(cx + dx, y + dy as i32, 1, 1, c);
+                        }
+                    }
+                }
+            }
+            cx += 4;
+        }
+        (cx - x - 1).max(0)
+    }
+
+    /// Width `text` would occupy in the 3x5 font, without drawing it.
+    pub fn text_3x5_width(text: &str) -> i32 {
+        (text.chars().count() as i32 * 4 - 1).max(0)
+    }
+
     /// Scales every pixel's alpha by `k`, for the reveal/hide fade.
     ///
     /// Scaling all four premultiplied channels by the same factor preserves the
@@ -837,6 +896,60 @@ mod tests {
         c.fill_rect(0, 0, 10, 10, Rgba::new(255, 255, 255, 255));
         c.clip_to_rounded_rect(0, 0, -4, 190, 5);
         assert!(c.bits().iter().all(|&p| p == 0), "degenerate rect clips everything");
+    }
+
+    #[test]
+    fn text_3x5_draws_inside_its_reported_box_and_nothing_outside() {
+        let mut c = Canvas::new(40, 12);
+        let white = Rgba::new(255, 255, 255, 255);
+        let w = c.text_3x5(2, 3, "LR", white);
+        assert_eq!(w, Canvas::text_3x5_width("LR"), "reported width must match the helper");
+        // Every lit pixel must lie inside the advertised box, or callers cannot lay labels out.
+        for y in 0..12 {
+            for x in 0..40 {
+                if c.get(x, y).a > 0 {
+                    assert!(
+                        (2..2 + w + 1).contains(&x) && (3..8).contains(&y),
+                        "glyph pixel at ({x},{y}) is outside the reported 3x5 box"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_label_the_meters_use_is_actually_in_the_font() {
+        // The failure this guards is silent: an unsupported character draws NOTHING, so a label
+        // would just be missing on the panel with no error anywhere.
+        for label in ["L", "R", "LO", "HI", "MID", "1", "2", "3", "4", "5", "6"] {
+            let mut c = Canvas::new(40, 12);
+            c.text_3x5(1, 1, label, Rgba::new(255, 255, 255, 255));
+            let lit = c.bits().iter().filter(|p| **p != 0).count();
+            assert!(lit > 0, "label {label:?} drew nothing - a character is missing from the font");
+        }
+    }
+
+    #[test]
+    fn an_unsupported_character_leaves_a_gap_and_still_advances() {
+        let mut c = Canvas::new(40, 12);
+        // '@' is not in the set. It must advance the cursor and draw nothing - so the R lands in
+        // the third cell rather than sliding into the second.
+        c.text_3x5(1, 1, "L@R", Rgba::new(255, 255, 255, 255));
+
+        // The middle cell must be completely empty.
+        for x in 5..8 {
+            for y in 1..6 {
+                assert_eq!(
+                    c.get(x, y).a, 0,
+                    "the unsupported glyph's cell must be blank, but ({x},{y}) is lit"
+                );
+            }
+        }
+        // And the third cell must hold the R, proving the cursor advanced past the gap rather
+        // than the string being silently compacted.
+        let third_cell_lit = (9..12).any(|x| (1..6).any(|y| c.get(x, y).a > 0));
+        assert!(third_cell_lit, "'R' should have been drawn in the third cell");
+        assert_eq!(Canvas::text_3x5_width("L@R"), 11);
     }
 
     #[test]

@@ -160,7 +160,14 @@ impl Default for VaporParams {
             // The FORMULAS are left exactly as the spec published them, so `amp = 1.01`
             // still means what the spec says it means; only these defaults are adapted, and
             // they remain overridable per colourway from TOML.
-            amp: 0.55,
+            // 0.55 was chosen when band levels were fed in RAW, and real music only spans
+            // about 0.15-0.65 of the 0..1 range - so the nearest ridge moved 1.1px to 4.9px on
+            // a 29px ground while the static gap between grid lines is already 0.9-3.2px. On a
+            // quiet passage the terrain moved less than one line gap, which is a flat grid.
+            // Now that the terrain auto-ranges, the loudest band reliably reaches the top of
+            // its displacement range, so this sets how much relief that buys: ~14.5px, half the
+            // visible ground. 1.50 was measurably denser without reading as more responsive.
+            amp: 1.15,
             lines: 12,
             verts: 18,
             scroll: 1.24,

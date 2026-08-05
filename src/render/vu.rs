@@ -49,6 +49,39 @@ pub fn dial_count(w: i32) -> usize {
     ((w / DIAL_PITCH).max(2) as usize).min(8)
 }
 
+/// Silkscreen label for dial `idx` of `dials`.
+///
+/// Exists because unlabelled dials are unreadable: with four of them there is nothing on the
+/// panel to say that two are channels and two are frequency bands, so the extra pair just looks
+/// like more of the same. Real meters are silkscreened for exactly this reason.
+///
+/// Dials 0 and 1 are always the stereo pair. The rest split the spectrum low-to-high, so they
+/// get frequency labels while there are few enough to name, and numbers past that - "MID" stops
+/// meaning anything once there are five bands.
+pub fn dial_label(idx: usize, dials: usize) -> &'static str {
+    match idx {
+        0 => "L",
+        1 => "R",
+        _ => {
+            let band = idx - 2;
+            match (dials - 2, band) {
+                (1, _) => "BND",
+                (2, 0) => "LO",
+                (2, _) => "HI",
+                (3, 0) => "LO",
+                (3, 1) => "MID",
+                (3, _) => "HI",
+                (_, 0) => "1",
+                (_, 1) => "2",
+                (_, 2) => "3",
+                (_, 3) => "4",
+                (_, 4) => "5",
+                (_, _) => "6",
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Vu {
     l: f32,
@@ -245,6 +278,17 @@ impl Family for Vu {
 
             // Pivot hub.
             dial.fill_circle(cx, cy, 2, needle);
+
+            // Silkscreen label, placed under the arc's left-hand end. Off-centre on purpose:
+            // the needle sweeps through the middle of the dial, so a centred label would be
+            // struck through by it at normal listening levels.
+            let label = dial_label(idx, dials);
+            let lw = Canvas::text_3x5_width(label);
+            let ly = cy - (radius * 3 / 5);
+            let lx = cx - (radius as f32 * 0.52) as i32;
+            if ly + 5 < cy && lx >= 2 && lx + lw < w - 2 {
+                dial.text_3x5(lx, ly, label, Rgba::from_hex(&t.lit, 0.60));
+            }
         }
 
         // `Canvas::bloom` keeps the original (crisp) pixel on top of the
