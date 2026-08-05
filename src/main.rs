@@ -32,9 +32,9 @@ fn main() -> Result<()> {
     for w in &theme_warnings {
         eprintln!("theme: {w}");
     }
-    let theme_menu: Vec<(String, String)> = all_themes
+    let theme_menu: Vec<win::tray::MenuItem> = all_themes
         .iter()
-        .map(|t| (t.id.clone(), t.name.clone()))
+        .map(|t| win::tray::MenuItem::new(&t.id, &t.name, &t.family))
         .collect();
     // Watches `%APPDATA%\taskbar-eq\themes` and flags a batch of edits so the
     // loop below can reload without a restart. A watch that could not be
@@ -117,9 +117,9 @@ fn main() -> Result<()> {
                     eprintln!("config save failed: {e}");
                 }
             }
-            let live_menu: Vec<(String, String)> = all_themes
+            let live_menu: Vec<win::tray::MenuItem> = all_themes
                 .iter()
-                .map(|t| (t.id.clone(), t.name.clone()))
+                .map(|t| win::tray::MenuItem::new(&t.id, &t.name, &t.family))
                 .collect();
             tray.set_themes(&live_menu);
             println!("themes: reloaded {} colourways", all_themes.len());

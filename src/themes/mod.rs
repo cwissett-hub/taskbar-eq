@@ -20,6 +20,28 @@ pub enum Texture {
     None_,
 }
 
+/// Human-readable name for a family, for the theme menu's submenu titles.
+///
+/// Falls back to a title-cased version of the raw family id rather than skipping or
+/// panicking on an unknown one, so a family added by a TOML file - or a new built-in whose
+/// label nobody remembered to add here - still appears in the menu with a readable name.
+/// The standing requirement is that themes stay expandable; a lookup that drops unknown
+/// families would quietly break that.
+pub fn family_label(family: &str) -> String {
+    match family {
+        "segmented" => "Segmented VFD".into(),
+        "scope" => "Oscilloscope".into(),
+        "vu" => "VU dials".into(),
+        other => {
+            let mut c = other.chars();
+            match c.next() {
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                None => "Other".into(),
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Zone {
     pub upto: f32,

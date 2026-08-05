@@ -7,7 +7,8 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW,
     GetCursorPos, LoadIconW, PeekMessageW, RegisterClassW, SetForegroundWindow, TrackPopupMenu,
-    TranslateMessage, HMENU, IDI_APPLICATION, MF_CHECKED, MF_SEPARATOR, MF_STRING, MSG, PM_REMOVE,
+    TranslateMessage, HMENU, IDI_APPLICATION, MF_CHECKED, MF_POPUP, MF_SEPARATOR, MF_STRING, MSG,
+    PM_REMOVE,
     TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTALIGN, WM_APP, WM_RBUTTONUP, WNDCLASSW,
     WS_EX_TOOLWINDOW, WS_POPUP,
 };
@@ -37,16 +38,50 @@ pub enum TrayEvent {
     ToggleAutostart,
 }
 
+/// One selectable colourway in the theme menu.
+///
+/// Carries `family` because the menu groups colourways into a submenu per family. It was a
+/// bare `(id, name)` tuple while the menu was flat; with three families and nineteen
+/// colourways a flat list is unusable, and the tuple had no room for the grouping key.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MenuItem {
+    pub id: String,
+    pub name: String,
+    pub family: String,
+}
+
+impl MenuItem {
+    pub fn new(id: &str, name: &str, family: &str) -> Self {
+        MenuItem { id: id.into(), name: name.into(), family: family.into() }
+    }
+}
+
+/// The families present in `items`, in first-appearance order.
+///
+/// First-appearance rather than alphabetical, so the menu follows the registry order the
+/// built-ins are declared in instead of reordering itself as families are added. Extracted
+/// from `show_menu_for` purely so it is testable: everything else in that function needs a
+/// real window and a live HMENU.
+fn families_in_order(items: &[MenuItem]) -> Vec<&str> {
+    let mut families: Vec<&str> = Vec::new();
+    for it in items {
+        if !families.contains(&it.family.as_str()) {
+            families.push(&it.family);
+        }
+    }
+    families
+}
+
 pub struct Tray {
     hwnd: HWND,
-    themes: Vec<(String, String)>, // (id, display name)
+    themes: Vec<MenuItem>,
     // Set on WM_RBUTTONUP, consumed by `take_right_click`. NOT a TrayEvent
     // queue - see the note on `poll` below for why.
     right_clicked: bool,
 }
 
 impl Tray {
-    pub fn new(themes: &[(String, String)]) -> Result<Self> {
+    pub fn new(themes: &[MenuItem]) -> Result<Self> {
         unsafe {
             let class = WNDCLASSW {
                 lpfnWndProc: Some(tray_wndproc),
@@ -109,26 +144,69 @@ impl Tray {
     /// in sync and so passes the current registry straight through.
     pub fn show_menu_for(
         &self,
-        items: &[(String, String)],
+        items: &[MenuItem],
         autostart: bool,
         current_theme: &str,
     ) -> Option<TrayEvent> {
         unsafe {
+            // Before CreatePopupMenu: the theme is resolved when the menu is created, so
+            // setting the mode afterwards would only take effect on the NEXT right-click.
+            crate::win::darkmode::apply();
+
             let menu: HMENU = CreatePopupMenu().ok()?;
-            for (i, (id, name)) in items.iter().enumerate() {
-                let flags = if id == current_theme {
-                    MF_STRING | MF_CHECKED
-                } else {
-                    MF_STRING
+
+            // Group into one submenu per family, in first-appearance order so the built-in
+            // registry order is preserved rather than alphabetised.
+            //
+            // Command ids stay indices into the flat `items` slice, NOT per-submenu
+            // positions, so the dispatch below is unchanged by the nesting and a submenu
+            // that fails to build cannot silently shift another family's ids.
+            let families = families_in_order(items);
+
+            // Submenu handles must outlive TrackPopupMenu. Destroying the parent destroys
+            // attached submenus, so these are not separately freed - but one that is
+            // created and never attached WOULD leak, hence attaching immediately below.
+            for family in &families {
+                let sub: HMENU = match CreatePopupMenu() {
+                    Ok(h) => h,
+                    // Skipping one family is better than abandoning the whole menu: the
+                    // other families, autostart and Quit all still work.
+                    Err(_) => continue,
                 };
-                let mut wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+                let mut family_holds_current = false;
+                for (i, it) in items.iter().enumerate() {
+                    if it.family != *family {
+                        continue;
+                    }
+                    let selected = it.id == current_theme;
+                    family_holds_current |= selected;
+                    let flags = if selected { MF_STRING | MF_CHECKED } else { MF_STRING };
+                    let mut wide: Vec<u16> =
+                        it.name.encode_utf16().chain(std::iter::once(0)).collect();
+                    let _ = AppendMenuW(
+                        sub,
+                        flags,
+                        ID_THEME_BASE + i,
+                        windows::core::PCWSTR(wide.as_mut_ptr()),
+                    );
+                }
+                // Check the family too, so the active one is identifiable without opening
+                // every submenu to hunt for the tick.
+                let label = crate::themes::family_label(family);
+                let mut wide: Vec<u16> = label.encode_utf16().chain(std::iter::once(0)).collect();
+                let flags = if family_holds_current {
+                    MF_POPUP | MF_CHECKED
+                } else {
+                    MF_POPUP
+                };
                 let _ = AppendMenuW(
                     menu,
                     flags,
-                    ID_THEME_BASE + i,
+                    sub.0 as usize,
                     windows::core::PCWSTR(wide.as_mut_ptr()),
                 );
             }
+
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
             let _ = AppendMenuW(
                 menu,
@@ -164,7 +242,7 @@ impl Tray {
             } else if id >= ID_THEME_BASE {
                 items
                     .get(id - ID_THEME_BASE)
-                    .map(|(tid, _)| TrayEvent::SelectTheme(tid.clone()))
+                    .map(|it| TrayEvent::SelectTheme(it.id.clone()))
             } else {
                 None
             }
@@ -175,7 +253,7 @@ impl Tray {
     /// (which can add, remove or rename colourways) is reflected the next time
     /// either the tray icon or the overlay is right-clicked, without needing a
     /// restart.
-    pub fn set_themes(&mut self, items: &[(String, String)]) {
+    pub fn set_themes(&mut self, items: &[MenuItem]) {
         self.themes = items.to_vec();
     }
 
@@ -235,7 +313,7 @@ mod tests {
 
     #[test]
     fn new_creates_and_drop_removes_the_tray_icon() {
-        let tray = Tray::new(&[("vfd-ice".into(), "VFD Ice".into())])
+        let tray = Tray::new(&[MenuItem::new("vfd-ice", "VFD Ice", "segmented")])
             .expect("tray icon creation should succeed on a real desktop session");
         drop(tray);
         // Shell_NotifyIconW/NIM_DELETE has no queryable API to assert against
@@ -244,16 +322,63 @@ mod tests {
     }
 
     #[test]
-    fn set_themes_replaces_the_stored_list_so_a_hot_reload_is_reflected() {
-        let mut tray = Tray::new(&[("old".into(), "Old".into())])
-            .expect("tray icon creation should succeed on a real desktop session");
-        assert_eq!(tray.themes, vec![("old".to_string(), "Old".to_string())]);
+    fn families_group_in_first_appearance_order_not_alphabetically() {
+        let items = [
+            MenuItem::new("vfd-ice", "VFD ice", "segmented"),
+            MenuItem::new("p1-green", "P1 green", "scope"),
+            MenuItem::new("matrix", "Matrix", "segmented"),
+            MenuItem::new("vu-cream", "Warm cream", "vu"),
+            MenuItem::new("p7", "P7", "scope"),
+        ];
+        // Alphabetical would be [scope, segmented, vu] - asserting the interleaved input
+        // still yields declaration order is what makes this test worth having.
+        assert_eq!(families_in_order(&items), vec!["segmented", "scope", "vu"]);
+    }
 
-        tray.set_themes(&[("new".into(), "New".into()), ("newer".into(), "Newer".into())]);
+    #[test]
+    fn every_theme_lands_in_exactly_one_family_submenu() {
+        // The menu builds command ids as indices into the FLAT slice while iterating
+        // per-family. If the grouping ever dropped or duplicated an item, a colourway
+        // would be unreachable or two entries would resolve to the same theme.
+        let items: Vec<MenuItem> = crate::themes::builtin::all()
+            .iter()
+            .map(|t| MenuItem::new(&t.id, &t.name, &t.family))
+            .collect();
+        let mut seen = 0;
+        for fam in families_in_order(&items) {
+            seen += items.iter().filter(|it| it.family == fam).count();
+        }
+        assert_eq!(seen, items.len(), "every colourway must appear under exactly one family");
+        assert!(items.len() > 15, "sanity: the registry should be non-trivial");
+    }
+
+    #[test]
+    fn family_labels_are_readable_and_unknown_families_still_get_a_name() {
+        assert_eq!(crate::themes::family_label("scope"), "Oscilloscope");
+        assert_eq!(crate::themes::family_label("vu"), "VU dials");
+        // The important case: a family this table has never heard of must still be
+        // presentable, because a TOML file can introduce one and the menu must not drop it.
+        assert_eq!(crate::themes::family_label("vaporwave"), "Vaporwave");
+        assert_eq!(crate::themes::family_label(""), "Other");
+    }
+
+    #[test]
+    fn set_themes_replaces_the_stored_list_so_a_hot_reload_is_reflected() {
+        let mut tray = Tray::new(&[MenuItem::new("old", "Old", "segmented")])
+            .expect("tray icon creation should succeed on a real desktop session");
+        assert_eq!(tray.themes, vec![MenuItem::new("old", "Old", "segmented")]);
+
+        tray.set_themes(&[
+            MenuItem::new("new", "New", "segmented"),
+            MenuItem::new("newer", "Newer", "scope"),
+        ]);
 
         assert_eq!(
             tray.themes,
-            vec![("new".to_string(), "New".to_string()), ("newer".to_string(), "Newer".to_string())],
+            vec![
+                MenuItem::new("new", "New", "segmented"),
+                MenuItem::new("newer", "Newer", "scope"),
+            ],
             "set_themes must replace the snapshot show_menu reads from"
         );
     }

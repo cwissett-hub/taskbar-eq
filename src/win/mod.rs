@@ -1,4 +1,5 @@
 pub mod autostart;
+pub mod darkmode;
 pub mod capture;
 pub mod dpi;
 pub mod overlay;
