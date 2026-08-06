@@ -230,13 +230,30 @@ fn send_via_session(action: Action) -> Result<(), String> {
     .map_err(|e| format!("{}: {e}", action.label()))?;
     let delivered = op.join().map_err(|e| format!("{}: join: {e}", action.label()))?;
 
+    // THE SESSION HANDLE MUST BE RE-RESOLVED ON EVERY POLL, and this was found by running it
+    // against the real Spotify rather than by reading the docs.
+    //
+    // Re-reading `GetPlaybackInfo()` on the handle held from before the command returns a STALE
+    // snapshot forever on this thread. The command itself had plainly worked - a fresh `probe()`
+    // straight afterwards reported `Playing` - but the confirmation loop watched the old handle,
+    // never saw a change, and reported every single command as unconfirmed. Shipped, that would have
+    // filled the log with false failures for commands that all succeeded, which is precisely the
+    // "it feels unreliable" symptom this feature exists to remove.
+    //
+    // The reason it is not obvious: the same held-handle check DOES observe the change from
+    // PowerShell, which runs STA and pumps messages, so the proxy gets updated. This thread is MTA
+    // and pumps nothing, so nothing refreshes it. Re-resolving is the cheap, correct fix - it costs
+    // one `RequestAsync` per 50ms poll on a thread that has nothing else to do.
     let start = std::time::Instant::now();
     while start.elapsed() < std::time::Duration::from_millis(CONFIRM_MS) {
         std::thread::sleep(std::time::Duration::from_millis(CONFIRM_POLL_MS));
+        let Ok(Some((_, fresh))) = find_session() else {
+            continue;
+        };
         let changed = match action {
-            Action::PlayPause => status_of(&s).map(|now| now != before_status).unwrap_or(false),
+            Action::PlayPause => status_of(&fresh).map(|now| now != before_status).unwrap_or(false),
             _ => {
-                let now = title_of(&s);
+                let now = title_of(&fresh);
                 !now.is_empty() && now != before_title
             }
         };
@@ -378,6 +395,69 @@ mod tests {
         // Not cosmetic. The default decides what a config file with no `backend` key gets, which is
         // every existing install - and the media-key backend is the unreliable one.
         assert_eq!(Backend::default(), Backend::Session);
+    }
+
+    /// Live end-to-end check of the session backend: play, confirm, pause, confirm.
+    ///
+    /// Self-reversing on purpose - it leaves playback exactly as it found it - and ignored, because
+    /// it commands the real Spotify. Run it only when nobody is listening.
+    ///
+    /// Run: cargo test --release live_session_round_trip -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn live_session_round_trip_toggles_and_restores_playback() {
+        unsafe {
+            let _ = windows::Win32::System::Com::CoInitializeEx(
+                None,
+                windows::Win32::System::Com::COINIT_MULTITHREADED,
+            );
+        }
+        let (id, before) = probe().expect("probe should succeed");
+        println!("session {id:?} starts {before:?}");
+        assert!(before != Status::NoSession, "no Spotify session - start Spotify first");
+
+        for pass in 1..=2 {
+            let t0 = std::time::Instant::now();
+            let r = send(Action::PlayPause, Backend::Session);
+            let st = probe().map(|(_, s)| s).unwrap_or(Status::NoSession);
+            println!("  toggle {pass}: {:?} in {}ms -> {st:?}", r, t0.elapsed().as_millis());
+            assert!(r.is_ok(), "toggle {pass} was not confirmed: {r:?}");
+        }
+        let (_, after) = probe().expect("probe should succeed");
+        assert_eq!(after, before, "playback state must be left exactly as it was found");
+        println!("restored to {after:?}");
+    }
+
+    /// Live end-to-end check of a SKIP, which is the command whose confirmation cannot use the
+    /// playback status. Returns to the original track. Ignored for the same reason.
+    ///
+    /// Run: cargo test --release live_skip_round_trip -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn live_skip_round_trip_changes_the_track_and_comes_back() {
+        unsafe {
+            let _ = windows::Win32::System::Com::CoInitializeEx(
+                None,
+                windows::Win32::System::Com::COINIT_MULTITHREADED,
+            );
+        }
+        let Some((_, s)) = find_session().expect("find_session") else {
+            println!("no Spotify session - skipping");
+            return;
+        };
+        let first = title_of(&s);
+        println!("starting track: {first:?}");
+        let t0 = std::time::Instant::now();
+        let r = send(Action::NextTrack, Backend::Session);
+        println!("  next: {:?} in {}ms -> {:?}", r, t0.elapsed().as_millis(), title_of(&s));
+        assert!(r.is_ok(), "next was not confirmed: {r:?}");
+        // Two previous presses: the first restarts the current track, the second goes back one.
+        // That is Spotify's own behaviour and not something this code can change.
+        for _ in 0..2 {
+            let _ = send(Action::PrevTrack, Backend::Session);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        println!("ended on: {:?} (started on {first:?})", title_of(&s));
     }
 
     /// Live probe against whatever Spotify is doing right now. Ignored: it needs a real session.

@@ -2,6 +2,8 @@ pub mod autostart;
 pub mod darkmode;
 pub mod capture;
 pub mod dpi;
+pub mod hotkey;
+pub mod hotkeys;
 pub mod media;
 pub mod overlay;
 pub mod placement;

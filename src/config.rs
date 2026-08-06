@@ -3,6 +3,25 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Key bindings for the Spotify transport controls.
+///
+/// Strings, and empty by default. Nothing is bound until the user asks for it: `RegisterHotKey` is
+/// exclusive and first-come, so a default binding would seize keys machine-wide from the moment this
+/// ornament starts - and it can autostart, so it would usually win that race at logon. The first bug
+/// report would be "the media keys broke my YouTube", with no reason to connect it to a taskbar
+/// visualiser.
+///
+/// The inner `serde(default)` is load-bearing, not cosmetic: without it a `[hotkeys]` table that is
+/// missing one key fails the WHOLE document, `Config::load` falls back to `Config::default()`, and
+/// the user silently loses their theme, width and every timing.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
+pub struct Hotkeys {
+    pub play_pause: String,
+    pub next_track: String,
+    pub prev_track: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Config {
@@ -22,6 +41,11 @@ pub struct Config {
     /// pinned button.
     pub width: i32,
     pub autostart: bool,
+    /// Which mechanism sends transport commands. See `win::media::Backend`.
+    pub media_backend: crate::win::media::Backend,
+    /// Declared LAST because `toml` emits tables after root scalars; keeping struct order and file
+    /// order the same is what lets the existing round-trip test keep proving serialisation works.
+    pub hotkeys: Hotkeys,
 }
 
 impl Default for Config {
@@ -40,6 +64,8 @@ impl Default for Config {
             // not.
             width: 380,
             autostart: false,
+            media_backend: crate::win::media::Backend::default(),
+            hotkeys: Hotkeys::default(),
         }
     }
 }

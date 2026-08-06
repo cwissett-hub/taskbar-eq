@@ -9,7 +9,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, LoadIconW, PeekMessageW, RegisterClassW, SetForegroundWindow, TrackPopupMenu,
     TranslateMessage, HMENU, IDI_APPLICATION, MF_CHECKED, MF_POPUP, MF_SEPARATOR, MF_STRING, MSG,
     PM_REMOVE,
-    SetTimer, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTALIGN, WM_APP, WM_RBUTTONUP, WM_TIMER,
+    SetTimer, WM_HOTKEY, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTALIGN, WM_APP, WM_RBUTTONUP, WM_TIMER,
     WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
@@ -348,6 +348,12 @@ unsafe extern "system" fn tray_wndproc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if msg == WM_HOTKEY {
+        // Routed here because a null-hwnd registration would post a THREAD message that
+        // DispatchMessageW cannot deliver anywhere - see the note in `win::hotkeys`.
+        crate::win::hotkeys::on_wm_hotkey(wparam.0);
+        return LRESULT(0);
+    }
     if msg == WM_TIMER && wparam.0 == ID_TICK_TIMER {
         if let Some(tick) = TICK_HOOK.get() {
             // The tick guards its own re-entrancy (see `main::tick_now`), so a WM_TIMER that

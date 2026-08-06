@@ -473,6 +473,69 @@ fn diagnose() -> Result<()> {
     ));
 
     log::write(&format!("report written to {}", log::path().display()));
+    // ---- transport control ---------------------------------------------------------------------
+    // Deliberately does NOT attempt registration. `--diagnose` is normally run WHILE the app is
+    // running - it autostarts, so that is the usual state - and the live instance already owns the
+    // combinations, so every attempt would come back 1409 and print NO for a setup that is working
+    // perfectly. That would poison this file's own "the first NO is the answer" contract. What can be
+    // checked without side effects is whether each binding parses and passes validation, which is
+    // exactly where a hand-edited config.toml goes wrong.
+    let running = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::FindWindowW(windows::core::w!("TaskbarEqTray"), None)
+    }
+    .is_ok();
+    log::write(&format!(
+        "another taskbar-eq is running: {}",
+        if running { "YES  <- it owns the hotkeys, so they are not re-tested here" } else { "no" }
+    ));
+
+    match win::media::probe() {
+        Ok((_, win::media::Status::NoSession)) => log::write(
+            "spotify session: none  NO  <- start Spotify and play something once, then re-run",
+        ),
+        Ok((id, st)) => log::write(&format!("spotify session: {id} ({st:?})  YES")),
+        Err(e) => log::write(&format!("spotify session: probe failed - {e}  NO")),
+    }
+
+    let texts = [
+        (win::hotkeys::Slot::PlayPause, &cfg.hotkeys.play_pause),
+        (win::hotkeys::Slot::NextTrack, &cfg.hotkeys.next_track),
+        (win::hotkeys::Slot::PrevTrack, &cfg.hotkeys.prev_track),
+    ];
+    let mut bound = Vec::new();
+    for (slot, text) in texts {
+        if text.trim().is_empty() {
+            log::write(&format!("hotkey {}: not set", slot.label()));
+            continue;
+        }
+        match win::hotkey::Chord::parse(text) {
+            Err(e) => log::write(&format!(
+                "hotkey {}: cannot read {text:?} - {e}  NO",
+                slot.label()
+            )),
+            Ok(c) => match c.validate(&bound) {
+                Err(why) => log::write(&format!(
+                    "hotkey {}: {c} refused - {}  NO",
+                    slot.label(),
+                    why.message()
+                )),
+                Ok(adv) => {
+                    bound.push(c);
+                    let note = if adv.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            "  (note: {})",
+                            adv.iter().map(|a| a.message()).collect::<Vec<_>>().join("; ")
+                        )
+                    };
+                    log::write(&format!("hotkey {}: {c} valid{note}  YES", slot.label()));
+                }
+            },
+        }
+    }
+    log::write(&format!("transport backend: {:?}", cfg.media_backend));
+
     Ok(())
 }
 
@@ -747,6 +810,21 @@ fn main() -> Result<()> {
         });
     });
     win::tray::install_tick(tray.hwnd(), TICK_TIMER_MS, tick_now);
+
+    // Transport control. The media thread is started even with nothing bound, because it costs one
+    // idle thread and it means the very first key press does not also pay for WinRT activation.
+    win::hotkeys::install_media(win::media::start(), cfg.media_backend);
+    let mut hotkeys = win::hotkeys::Registry::new(tray.hwnd());
+    let outcomes = hotkeys.apply_all([
+        &cfg.hotkeys.play_pause,
+        &cfg.hotkeys.next_track,
+        &cfg.hotkeys.prev_track,
+    ]);
+    let working = outcomes.iter().filter(|o| o.is_working()).count();
+    log::write(&format!("transport: {working} of 3 keys bound and working"));
+    if outcomes.iter().any(|o| o.is_broken()) {
+        log::write("one or more transport keys are configured but NOT working - see the lines above");
+    }
     // Consecutive rect-discovery misses tolerated before the overlay gives up and
     // hides. At one probe per second this is a few seconds of grace.
 
@@ -868,5 +946,7 @@ fn main() -> Result<()> {
         std::thread::sleep(std::time::Duration::from_millis(16));
     }
 
+    // Nothing is left holding a machine-wide key after the app closes.
+    hotkeys.release_all();
     Ok(())
 }
