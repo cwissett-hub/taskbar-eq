@@ -16,6 +16,7 @@ mod dsp;
 mod geom;
 mod render;
 mod themes;
+mod tick;
 mod win;
 
 use anyhow::Result;
@@ -50,6 +51,289 @@ const WIDEN_MARGIN: i32 = 8;
 /// family clears its persistence buffers on a canvas resize - so without hysteresis an unrelated bit
 /// of taskbar activity wipes the phosphor trail once a second.
 const WIDTH_HYSTERESIS: i32 = 12;
+
+
+/// How often the backstop timer asks for a tick, in milliseconds.
+///
+/// Requested 15 rather than 16 because `SetTimer` is quantised to the system timer granularity
+/// (~15.6ms) and asking for 16 rounds UP to two quanta, ~31ms. Measured over an open menu, a 16ms
+/// request delivered 42 ticks in 1194ms - 28.4ms apiece. Asking for 15 lands on one quantum.
+const TICK_TIMER_MS: u32 = 15;
+
+/// Everything one render tick needs, in one place, so the tick can be driven from two places.
+///
+/// It has to be reachable from the tray window's `WM_TIMER` handler, which is a bare
+/// `extern "system"` function with nowhere to carry state - hence the thread-local below rather
+/// than values threaded through the loop. Single-threaded by construction: every field is touched
+/// only on the main thread, and `tick_now` refuses to nest.
+struct Ticker {
+    rx: win::capture::FrameReceiver,
+    latest: Frame,
+    overlay: win::overlay::Overlay,
+    theme: themes::Theme,
+    family: Box<dyn render::Family>,
+    smoother: Smoother,
+    gate: Gate,
+    /// Requested display width. A REQUEST, not a guarantee - `placement::widened` clamps it to the
+    /// clearance that actually exists.
+    width_req: i32,
+    rect: Option<geom::Rect>,
+    rect_tick: u32,
+    rect_misses: u32,
+    time_s: f32,
+    /// How long the previous tick spent in each of its slow candidates, in milliseconds.
+    ///
+    /// A stall is reported by the tick that FOLLOWS the blockage, so what it needs to name is the
+    /// previous tick's spending. Without this the log says only that something blocked, which is
+    /// where the first measurement of this bug ran out of road: the menu fix left two ~545ms stalls
+    /// per menu and the cause had to be inferred from their cadence rather than read off.
+    phases: Phases,
+}
+
+/// Per-tick timings for the calls that can realistically block, all in milliseconds.
+#[derive(Debug, Clone, Copy, Default)]
+struct Phases {
+    /// The once-a-second UI Automation walk that finds the Widgets button.
+    rect: u32,
+    /// `notification_state` + `taskbar_visible`, read every tick.
+    vis: u32,
+    /// Compose plus `UpdateLayeredWindow`.
+    draw: u32,
+    /// Draining the overlay's message queue.
+    pump: u32,
+    /// The whole tick, so nothing can hide in an untimed gap between the phases above. The first
+    /// pass at this measurement left the pump untimed and reported rect=0 vis=0 draw=0 for a 558ms
+    /// stall, which said only that the blockage was somewhere else.
+    total: u32,
+}
+
+thread_local! {
+    static TICKER: std::cell::RefCell<Option<Ticker>> =
+        const { std::cell::RefCell::new(None) };
+    /// When the last tick actually ran, for the interval the gate and the gate's ballistics need.
+    static LAST_TICK: std::cell::Cell<Option<std::time::Instant>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Runs the ticker's borrow for one operation, if it is installed and not already borrowed.
+///
+/// Returns `None` when the ticker is absent or busy, which the callers treat as "nothing to do".
+/// Every caller in the loop deliberately releases this borrow before doing anything that can
+/// block - `show_menu` above all - because that is precisely when `WM_TIMER` needs to get in.
+fn with_ticker<R>(f: impl FnOnce(&mut Ticker) -> R) -> Option<R> {
+    TICKER.with(|cell| {
+        let mut slot = cell.try_borrow_mut().ok()?;
+        slot.as_mut().map(f)
+    })
+}
+
+/// One render tick, from either driver. Installed as the tray timer's callback.
+///
+/// This is the whole fix for "right-clicking for the menu freezes the visualiser". Rendering used
+/// to be the tail of the main loop, so anything that blocked the loop stopped the meter and stopped
+/// the capture channel draining. `TrackPopupMenu` blocks by design - measured at 1194ms for one
+/// menu - and a modal loop pumps messages without ever returning, so a timer on the tray window is
+/// the only way in. See `tick`'s module docs for why the loop still drives it too.
+fn tick_now() {
+    let now = std::time::Instant::now();
+    let gap_ms = LAST_TICK
+        .with(|c| c.get())
+        .map(|t| now.duration_since(t).as_millis().min(u32::MAX as u128) as u32)
+        // The first tick has no predecessor. Use the loop's nominal cadence so it is admitted and
+        // is not reported as a stall.
+        .unwrap_or(TICK_TIMER_MS + 1);
+    let stalled = match tick::decide(gap_ms) {
+        tick::Decision::Skip => return,
+        tick::Decision::Run { stalled_ms } => stalled_ms,
+    };
+    TICKER.with(|cell| {
+        // try_borrow_mut, NOT borrow_mut. `Ticker::tick` ends by pumping the overlay's messages,
+        // which can dispatch a `WM_TIMER` straight back here; `borrow_mut` would panic and take the
+        // app with it. Dropping the nested request is right - the outer tick is already doing it.
+        let Ok(mut slot) = cell.try_borrow_mut() else { return };
+        let Some(t) = slot.as_mut() else { return };
+        LAST_TICK.with(|c| c.set(Some(now)));
+        let p = t.phases;
+        if let Some(ms) = stalled {
+            // The freeze this whole change fixes was invisible to every other diagnostic - the
+            // process alive, the window up, the last frame still on screen, nothing erroring - and
+            // was found only because a user noticed it by eye. This is the instrument that would
+            // have caught it. `log::write` collapses repeats, so a persistent stall cannot flood.
+            log::write(&format!(
+                "render stalled {ms}ms; previous tick total={}ms (rect={} vis={} draw={} pump={})",
+                p.total, p.rect, p.vis, p.draw, p.pump
+            ));
+        }
+        t.tick(gap_ms as f32);
+    });
+}
+
+impl Ticker {
+    /// Points the meter at a different colourway.
+    ///
+    /// `reset_meter` separates the two callers, a distinction the loop used to make inline: a hot
+    /// reload must NOT wipe the meter, only a deliberate switch does.
+    fn set_theme(&mut self, theme: themes::Theme, reset_meter: bool) {
+        self.family = render::family_for(&theme.family);
+        if reset_meter {
+            self.smoother = Smoother::new(theme.ballistics);
+        } else {
+            self.smoother.set_ballistics(theme.ballistics);
+        }
+        self.theme = theme;
+    }
+
+    /// Composes and presents one frame. `gap_ms` is the measured interval since the last tick.
+    fn tick(&mut self, gap_ms: f32) {
+        let whole = std::time::Instant::now();
+        while let Ok(f) = self.rx.try_recv() {
+            self.latest = f;
+        }
+
+        self.phases = Phases::default();
+
+        // Re-discover the rect once a second - it moves with the weather text.
+        if self.rect_tick == 0 {
+            let t0 = std::time::Instant::now();
+            self.rediscover_rect();
+            self.phases.rect = t0.elapsed().as_millis() as u32;
+        }
+        self.rect_tick = (self.rect_tick + 1) % 60;
+
+        let t0 = std::time::Instant::now();
+        let inputs = win::visibility::Inputs {
+            widget: self.rect,
+            notification_state: win::placement::notification_state(),
+            taskbar_visible: win::placement::taskbar_visible(),
+        };
+        self.phases.vis = t0.elapsed().as_millis() as u32;
+
+        // Clamped: a debugger pause or a suspend/resume can hand back an enormous interval, which
+        // would otherwise jump the gate straight through its hide delay and snap the scroll phase
+        // forward.
+        let dt_ms = gap_ms.clamp(1.0, 100.0);
+        // Wrapped rather than unbounded - see FrameData::time_s.
+        self.time_s = (self.time_s + dt_ms / 1000.0) % 3600.0;
+
+        // Feeding the MEASURED interval is what makes the gate's configured millisecond timings
+        // mean what they say; it was a hardcoded 16 once, which ran the 4500ms hide delay nearer
+        // 5.5s. It matters more now than it did: with two drivers the real cadence varies, and
+        // during an open menu it is nearer 31ms than 16ms.
+        let opacity = self.gate.update(self.latest.rms, dt_ms.round() as u32);
+        self.smoother.update(&self.latest.bands);
+
+        let t0 = std::time::Instant::now();
+        if win::visibility::should_show(&inputs) && self.gate.is_visible() {
+            let r = self.rect.unwrap();
+            let mut canvas = Canvas::new(r.w, r.h);
+            let data = FrameData {
+                levels: *self.smoother.levels(),
+                peaks: *self.smoother.peaks(),
+                waveform: self.latest.waveform,
+                rms_l: self.latest.rms_l,
+                rms_r: self.latest.rms_r,
+                dt_ms,
+                time_s: self.time_s,
+            };
+            self.family.draw(&mut canvas, &self.theme, &data);
+            // Apply the reveal/hide fade. The gate has computed this opacity - with tests - since
+            // it was written, but nothing ever consumed it, so the overlay popped in and out
+            // instead of fading.
+            canvas.scale_alpha(opacity);
+            // NOT fatal, and this is the bug behind the Windows 10 report. A single failing draw
+            // used to propagate out of `main` with `?` and end the process. A draw that fails this
+            // frame may well succeed the next, and even if it never does, a running app that logs
+            // why is diagnosable where a vanished one is not.
+            if let Err(e) = self.overlay.show(r, &canvas) {
+                log::write(&format!(
+                    "overlay draw failed at {}x{} ({},{}) - {e}",
+                    r.w, r.h, r.x, r.y
+                ));
+            }
+        } else {
+            let _ = self.overlay.hide();
+        }
+        self.phases.draw = t0.elapsed().as_millis() as u32;
+
+        let t0 = std::time::Instant::now();
+        self.overlay.pump_messages();
+        self.phases.pump = t0.elapsed().as_millis() as u32;
+        self.phases.total = whole.elapsed().as_millis() as u32;
+    }
+
+    /// The once-a-second UI Automation probe that decides where the overlay sits.
+    fn rediscover_rect(&mut self) {
+        // ONE UIA snapshot per tick, shared by the widget lookup, the clearance measurement and
+        // the chevron fallback. Reading the clearance from a different enumeration than the widget
+        // rect would let the two disagree about where things are while the taskbar is
+        // mid-animation, and the clearance is what stops the overlay covering a pinned button.
+        let elements = win::placement::taskbar_elements().unwrap_or_default();
+        let bar = win::placement::taskbar_rect();
+
+        match win::placement::widget_rect_in(&elements) {
+            Some(widget) => {
+                let want = match bar {
+                    // Widen leftward into the dead taskbar between the last pinned app and the
+                    // widget. `width_req` is a request; this clamps it to the room that exists.
+                    Some(bar) => win::placement::widened(
+                        widget,
+                        bar,
+                        win::placement::left_limit(&elements, widget),
+                        self.width_req,
+                        WIDEN_MARGIN,
+                    ),
+                    None => widget,
+                };
+                // Hysteresis on the width only.
+                //
+                // The clearance moves every time a window opens, closes or is minimised, and the
+                // scope family reallocates - and therefore CLEARS - its persistence buffers on any
+                // canvas resize. Without this, a taskbar that is busy for unrelated reasons wipes
+                // the phosphor trail once a second. `x` is allowed to track freely because moving
+                // the window costs nothing.
+                self.rect = Some(match self.rect {
+                    Some(prev) if (prev.w - want.w).abs() < WIDTH_HYSTERESIS => {
+                        geom::Rect { x: want.x + (want.w - prev.w), ..prev }
+                    }
+                    _ => want,
+                });
+                self.rect_misses = 0;
+            }
+            // A transient failure must NOT throw away a known-good rect.
+            //
+            // UI Automation can fail for a tick - notably while a popup menu is open, which is
+            // exactly when a theme is being chosen, and which now happens on far more ticks
+            // because the timer keeps ticking THROUGH the menu. Clearing `rect` on the first miss
+            // hid the overlay for a second and the real weather showed through underneath, which
+            // reads as the EQ "bleeding". Only give up after several consecutive misses.
+            None => {
+                self.rect_misses += 1;
+                if self.rect_misses >= RECT_MISS_LIMIT {
+                    self.rect = None;
+                }
+            }
+        }
+
+        // No Widgets button at all? Anchor to the tray's overflow chevron instead. That element
+        // exists on Windows 10 as well ("Show hidden icons"), which is the only reason this app
+        // shows anything at all on that OS.
+        if self.rect.is_none() {
+            if let (Some(chev), Some(bar)) = (win::placement::chevron_rect_in(&elements), bar) {
+                // Widened the same way, so the Windows 10 path gets the wide display too rather
+                // than being stuck at the old fixed fallback width.
+                let anchored =
+                    win::placement::rect_left_of(chev, bar, FALLBACK_GAP, FALLBACK_WIDTH);
+                self.rect = Some(win::placement::widened(
+                    anchored,
+                    bar,
+                    win::placement::left_limit(&elements, anchored),
+                    self.width_req,
+                    WIDEN_MARGIN,
+                ));
+            }
+        }
+    }
+}
 
 /// Prints why the overlay would or would not be drawn, then exits.
 ///
@@ -431,23 +715,38 @@ fn main() -> Result<()> {
     // `Watcher::new` - rather than crashing the app.
     let watcher = themes::watch::Watcher::new();
 
-    let mut theme = all_themes
+    let theme = all_themes
         .iter()
         .find(|t| t.id == cfg.theme)
         .cloned()
         .unwrap_or_else(themes::builtin::vfd_ice);
-    let mut family = render::family_for(&theme.family);
-    let mut smoother = Smoother::new(theme.ballistics);
-    let mut gate = Gate::new(cfg.gate_config());
     let overlay = win::overlay::Overlay::new()?;
     // The tray icon is not decoration: when nothing is playing the overlay
     // does not exist, so this is the only way to quit the app.
     let mut tray = Tray::new(&theme_menu)?;
     let rx = win::capture::start();
 
-    let mut latest = Frame::default();
-    let mut rect_tick = 0u32;
-    let mut rect: Option<geom::Rect> = None;
+    // The render tick lives in a thread-local from here on, so the tray window's WM_TIMER can
+    // drive it while the main loop is blocked inside TrackPopupMenu. Installed before the timer,
+    // so a timer that fires immediately finds it ready.
+    TICKER.with(|cell| {
+        *cell.borrow_mut() = Some(Ticker {
+            rx,
+            latest: Frame::default(),
+            overlay,
+            family: render::family_for(&theme.family),
+            smoother: Smoother::new(theme.ballistics),
+            gate: Gate::new(cfg.gate_config()),
+            theme,
+            width_req: cfg.width,
+            rect: None,
+            rect_tick: 0,
+            rect_misses: 0,
+            time_s: 0.0,
+            phases: Phases::default(),
+        });
+    });
+    win::tray::install_tick(tray.hwnd(), TICK_TIMER_MS, tick_now);
     // Consecutive rect-discovery misses tolerated before the overlay gives up and
     // hides. At one probe per second this is a few seconds of grace.
 
@@ -455,21 +754,13 @@ fn main() -> Result<()> {
     // the tray's overflow chevron, at this width.
 
 
-    let mut rect_misses: u32 = 0;
     // Hot-reload debounce: wait this long after the last filesystem event before
     // reparsing, so one save produces one reload.
     const RELOAD_DEBOUNCE_MS: u64 = 150;
     let mut reload_pending = false;
     let mut last_change: Option<std::time::Instant> = None;
-    // Real frame interval. The loop sleeps a fixed 16ms, so the actual period is that plus
-    // however long the frame's capture, DSP and render took - measured, not assumed.
-    let mut last_frame = std::time::Instant::now();
-    let mut time_s: f32 = 0.0;
 
     loop {
-        while let Ok(f) = rx.try_recv() {
-            latest = f;
-        }
 
         // Reload themes when a file under the themes directory changes. Keeps
         // the current selection if it survives the reload, and never resets
@@ -497,16 +788,16 @@ fn main() -> Result<()> {
             all_themes = fresh;
             let resolved = themes::reconcile_reload(&all_themes, &cfg.theme);
             let selection_changed = resolved.id != cfg.theme;
-            theme = resolved;
-            family = render::family_for(&theme.family);
-            smoother.set_ballistics(theme.ballistics);
+            let resolved_id = resolved.id.clone();
+            // A reload must not wipe the meter, so `reset_meter` is false here.
+            with_ticker(|t| t.set_theme(resolved, false));
             if selection_changed {
                 // The previously-selected theme's file was deleted - fall back
                 // rather than leaving the app pointing at nothing, and persist
                 // the fallback so a restart does not reselect a ghost id.
-                cfg.theme = theme.id.clone();
+                cfg.theme = resolved_id;
                 if let Err(e) = cfg.save() {
-                    eprintln!("config save failed: {e}");
+                    log::write(&format!("config save failed: {e}"));
                 }
             }
             let live_menu: Vec<win::tray::MenuItem> = all_themes
@@ -526,27 +817,32 @@ fn main() -> Result<()> {
         // menu as the tray icon (one implementation, two entry points); left-click
         // sends Win+W, because the overlay is covering the Widgets button and without
         // it the weather would simply be unreachable while music plays.
-        let overlay_click = overlay.take_event();
+        let overlay_click = with_ticker(|t| t.overlay.take_event()).flatten();
         if overlay_click == Some(win::overlay::OverlayEvent::LeftClick) {
             if let Err(e) = win::overlay::open_widgets_panel() {
-                eprintln!("could not open the widgets panel: {e}");
+                log::write(&format!("could not open the widgets panel: {e}"));
             }
         }
         let want_menu =
             tray.take_right_click() || overlay_click == Some(win::overlay::OverlayEvent::RightClick);
 
         if want_menu {
-            let chosen = tray.show_menu(win::autostart::is_enabled(), &theme.id);
+            // The ticker's borrow is taken and RELEASED here, before `show_menu` blocks. That is
+            // the whole point: TrackPopupMenu runs its own modal loop for as long as the menu is
+            // open, and the WM_TIMER that keeps the meter alive through it has to be able to borrow
+            // the ticker itself. Holding this borrow across the call would turn the fix into a
+            // no-op - the timer would fire, fail to borrow, and drop every tick.
+            let current = with_ticker(|t| t.theme.id.clone()).unwrap_or_default();
+            let chosen = tray.show_menu(win::autostart::is_enabled(), &current);
             match chosen {
                 Some(TrayEvent::Quit) => break,
                 Some(TrayEvent::SelectTheme(id)) => {
                     if let Some(t) = all_themes.iter().find(|t| t.id == id) {
-                        theme = t.clone();
-                        family = render::family_for(&theme.family);
-                        smoother = Smoother::new(theme.ballistics);
-                        cfg.theme = theme.id.clone();
+                        // A deliberate switch DOES reset the meter.
+                        with_ticker(|k| k.set_theme(t.clone(), true));
+                        cfg.theme = t.id.clone();
                         if let Err(e) = cfg.save() {
-                            eprintln!("config save failed: {e}");
+                            log::write(&format!("config save failed: {e}"));
                         }
                     }
                 }
@@ -556,150 +852,19 @@ fn main() -> Result<()> {
                         Ok(()) => {
                             cfg.autostart = want;
                             if let Err(e) = cfg.save() {
-                                eprintln!("config save failed: {e}");
+                                log::write(&format!("config save failed: {e}"));
                             }
                         }
-                        Err(e) => eprintln!("autostart toggle failed: {e}"),
+                        Err(e) => log::write(&format!("autostart toggle failed: {e}")),
                     }
                 }
                 None => {}
             }
         }
 
-        // Re-discover the rect once a second - it moves with the weather text.
-        if rect_tick == 0 {
-            // ONE UIA snapshot per tick, shared by the widget lookup, the clearance
-            // measurement and the chevron fallback. Reading the clearance from a different
-            // enumeration than the widget rect would let the two disagree about where things
-            // are while the taskbar is mid-animation, and the clearance is what stops the
-            // overlay covering a pinned button.
-            let elements = win::placement::taskbar_elements().unwrap_or_default();
-            let bar = win::placement::taskbar_rect();
-
-            match win::placement::widget_rect_in(&elements) {
-                Some(widget) => {
-                    let want = match bar {
-                        // Widen leftward into the dead taskbar between the last pinned app and
-                        // the widget. `cfg.width` is a request; this clamps it to the room that
-                        // actually exists.
-                        Some(bar) => win::placement::widened(
-                            widget,
-                            bar,
-                            win::placement::left_limit(&elements, widget),
-                            cfg.width,
-                            WIDEN_MARGIN,
-                        ),
-                        None => widget,
-                    };
-                    // Hysteresis on the width only.
-                    //
-                    // The clearance moves every time a window opens, closes or is minimised, and
-                    // the scope family reallocates - and therefore CLEARS - its persistence
-                    // buffers on any canvas resize. Without this, a taskbar that is busy for
-                    // unrelated reasons wipes the phosphor trail once a second. `x` is allowed to
-                    // track freely because moving the window costs nothing.
-                    rect = Some(match rect {
-                        Some(prev) if (prev.w - want.w).abs() < WIDTH_HYSTERESIS => {
-                            geom::Rect { x: want.x + (want.w - prev.w), ..prev }
-                        }
-                        _ => want,
-                    });
-                    rect_misses = 0;
-                }
-                // A transient failure must NOT throw away a known-good rect.
-                //
-                // UI Automation can fail for a tick - notably while a popup menu is
-                // open, which is exactly when a theme is being chosen. Clearing `rect`
-                // on the first miss hid the overlay for a second and the real weather
-                // showed through underneath, which reads as the EQ "bleeding". Only
-                // give up after several consecutive misses, which still handles the
-                // genuine cases (the widget switched off, or a Windows version that
-                // has no Widgets button at all - see the chevron fallback below).
-                None => {
-                    rect_misses += 1;
-                    if rect_misses >= RECT_MISS_LIMIT {
-                        rect = None;
-                    }
-                }
-            }
-
-            // No Widgets button at all? Anchor to the tray's overflow chevron instead.
-            // That element exists on Windows 10 as well ("Show hidden icons"), which is
-            // the only reason this app shows anything at all on that OS.
-            if rect.is_none() {
-                if let (Some(chev), Some(bar)) = (win::placement::chevron_rect_in(&elements), bar) {
-                    // Widened the same way, so the Windows 10 path gets the wide display too
-                    // rather than being stuck at the old fixed fallback width.
-                    let anchored =
-                        win::placement::rect_left_of(chev, bar, FALLBACK_GAP, FALLBACK_WIDTH);
-                    rect = Some(win::placement::widened(
-                        anchored,
-                        bar,
-                        win::placement::left_limit(&elements, anchored),
-                        cfg.width,
-                        WIDEN_MARGIN,
-                    ));
-                }
-            }
-        }
-        rect_tick = (rect_tick + 1) % 60;
-
-        let inputs = win::visibility::Inputs {
-            widget: rect,
-            notification_state: win::placement::notification_state(),
-            taskbar_visible: win::placement::taskbar_visible(),
-        };
-
-        let now = std::time::Instant::now();
-        // Clamped: a debugger pause or a suspend/resume can hand back an enormous interval,
-        // which would otherwise jump the gate straight through its hide delay and snap the
-        // scroll phase forward.
-        let dt_ms = (now.duration_since(last_frame).as_secs_f32() * 1000.0).clamp(1.0, 100.0);
-        last_frame = now;
-        // Wrapped rather than unbounded - see FrameData::time_s.
-        time_s = (time_s + dt_ms / 1000.0) % 3600.0;
-
-        // Previously a hardcoded 16, which meant the gate's configured millisecond timings
-        // were really being applied against an assumed frame rate the loop does not hit -
-        // the 4500ms hide delay actually ran nearer 5.5s. Feeding the measured interval
-        // makes the configured values mean what they say.
-        let opacity = gate.update(latest.rms, dt_ms.round() as u32);
-        smoother.update(&latest.bands);
-
-        if win::visibility::should_show(&inputs) && gate.is_visible() {
-            let r = rect.unwrap();
-            let mut canvas = Canvas::new(r.w, r.h);
-            let data = FrameData {
-                levels: *smoother.levels(),
-                peaks: *smoother.peaks(),
-                waveform: latest.waveform,
-                rms_l: latest.rms_l,
-                rms_r: latest.rms_r,
-                dt_ms,
-                time_s,
-            };
-            family.draw(&mut canvas, &theme, &data);
-            // Apply the reveal/hide fade. The gate has computed this opacity - with
-            // tests - since it was written, but nothing ever consumed it, so the
-            // overlay popped in and out instead of fading. That is the whole bug.
-            canvas.scale_alpha(opacity);
-            // NOT fatal, and this is the bug behind the Windows 10 report. A single failing
-            // draw used to propagate out of `main` with `?` and end the process - so the tray icon
-            // appeared, the first frame failed, and the app was simply gone, with its explanation
-            // printed to a console that closed at the same moment. A draw that fails this frame may
-            // well succeed the next, and even if it never does, a running app that logs why is
-            // diagnosable where a vanished one is not.
-            if let Err(e) = overlay.show(r, &canvas) {
-                log::write(&format!(
-                    "overlay draw failed at {}x{} ({},{}) - {e}",
-                    r.w, r.h, r.x, r.y
-                ));
-            }
-        } else {
-            let _ = overlay.hide();
-        }
-
-        overlay.pump_messages();
+        // The tick itself. Also driven by the tray window's WM_TIMER, which is what keeps the
+        // meter alive while the menu above is blocking this loop.
+        tick_now();
         std::thread::sleep(std::time::Duration::from_millis(16));
     }
 

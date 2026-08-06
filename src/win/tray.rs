@@ -9,8 +9,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, LoadIconW, PeekMessageW, RegisterClassW, SetForegroundWindow, TrackPopupMenu,
     TranslateMessage, HMENU, IDI_APPLICATION, MF_CHECKED, MF_POPUP, MF_SEPARATOR, MF_STRING, MSG,
     PM_REMOVE,
-    TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTALIGN, WM_APP, WM_RBUTTONUP, WNDCLASSW,
-    WS_EX_TOOLWINDOW, WS_POPUP,
+    SetTimer, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTALIGN, WM_APP, WM_RBUTTONUP, WM_TIMER,
+    WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 // NOTE ON THE `poll` / Quit DEVIATION FROM THE BRIEF:
@@ -259,6 +259,15 @@ impl Tray {
 
     /// Pumps this window's message queue. Never produces `TrayEvent::Quit`
     /// itself - see the deviation note in the module docs above `Tray`.
+    /// The tray window's handle.
+    ///
+    /// Exposed for the render-tick timer and (later) for hotkey registration. This window is the
+    /// right host for both because it is created once and never destroyed for the life of the
+    /// process, unlike the overlay which is shown and hidden every frame.
+    pub fn hwnd(&self) -> HWND {
+        self.hwnd
+    }
+
     pub fn poll(&mut self) -> Option<TrayEvent> {
         unsafe {
             let mut msg = MSG::default();
@@ -297,12 +306,56 @@ impl Drop for Tray {
     }
 }
 
+/// Timer id for the render-tick backstop. Scoped to the tray window, so it cannot collide with
+/// anything outside this module.
+const ID_TICK_TIMER: usize = 1;
+
+/// The render tick, installed by `main`.
+///
+/// A `fn()` rather than a closure because it has to be reachable from a `wndproc`, which is a bare
+/// `extern "system"` function with no place to carry state. The tick's own state lives in a
+/// thread-local in `main`; this is only the doorbell.
+static TICK_HOOK: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+
+/// Registers the function `WM_TIMER` should call, and starts the timer.
+///
+/// WHY THIS EXISTS: `TrackPopupMenu` runs its own modal message loop and does not return until the
+/// menu is dismissed, so while the theme menu is open the main loop cannot reach its render call -
+/// the reported "right-clicking freezes the visualiser". A modal loop still PUMPS messages, so a
+/// timer on this window keeps the tick running through it. Measured in
+/// `tests::wm_timer_is_delivered_during_a_popup_menu_modal_loop`: 42 ticks across 1194ms of open
+/// menu. The same mechanism covers a settings dialog's title-bar drag, which is also a nested loop.
+///
+/// Safe to call more than once; only the first hook is kept.
+pub fn install_tick(hwnd: HWND, interval_ms: u32, tick: fn()) {
+    let _ = TICK_HOOK.set(tick);
+    unsafe {
+        if SetTimer(Some(hwnd), ID_TICK_TIMER, interval_ms, None) == 0 {
+            // Not fatal, and deliberately so: without the timer the app behaves exactly as it did
+            // before this backstop existed - correct, but frozen while a menu is open. That is a
+            // far better outcome than refusing to start, and it is the same policy as the overlay
+            // draw failure that caused the Windows 10 report.
+            crate::log::write(
+                "SetTimer for the render tick failed; the meter will freeze while a menu is open",
+            );
+        }
+    }
+}
+
 unsafe extern "system" fn tray_wndproc(
     hwnd: HWND,
     msg: u32,
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if msg == WM_TIMER && wparam.0 == ID_TICK_TIMER {
+        if let Some(tick) = TICK_HOOK.get() {
+            // The tick guards its own re-entrancy (see `main::tick_now`), so a WM_TIMER that
+            // arrives while the main loop is already mid-tick is dropped rather than nested.
+            tick();
+        }
+        return LRESULT(0);
+    }
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
 
@@ -310,6 +363,114 @@ unsafe extern "system" fn tray_wndproc(
 mod tests {
     use super::*;
     use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
+
+    /// Proves the one mechanism a timer-driven render tick depends on: `WM_TIMER` IS delivered
+    /// while a popup menu's own modal loop is running.
+    ///
+    /// This is load-bearing for the reported bug "right-clicking for the menu freezes the
+    /// visualiser". `TrackPopupMenu` does not return until the menu is dismissed (measured below),
+    /// so while a menu is open the main loop cannot reach its render call at the bottom of the
+    /// body, and it is not draining the capture channel either. Driving the tick from a timer
+    /// fixes that only if a menu's message pump dispatches `WM_TIMER` to other windows.
+    ///
+    /// That is widely believed and easy to assume. This repo's repeated lesson is that the
+    /// assumption about what actually reaches the screen is the thing that turns out to be wrong,
+    /// and a 240-line restructure of the main loop was about to be built on top of it, so it is
+    /// measured instead. Ignored by default because it creates a real window and a real menu.
+    ///
+    /// Run: cargo test --release wm_timer_is_delivered -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn wm_timer_is_delivered_during_a_popup_menu_modal_loop() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use windows::Win32::UI::WindowsAndMessaging::{KillTimer, WM_CANCELMODE};
+
+        static TICKS: AtomicU32 = AtomicU32::new(0);
+
+        unsafe extern "system" fn probe_proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+            if m == WM_TIMER {
+                TICKS.fetch_add(1, Ordering::Relaxed);
+            }
+            unsafe { DefWindowProcW(h, m, w, l) }
+        }
+
+        unsafe {
+            let class = WNDCLASSW {
+                lpfnWndProc: Some(probe_proc),
+                lpszClassName: w!("TaskbarEqTimerProbe"),
+                ..Default::default()
+            };
+            RegisterClassW(&class);
+            let hwnd = CreateWindowExW(
+                WS_EX_TOOLWINDOW,
+                w!("TaskbarEqTimerProbe"),
+                w!("probe"),
+                WS_POPUP,
+                0,
+                0,
+                0,
+                0,
+                None,
+                None,
+                None,
+                None,
+            )
+            .expect("probe window creation should succeed on a real desktop session");
+
+            assert_ne!(SetTimer(Some(hwnd), 1, 16, None), 0, "SetTimer failed");
+
+            // Baseline: pump the ordinary way and confirm the timer fires at all, so a zero
+            // during the menu cannot be blamed on a dead timer.
+            let mut msg = MSG::default();
+            let t0 = std::time::Instant::now();
+            while t0.elapsed().as_millis() < 300 {
+                while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                    DispatchMessageW(&msg);
+                }
+            }
+            let before = TICKS.load(Ordering::Relaxed);
+            assert!(before > 5, "the timer is not firing even outside a menu ({before} ticks)");
+
+            // The menu blocks its caller, so it has to be dismissed from elsewhere. HWND is not
+            // Send, hence the isize round trip.
+            let raw = hwnd.0 as isize;
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(1200));
+                let _ = PostMessageW(
+                    Some(HWND(raw as *mut std::ffi::c_void)),
+                    WM_CANCELMODE,
+                    WPARAM(0),
+                    LPARAM(0),
+                );
+            });
+
+            let menu = CreatePopupMenu().expect("popup menu creation should succeed");
+            let _ = AppendMenuW(menu, MF_STRING, 1, w!("probe"));
+            let _ = SetForegroundWindow(hwnd);
+            let t1 = std::time::Instant::now();
+            // BLOCKS until dismissed. That blocking is exactly the reported bug.
+            let _ = TrackPopupMenu(menu, TPM_RETURNCMD, 0, 0, Some(0), hwnd, None);
+            let blocked_ms = t1.elapsed().as_millis();
+            let during = TICKS.load(Ordering::Relaxed) - before;
+            let _ = DestroyMenu(menu);
+            let _ = KillTimer(Some(hwnd), 1);
+
+            println!(
+                "TrackPopupMenu blocked its caller for {blocked_ms}ms; \
+                 WM_TIMER was dispatched {during} times during that window"
+            );
+            assert!(
+                blocked_ms >= 500,
+                "the menu did not actually block ({blocked_ms}ms), so this test is not measuring \
+                 what it claims - the modal loop never ran"
+            );
+            assert!(
+                during >= 10,
+                "WM_TIMER fired only {during} times across {blocked_ms}ms of menu modal loop; a \
+                 timer-driven render tick would NOT survive an open menu and the fix must change"
+            );
+        }
+    }
 
     #[test]
     fn new_creates_and_drop_removes_the_tray_icon() {
