@@ -1,3 +1,6 @@
 /target
 **/*.pdb
 .superpowers/
+
+# Left behind when the committed exe is refreshed while an instance is running.
+dist/*.old

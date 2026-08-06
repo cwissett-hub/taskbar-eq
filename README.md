@@ -81,7 +81,7 @@ overlay does not exist, so the tray icon is all that is left to click.
 **Last updated: 2026-08-05.** Full test suite green (199 at the time of writing), release
 build warning-free. The colourway and family counts below are asserted by a test; the test
 count itself is a snapshot and can drift.
-**82 colourways across 12 families.**
+**88 colourways across 13 families.**
 
 | | Feature | State |
 |---|---|---|
@@ -95,10 +95,11 @@ count itself is a snapshot and can drift.
 | ✅ | **VU dials — 8 colourways**, twin needles, dB-mapped, ~300 ms ballistics | working |
 | ✅ | **Vaporwave grid — 5 colourways**, terrain from the spectrum, bass-triggered lightning | **unseen** |
 | ✅ | **Valve row — 5 colourways**, per-band cathode glow inside the glass | **unseen** |
+| ✅ | **Fluid — 6 colourways**, two submerged subwoofers driving a 1-D wave simulation | **unseen** |
 | ✅ | Theme menu: per-family submenus, follows the Windows light/dark setting | **unseen** |
 | ✅ | Tray icon, start-with-Windows, clean quit | working |
 | ✅ | Right-click equaliser → theme menu; left-click → `Win+W` | working |
-| ✅ | External TOML colourways, versioned schema, override-by-id, `[vaporwave]` + `[tube]` tables | working |
+| ✅ | External TOML colourways, versioned schema, override-by-id, `[vaporwave]` + `[tube]` + `[fluid]` tables | working |
 | ✅ | **Hot reload** — save a theme file and the taskbar updates, no restart | working |
 | ✅ | Frame-rate-independent animation (`dt_ms`), so scroll and the gate's timings do not drift with load | working |
 | ✅ | **Wide display** — claims the dead taskbar left of the widget, clamped to real clearance | **unseen** |
@@ -228,6 +229,9 @@ Layouts scale rather than stretch, because at 60 px tall some of them cannot sim
   dials give no clue that two of them are channels and two are bands.
 - **Valve row** — 10 at 190 px, 20 at 380 px, each valve the size it was tuned at. A fixed count
   stretched to a 37 px pitch with 20 px glass, which read as arched windows rather than valves.
+- **Fluid** — the height field is one float per pixel column, so a wider panel is a wider tank
+  with the same wave speed in px/s: the two cones stay 44% of the width apart and the
+  interference pattern in the middle simply gets more room. Nothing is stretched.
 - **Segmented, oscilloscope and vaporwave** scale directly and gain from the room.
 
 ### No console window
@@ -308,7 +312,7 @@ The app also writes that log on every normal launch, so a failure can be reporte
 
 ## Themes
 
-**82 colourways across 12 families.** A *family* is a renderer with fixed geometry — code. A
+**87 colourways across 13 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
 **Segmented VFD** — a smoked-glass panel with discrete stacked segments, a faint dormant grid,
@@ -383,6 +387,31 @@ auto-range: it is a level meter, so a quiet passage should look quiet.
 | Bakelite | Domestic radio set — brown, brass, deep amber |
 | Nixie green | Matches the Matrix Green VFD |
 
+**Fluid** — a shallow tank of liquid seen side-on, with two subwoofers submerged in it, one
+toward each end. They pump vertically with `rms_l` and `rms_r` and displace the liquid directly
+above them; the waves travel outward along the surface, reflect off the tank walls and
+**interfere** in the middle. That interference is the family's signature — it is the one thing here
+that cannot be produced by a per-column response curve, because a column's height depends on what
+its neighbours did several frames earlier.
+
+The surface is a 1-D height field, one float per pixel column, integrated with the discrete wave
+equation. It runs at a fixed Courant number of 0.5, and the measured frame interval decides only
+*how many* fixed sub-steps to take — never how big they are — which is what makes a slow frame run
+the water in slow motion instead of blowing the simulation up.
+
+The five colourways differ by **physics**, not hue: `damping` decides whether a wave survives the
+trip to the far wall at all, `wave_speed` how coarse the pattern is, and each one adds or removes
+whole elements (caustics, droplets, the specular horizon, emission, thin-film colour).
+
+| Colourway | Character |
+|---|---|
+| Deep water | Deep tank, cyan meniscus, caustics under the crests — the reference |
+| Mercury | Heavy, almost lossless: rings into a standing lattice, hard specular horizon, no caustics |
+| Oil slick | A shallow film — fast-travelling swells, heavy spray, and a meniscus whose colour shifts with the surface slope |
+| Glowing coolant | The liquid itself emits, so the body is bloomed rather than merely bright |
+| Dark ink | So viscous the waves die at the cone; the two drivers carry the whole reading |
+| Pantone | The liquid itself becomes a duotone of process inks, cycling slowly, plates misregistered |
+
 ### Adding your own
 
 Drop a `.toml` file (any filename — the `id` inside is what matters) into
@@ -390,7 +419,7 @@ Drop a `.toml` file (any filename — the `id` inside is what matters) into
 watched, so saving the file updates the live overlay without a restart — edit a colour, hit
 save, and watch the taskbar change.
 
-A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 82
+A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 88
 built-ins, which are always embedded in the exe regardless of whether that folder exists.
 
 Failure modes are all deliberately soft, because these files are hand-authored:

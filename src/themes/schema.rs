@@ -1,4 +1,4 @@
-use super::{ChromaParams, PantoneParams, Texture, Theme, TubeParams, VaporParams, Zone};
+use super::{FluidParams, ChromaParams, PantoneParams, Texture, Theme, TubeParams, VaporParams, Zone};
 use crate::dsp::ballistics::Ballistics;
 use serde::Deserialize;
 use std::fmt;
@@ -245,6 +245,53 @@ fn chroma_from(raw: Option<RawChroma>, d: ChromaParams) -> ChromaParams {
     }
 }
 
+/// The `[fluid]` table. Tank, liquid and driver parameters; all optional, so a theme file
+/// overrides only what it cares about. Names match `FluidParams` exactly and must not be renamed
+/// without bumping `schema`.
+#[derive(Deserialize, Default)]
+struct RawFluid {
+    surface: Option<f32>,
+    body_top: Option<String>,
+    body_deep: Option<String>,
+    film: Option<String>,
+    cone: Option<String>,
+    cone_dark: Option<String>,
+    wave_speed: Option<f32>,
+    damping: Option<f32>,
+    surface_gain: Option<f32>,
+    cone_travel: Option<f32>,
+    coupling: Option<f32>,
+    droplets: Option<i32>,
+    droplet_v: Option<f32>,
+    caustics: Option<bool>,
+    iridescence: Option<f32>,
+    sheen: Option<f32>,
+    emissive: Option<f32>,
+}
+
+fn fluid_from(raw: Option<RawFluid>, d: FluidParams) -> FluidParams {
+    let Some(r) = raw else { return d };
+    FluidParams {
+        surface: r.surface.unwrap_or(d.surface),
+        body_top: r.body_top.unwrap_or(d.body_top),
+        body_deep: r.body_deep.unwrap_or(d.body_deep),
+        film: r.film.unwrap_or(d.film),
+        cone: r.cone.unwrap_or(d.cone),
+        cone_dark: r.cone_dark.unwrap_or(d.cone_dark),
+        wave_speed: r.wave_speed.unwrap_or(d.wave_speed),
+        damping: r.damping.unwrap_or(d.damping),
+        surface_gain: r.surface_gain.unwrap_or(d.surface_gain),
+        cone_travel: r.cone_travel.unwrap_or(d.cone_travel),
+        coupling: r.coupling.unwrap_or(d.coupling),
+        droplets: r.droplets.unwrap_or(d.droplets),
+        droplet_v: r.droplet_v.unwrap_or(d.droplet_v),
+        caustics: r.caustics.unwrap_or(d.caustics),
+        iridescence: r.iridescence.unwrap_or(d.iridescence),
+        sheen: r.sheen.unwrap_or(d.sheen),
+        emissive: r.emissive.unwrap_or(d.emissive),
+    }
+}
+
 #[derive(Deserialize, Default)]
 struct RawDual {
     trail: Option<String>,
@@ -269,6 +316,7 @@ struct RawTheme {
     dual: Option<RawDual>,
     vaporwave: Option<RawVapor>,
     tube: Option<RawTube>,
+    fluid: Option<RawFluid>,
     chroma: Option<RawChroma>,
     pantone: Option<RawPantone>,
     #[serde(default)]
@@ -360,6 +408,7 @@ pub fn parse(src: &str) -> Result<Theme, ThemeError> {
         }),
         vapor: vapor_from(raw.vaporwave, d.vapor),
         tube: tube_from(raw.tube, d.tube),
+        fluid: fluid_from(raw.fluid, d.fluid),
         chroma: chroma_from(raw.chroma, d.chroma),
         pantone: pantone_from(raw.pantone, d.pantone),
     })

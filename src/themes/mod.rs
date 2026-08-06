@@ -50,6 +50,7 @@ pub fn family_label(family: &str) -> String {
         "reel" => "Reel-to-reel".into(),
         "patchbay" => "Patchbay".into(),
         "radar" => "Radar".into(),
+        "fluid" => "Fluid".into(),
         "pantone" => "Pantone".into(),
         "chroma" => "Chroma field".into(),
         other => {
@@ -423,6 +424,109 @@ impl Default for ChromaParams {
     }
 }
 
+/// Tank, liquid and driver parameters for the fluid family.
+///
+/// Separate from the `lit`/`hot`/`panel` trio for the reason `TubeParams` is: this family is not
+/// one accent colour on a panel, it is a tank of liquid with two drivers in it, and the parts -
+/// the body's depth ramp, the meniscus, the specular, the cone materials - are not variations of
+/// each other.
+///
+/// Several of these are deliberately PHYSICAL rather than cosmetic, and that is what makes the
+/// five shipped colourways differ structurally instead of by hue: `damping` decides whether a
+/// wave reaches the far wall at all (mercury rings, ink dies at the cone), `wave_speed` decides
+/// whether the interference pattern is coarse or fine, `surface` decides whether the scene is a
+/// deep tank or a shallow film, and `droplets`/`caustics`/`emissive`/`iridescence`/`sheen` each
+/// add or remove a whole visual element rather than recolouring one.
+///
+/// These names are a published schema the moment a theme file sets one, so they must not be
+/// renamed without bumping `schema`.
+#[derive(Debug, Clone)]
+pub struct FluidParams {
+    /// Rest height of the liquid surface as a fraction of the panel interior, measured from the
+    /// top. Low values give a deep tank with little headroom; high values a shallow film with
+    /// room for big crests and long droplet arcs.
+    pub surface: f32,
+    /// Liquid colour immediately under the surface, and at the tank floor. The ramp between them
+    /// is anchored to the FLOOR, not to the moving surface - see the family docs.
+    pub body_top: String,
+    pub body_deep: String,
+    /// The second thin-film interference colour. Only visible where `iridescence` is non-zero, and
+    /// the meniscus is mixed toward it by the local surface SLOPE - which is what an oil film
+    /// actually does, its colour depending on the angle it is seen at.
+    ///
+    /// There is deliberately no `meniscus` or `glint` field beside it: the surface line is the
+    /// shared `Theme::lit` and the specular is the shared `Theme::hot`, because those are exactly
+    /// what those two fields mean everywhere else. Keeping them shared is also what puts this
+    /// family's real drawn colours inside
+    /// `builtin::tests::every_lit_colour_clears_three_to_one_against_its_own_panel` instead of
+    /// leaving them unmeasured.
+    pub film: String,
+    /// Cone diaphragm, and the fixed basket/motor behind it.
+    pub cone: String,
+    pub cone_dark: String,
+    /// Wave speed multiplier. 1.0 is 120 px/s, i.e. about 1.6s end to end across the 190px tank.
+    /// Implemented as the number of fixed sub-steps per second, so it CANNOT affect stability -
+    /// see `render::fluid`'s module docs.
+    pub wave_speed: f32,
+    /// Per-sub-step velocity retention, 0.80..0.9999. This is the viscosity, and it is the single
+    /// most structural parameter here: at 0.9990 a wave crosses the tank almost intact and the
+    /// interference pattern dominates, at 0.9850 it is down to a fifth by mid-tank, and at 0.90 the
+    /// liquid barely moves outside the cone mouths.
+    pub damping: f32,
+    /// Pixels of surface displacement per unit of cone excursion, at the 56px reference interior
+    /// height and scaled with the panel.
+    pub surface_gain: f32,
+    /// Cone travel at full excursion, as a fraction of the liquid depth.
+    pub cone_travel: f32,
+    /// How hard the cone forces the columns over its mouth, per sub-step. Below 1 the mouth is
+    /// partly transparent to returning waves rather than acting as a second wall.
+    pub coupling: f32,
+    /// Droplets thrown per transient. 0 for a liquid too viscous to throw any.
+    pub droplets: i32,
+    /// Droplet launch speed in px/s at the reference height.
+    pub droplet_v: f32,
+    /// Sub-surface caustic band under a crest.
+    pub caustics: bool,
+    /// Thin-film colour shift with surface slope, 0..1. See `film`.
+    pub iridescence: f32,
+    /// Hard specular band immediately below the surface, 0..1 - the liquid-metal horizon.
+    pub sheen: f32,
+    /// How much the liquid itself EMITS, 0..1. Non-zero puts the top rows of the body onto the
+    /// bloomed light layer, so the liquid glows outward instead of merely being brightly coloured.
+    pub emissive: f32,
+}
+
+impl Default for FluidParams {
+    fn default() -> Self {
+        FluidParams {
+            // 0.42 leaves 23 rows of headroom over 33 rows of liquid at the 190x60 reference:
+            // enough body to read as a volume, enough air for an 8px crest plus a droplet arc.
+            surface: 0.42,
+            body_top: "#1d6fa8".into(),
+            body_deep: "#04121f".into(),
+            film: "#7f5bd6".into(),
+            cone: "#22303a".into(),
+            cone_dark: "#0a1016".into(),
+            wave_speed: 1.0,
+            // 0.997 per sub-step is 0.988 per nominal frame. A wave needs ~106 sub-steps to reach
+            // mid-tank from a cone at 190px wide, which leaves it at 0.997^106 = 0.73 of its
+            // amplitude - so the interference in the middle is genuinely visible. At the 0.985
+            // that looked reasonable by eye it arrives at 0.20 and there is nothing to see.
+            damping: 0.997,
+            // 8px of crest on a 33px body, at the reference height.
+            surface_gain: 8.0,
+            cone_travel: 0.16,
+            coupling: 0.22,
+            droplets: 5,
+            droplet_v: 120.0,
+            caustics: true,
+            iridescence: 0.0,
+            sheen: 0.0,
+            emissive: 0.0,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Zone {
     pub upto: f32,
@@ -526,6 +630,8 @@ pub struct Theme {
     /// Vaporwave-only scene parameters; inert for the other families.
     pub vapor: VaporParams,
     /// Tube-row-only material colours; inert for the other families.
+    /// Fluid-tank-only parameters; inert for the other families.
+    pub fluid: FluidParams,
     pub tube: TubeParams,
     // Cross-fade duration for switching themes at runtime (Task 11+); the
     // segmented renderer draws every frame from scratch and has no
@@ -574,6 +680,7 @@ inks: 0,
             rainbow: 0.0,
             rainbow_spread: 0.8,
             vapor: VaporParams::default(),
+            fluid: FluidParams::default(),
             tube: TubeParams::default(),
             fade: 0.30,
             texture: Texture::Glass,

@@ -4,6 +4,7 @@ pub mod scope;
 pub mod nixie;
 pub mod patchbay;
 pub mod chroma;
+pub mod fluid;
 pub mod pantone;
 pub mod radar;
 pub mod reel;
@@ -102,8 +103,8 @@ pub fn tint(
 /// `segmented` for anything unrecognised, so a theme carrying a typo'd or unimplemented
 /// family name would silently render as the wrong meter instead of failing. This list is
 /// what lets that be asserted, and adding a family is a one-line change in one place.
-pub const KNOWN_FAMILIES: [&str; 12] = [
-    "segmented", "scope", "vu", "vapor", "tube", "nixie", "waterfall", "reel", "patchbay", "radar", "pantone", "chroma",
+pub const KNOWN_FAMILIES: [&str; 13] = [
+    "segmented", "scope", "vu", "vapor", "tube", "nixie", "waterfall", "reel", "patchbay", "radar", "pantone", "chroma", "fluid",
 ];
 
 pub fn family_for(id: &str) -> Box<dyn Family> {
@@ -126,6 +127,7 @@ pub fn family_for(id: &str) -> Box<dyn Family> {
         "reel" => Box::new(reel::Reel::default()),
         "patchbay" => Box::new(patchbay::Patchbay::default()),
         "radar" => Box::new(radar::Radar::default()),
+        "fluid" => Box::new(fluid::Fluid::default()),
         "pantone" => Box::new(pantone::Pantone::default()),
         "chroma" => Box::new(chroma::Chroma::default()),
         "vu" => Box::new(vu::Vu::default()),

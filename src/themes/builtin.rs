@@ -1,4 +1,4 @@
-use super::{ChromaParams, PantoneParams, Texture, Theme, TubeParams, VaporParams, Zone};
+use super::{FluidParams, ChromaParams, PantoneParams, Texture, Theme, TubeParams, VaporParams, Zone};
 use crate::dsp::ballistics::Ballistics;
 
 pub fn all() -> Vec<Theme> {
@@ -57,6 +57,12 @@ pub fn all() -> Vec<Theme> {
         radar_ice(),
         radar_alert(),
         radar_mono(),
+        fluid_deep(),
+        fluid_mercury(),
+        fluid_oil(),
+        fluid_coolant(),
+        fluid_ink(),
+        fluid_pantone(),
         pantone_spectrum(),
         pantone_process(),
         pantone_barcode(),
@@ -2238,6 +2244,277 @@ pub fn chroma_halftone() -> Theme {
             ..ChromaParams::default()
         },
         ..chroma_base()
+    }
+}
+
+// ===================== Fluid =====================
+fn fluid_base() -> Theme {
+    Theme {
+        family: "fluid".into(),
+        texture: Texture::None_,
+        ghost: 0.0,
+        // Modest radius. The light in this scene is a 1px meniscus and 1px droplets, and a wide
+        // blur turns the surface line into a band that swallows the crests it is meant to pick out.
+        bloom: 3.0,
+        glow_strength: 0.45,
+        ..Theme::default()
+    }
+}
+
+/// The reference: a deep tank of water, cyan meniscus, caustics under the crests.
+pub fn fluid_deep() -> Theme {
+    Theme {
+        id: "fluid-deep".into(),
+        name: "Deep water".into(),
+        lit: "#6fd8ff".into(),
+        hot: "#eaffff".into(),
+        panel: "#050b12".into(),
+        panel_alpha: 1.0,
+        edge: "#3f7ea8".into(),
+        edge_alpha: 0.20,
+        fluid: FluidParams::default(),
+        ..fluid_base()
+    }
+}
+
+/// Mercury. Heavy, almost lossless, and OPAQUE - so it rings in a standing lattice, it will not
+/// heap as high as water, and no light reaches below the surface at all.
+pub fn fluid_mercury() -> Theme {
+    Theme {
+        id: "fluid-mercury".into(),
+        name: "Mercury".into(),
+        lit: "#e8eef5".into(),
+        hot: "#ffffff".into(),
+        panel: "#14161a".into(),
+        panel_alpha: 1.0,
+        edge: "#8a93a0".into(),
+        edge_alpha: 0.26,
+        // A brighter, tighter halo: a liquid metal's highlight is specular, not diffuse.
+        bloom: 4.0,
+        glow_strength: 0.60,
+        fluid: FluidParams {
+            surface: 0.50,
+            body_top: "#9aa7b4".into(),
+            body_deep: "#2b3138".into(),
+            cone: "#3a4048".into(),
+            cone_dark: "#14171b".into(),
+            // 0.9992 per sub-step: a wave arrives at the far wall at 0.92 of its amplitude and
+            // comes back, so successive reflections overlap into a standing pattern that persists
+            // for seconds after the sound stops. This is the colourway where the interference is
+            // the subject rather than a detail.
+            damping: 0.9992,
+            // Slow: heavy liquid, long swell. Also keeps the standing lattice coarse enough to
+            // resolve at a 190px width.
+            wave_speed: 0.65,
+            // Mercury's surface tension is enormous, so it does not pile up - the amplitude is
+            // deliberately lower than water's even though it rings far longer.
+            surface_gain: 6.5,
+            cone_travel: 0.13,
+            coupling: 0.30,
+            droplets: 3,
+            // Beads, not spray: fewer, faster, higher.
+            droplet_v: 165.0,
+            // Opaque metal - nothing focuses below the surface.
+            caustics: false,
+            sheen: 0.55,
+            ..FluidParams::default()
+        },
+        ..fluid_base()
+    }
+}
+
+/// An oil slick: a SHALLOW film, fast fine ripples, and a colour that shifts with the angle of the
+/// surface rather than staying one hue.
+pub fn fluid_oil() -> Theme {
+    Theme {
+        id: "fluid-oil".into(),
+        name: "Oil slick".into(),
+        lit: "#ffb0e6".into(),
+        hot: "#fff0ff".into(),
+        panel: "#0a0810".into(),
+        panel_alpha: 1.0,
+        edge: "#7a5aa0".into(),
+        edge_alpha: 0.22,
+        fluid: FluidParams {
+            // A film, not a tank: the surface sits low in the panel, which leaves the top two
+            // thirds as headroom for spray and makes the whole scene read as a puddle seen from
+            // the side rather than as an aquarium.
+            surface: 0.62,
+            body_top: "#3d2a6b".into(),
+            body_deep: "#0d0718".into(),
+            film: "#5cffd0".into(),
+            cone: "#241a38".into(),
+            cone_dark: "#0b0714".into(),
+            damping: 0.9955,
+            // Fast, but NOT fine - that half of the claim was wrong and the measurement caught it.
+            // `wave_speed` scales the number of fixed sub-steps taken per frame, so it is a TIME
+            // scale: it makes a wave cross the tank sooner, and if anything lengthens the wavelength,
+            // because the source oscillates just as slowly while its output travels further. Measured
+            // chop (mean column-to-column step in the drawn edge) is 0.11 here against deep water's
+            // 0.25 - this colourway is SMOOTHER than the reference, not shimmerier. Wavelength here
+            // is set by the mouth width and the rate the cone moves, neither of which this touches.
+            wave_speed: 1.70,
+            // Measured: at coupling 0.16 the film's fine structure never reached a whole pixel -
+            // chop came out at 0.10 against mercury's 0.52, so the colourway documented as the
+            // FINEST rippling measured second-flattest of the five. The wavelength was right and
+            // the amplitude was starved: the cone barely coupled into the liquid, so the shimmer
+            // was there in the field and quantised away on the way to the screen. Raising the two
+            // together keeps the short wavelength and gives it enough travel to survive rounding.
+            surface_gain: 8.0,
+            cone_travel: 0.20,
+            coupling: 0.34,
+            // Light spray, and lots of it.
+            droplets: 8,
+            droplet_v: 105.0,
+            caustics: true,
+            // The signature: the meniscus is mixed toward `film` by the local slope, so a crest's
+            // rising flank and its falling flank are different colours.
+            iridescence: 0.85,
+            ..FluidParams::default()
+        },
+        ..fluid_base()
+    }
+}
+
+/// Glowing coolant. The liquid is the light source, so the body itself is bloomed rather than
+/// merely being brightly coloured.
+pub fn fluid_coolant() -> Theme {
+    Theme {
+        id: "fluid-coolant".into(),
+        name: "Glowing coolant".into(),
+        lit: "#6cffb0".into(),
+        hot: "#e8fff4".into(),
+        panel: "#04120c".into(),
+        panel_alpha: 1.0,
+        edge: "#3f9e70".into(),
+        edge_alpha: 0.24,
+        // Wide and strong, because here the halo comes off a body of liquid rather than off a 1px
+        // line - this is the one colourway where a big bloom is the point.
+        bloom: 6.0,
+        glow_strength: 0.70,
+        fluid: FluidParams {
+            surface: 0.45,
+            body_top: "#1fbf7a".into(),
+            body_deep: "#03170f".into(),
+            cone: "#183028".into(),
+            cone_dark: "#04100a".into(),
+            damping: 0.9985,
+            wave_speed: 1.30,
+            // The violent one. A pumped coolant loop is agitated, not calm, so this heaps far
+            // higher than water does: measured at 190x60 over the fixture it runs 15.9px of median
+            // peak-to-trough relief against water's 7.3px, which is what stops it reading as the
+            // reference colourway in green. (`fluid`'s own colourway test asserts that gap.)
+            surface_gain: 13.0,
+            cone_travel: 0.20,
+            coupling: 0.26,
+            droplets: 6,
+            droplet_v: 145.0,
+            caustics: true,
+            emissive: 0.75,
+            ..FluidParams::default()
+        },
+        ..fluid_base()
+    }
+}
+
+/// Dark ink. So viscous that the waves die before they leave the cone, which inverts the whole
+/// composition: what you read is the two cones working, not the pattern in the middle.
+pub fn fluid_ink() -> Theme {
+    Theme {
+        id: "fluid-ink".into(),
+        name: "Dark ink".into(),
+        lit: "#b9b4d8".into(),
+        hot: "#e6e2f5".into(),
+        panel: "#0b0a0e".into(),
+        panel_alpha: 1.0,
+        edge: "#4a4560".into(),
+        edge_alpha: 0.18,
+        bloom: 2.0,
+        glow_strength: 0.30,
+        fluid: FluidParams {
+            surface: 0.46,
+            // Measured: at #232030 over #08070c the body read 1.21:1 against its own panel, i.e.
+            // not visible - "so viscous the waves die" had become "so dark there is no liquid".
+            // These give 2.08:1, which is enough to see a body of ink without making it a bright
+            // colourway; the character is meant to come from the stillness, not from the darkness.
+            body_top: "#403a5c".into(),
+            body_deep: "#1c1930".into(),
+            cone: "#161420".into(),
+            cone_dark: "#07060a".into(),
+            // 0.945 per sub-step is 0.80 per nominal frame: a wave is down to a fifth within four
+            // frames and never reaches the middle at all. That is the whole character - the two
+            // mounds heave locally and the tank between them stays glassy.
+            damping: 0.945,
+            wave_speed: 0.55,
+            // 5.0 left the two mounds a 4px heave over 8 seconds. The waves still die before the
+            // middle - that is `damping`, and it is untouched - but the drivers' own liquid has to
+            // move enough to read as liquid rather than as a line.
+            surface_gain: 7.0,
+            // The cone gets the travel the liquid does not: with the surface nearly static, cone
+            // POSITION is the only thing left carrying the channel, so it is given the most.
+            cone_travel: 0.26,
+            // Thick liquid clings to the diaphragm and follows it closely.
+            coupling: 0.50,
+            // Nothing this viscous throws a droplet.
+            droplets: 0,
+            caustics: false,
+            sheen: 0.12,
+            ..FluidParams::default()
+        },
+        ..fluid_base()
+    }
+}
+
+/// Fluid in process inks: the tank becomes a slowly cycling DUOTONE, quantised onto the subtractive
+/// process set, with the plates misregistered.
+///
+/// The other Pantone colourways sit on families whose colour all flows through `tint`, so they
+/// inherit the ink machinery for free. Fluid's body did not - it read its hex directly - which is
+/// why the body is now tinted at two positions (see the note in `fluid.rs`). The result is the one
+/// thing a Pantone colourway has to have here: the LIQUID is the ink, not just the highlight on it.
+///
+/// Kept on a dark panel deliberately. A light stock is the more obvious choice for a print
+/// reference, and it was measured and rejected: against a light panel the yellow ink lands at
+/// 1.00:1 and the plate simply disappears, where against this panel the worst ink is comfortable.
+pub fn fluid_pantone() -> Theme {
+    Theme {
+        id: "fluid-pantone".into(),
+        name: "Pantone".into(),
+        lit: "#00e0ff".into(),
+        hot: "#ffffff".into(),
+        panel: "#07070a".into(),
+        panel_alpha: 1.0,
+        edge: "#ffffff".into(),
+        edge_alpha: 0.18,
+        bloom: 3.0,
+        rainbow: 0.05,
+        rainbow_spread: 1.0,
+        ink_chroma: 1.0,
+        inks: 3,
+        aberration: 2.0,
+        fluid: FluidParams {
+            surface: 0.34,
+            // Fallbacks only: with `rainbow` on, both ends come from the ink set. They still matter
+            // for the TOML case where someone overrides `rainbow` back to 0.
+            body_top: "#00c8ff".into(),
+            body_deep: "#101038".into(),
+            cone: "#1a1a24".into(),
+            cone_dark: "#08080c".into(),
+            damping: 0.9975,
+            wave_speed: 1.15,
+            surface_gain: 7.5,
+            cone_travel: 0.24,
+            coupling: 0.30,
+            // Ink spatter, and a fast one - it is the closest thing here to a printing accident.
+            droplets: 7,
+            droplet_v: 120.0,
+            // Off: caustics are a light-through-water effect and read as noise once the body is a
+            // flat ink. The hard specular horizon replaces them, which is the printed-edge look.
+            caustics: false,
+            sheen: 0.55,
+            ..FluidParams::default()
+        },
+        ..fluid_base()
     }
 }
 
