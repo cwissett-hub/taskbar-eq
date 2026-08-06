@@ -262,6 +262,14 @@ impl Default for VaporParams {
 ///
 /// Returned as (hue, saturation, value) rather than a colour so `render` can build an `Rgba` with
 /// whatever alpha it needs - `themes` deliberately knows nothing about the canvas.
+/// How far toward white a plate change pulls at its midpoint.
+///
+/// 0.65 was chosen as the smallest value that keeps every intermediate colour of every shipped
+/// Pantone colourway above the 3:1 contrast floor, verified by
+/// `every_hue_of_a_rainbow_colourway_clears_three_to_one_against_its_panel` which sweeps all 360
+/// hues. Larger washes the palette out; smaller lets the cyan-to-magenta crossing dip into blue.
+const MORPH_DESAT: f32 = 0.65;
+
 pub fn rainbow_hsv(t: &Theme, x01: f32, time_s: f32, hot: bool) -> Option<(f32, f32, f32)> {
     if t.rainbow <= 0.0 {
         return None;
@@ -269,6 +277,8 @@ pub fn rainbow_hsv(t: &Theme, x01: f32, time_s: f32, hot: bool) -> Option<(f32, 
     let x = if x01.is_finite() { x01.clamp(0.0, 1.0) } else { 0.0 };
     let time = if time_s.is_finite() { time_s } else { 0.0 };
     let mut hue = time * t.rainbow + x * t.rainbow_spread;
+    // Set by the ink quantisation below when it is mid-plate-change; see `MORPH_DESAT`.
+    let mut morph_cross = 0.0f32;
 
     // INK QUANTISATION. Snaps the hue to one of `inks` evenly spaced steps, so the palette becomes a
     // set of process inks rather than a continuous wheel.
@@ -296,13 +306,47 @@ pub fn rainbow_hsv(t: &Theme, x01: f32, time_s: f32, hot: bool) -> Option<(f32, 
         // not at all without it. The formula was correct in the design and simply never reached the
         // code, because the quantisation belongs to this function and this function predates that
         // family.
-        let step = (hue.rem_euclid(1.0) * n).floor();
-        hue = (step + 0.5) / n;
+        let x = hue.rem_euclid(1.0) * n;
+        let step = x.floor();
+        // `ink_morph` widens the plate change from a single-frame jump into an eased crossfade over
+        // the tail of the dwell. At 0 this is exactly the old `(step + 0.5) / n` snap, which is why
+        // every non-Pantone colourway is byte-identical.
+        let w = if t.ink_morph.is_finite() { t.ink_morph.clamp(0.0, 0.5) } else { 0.0 };
+        let mut centre = step + 0.5;
+        // How far through a plate change we are, 0 at both ends and 1 in the middle. Drives the
+        // desaturation below.
+        let mut crossing = 0.0f32;
+        if w > 0.0 {
+            let frac = x - step;
+            let raw = ((frac - (1.0 - w)) / w).clamp(0.0, 1.0);
+            // Smoothstep, so the morph leaves and arrives at zero rate. A linear blend still reads
+            // as a jolt at each end, which is the thing being fixed.
+            centre += raw * raw * (3.0 - 2.0 * raw);
+            crossing = 1.0 - (2.0 * raw - 1.0).abs();
+        }
+        hue = centre / n;
+        morph_cross = crossing.clamp(0.0, 1.0);
     }
 
     // `ink_chroma` rather than RAINBOW_SAT, defaulting to it, so a quantised palette can be fully
     // saturated while a continuous one stays inside the contrast rule.
-    let sat = if t.ink_chroma.is_finite() { t.ink_chroma.clamp(0.0, 1.0) } else { RAINBOW_SAT };
+    let mut sat = if t.ink_chroma.is_finite() { t.ink_chroma.clamp(0.0, 1.0) } else { RAINBOW_SAT };
+
+    // THE MORPH CROSSES THROUGH WHITE, NOT ROUND THE WHEEL, and this is a correctness fix rather
+    // than a stylistic one.
+    //
+    // Easing the HUE between two inks sweeps every hue in between, and between cyan and magenta that
+    // means passing through blue. Measured, that is exactly what broke: fluid-pantone at hue 219
+    // reached 2.34:1 against its panel, failing the 3:1 rule - which is the very failure the
+    // half-step offset exists to avoid, walked straight back in by interpolating between the offsets.
+    //
+    // Pulling the saturation toward white across the crossing fixes it by construction: the palest
+    // point of the transition is also the brightest, so the worst contrast in a morph now occurs at
+    // its ENDS, which are the flat inks that were already measured safe. It also happens to be what
+    // a plate change looks like in print - the ink lifts off the paper rather than rotating hue.
+    if morph_cross > 0.0 {
+        sat *= 1.0 - MORPH_DESAT * morph_cross;
+    }
     if hot {
         // The hot core keeps the hue but pulls hard toward white, exactly as the fixed colourways do
         // with their own `hot` - otherwise a rainbow loses the sense of a bright centre entirely.
@@ -494,14 +538,26 @@ pub struct FluidParams {
     /// How much the liquid itself EMITS, 0..1. Non-zero puts the top rows of the body onto the
     /// bloomed light layer, so the liquid glows outward instead of merely being brightly coloured.
     pub emissive: f32,
+    /// Strength of the underglow that fires from the tank floor on a bass transient, 0 = off.
+    ///
+    /// Distinct from `emissive`, which is a CONSTANT glow the liquid always has. This is an event:
+    /// fast attack on an onset, slow release, so it reads as the tank being lit from beneath on the
+    /// hit. Asked for as "flashing underglow on the bass hits, like the flashes in the vaporwave but
+    /// more glow than flash" - hence a release measured in most of a second rather than the
+    /// vaporwave lightning's few frames.
+    pub underglow: f32,
 }
 
 impl Default for FluidParams {
     fn default() -> Self {
         FluidParams {
             // 0.42 leaves 23 rows of headroom over 33 rows of liquid at the 190x60 reference:
-            // enough body to read as a volume, enough air for an 8px crest plus a droplet arc.
-            surface: 0.42,
+            // Reviewed by eye at 0.42 and reported as "almost too much fluid": the body filled
+            // nearly 60% of the panel, which reads as a full tank rather than a liquid with a
+            // surface, and left the crests crowded against the top. 0.50 splits the panel evenly -
+            // still enough body to read as a volume, and now enough air that an 8px crest plus a
+            // droplet arc has somewhere to go.
+            surface: 0.50,
             body_top: "#1d6fa8".into(),
             body_deep: "#04121f".into(),
             film: "#7f5bd6".into(),
@@ -513,16 +569,30 @@ impl Default for FluidParams {
             // amplitude - so the interference in the middle is genuinely visible. At the 0.985
             // that looked reasonable by eye it arrives at 0.20 and there is nothing to see.
             damping: 0.997,
-            // 8px of crest on a 33px body, at the reference height.
-            surface_gain: 8.0,
+            // Deep water sits second-highest on the family's amplitude ladder. The six colourways
+            // are spaced ~1.5x apart in median surface relief on purpose, because
+            // `every_fluid_colourway_renders_and_they_differ_structurally_not_just_in_hue` requires
+            // every PAIR to differ by 25% and six values on one bounded axis do not spread
+            // themselves. Lowering the water line gave every colourway more headroom and so more
+            // relief, which collapsed deep and mercury into each other until the ladder was placed
+            // deliberately: ink 2.0, oil 3.0, pantone 4.6, mercury 6.8, deep 10.2, coolant 15.9 - a 1.5x step,
+            // which is what six values inside a 7.8x range allow. Mercury is
+            // deliberately NOT the flattest: a dedicated assertion requires the lossless ringing
+            // liquid and the dead viscous one to look different, and putting mercury at the bottom
+            // of the ladder broke exactly that.
+            surface_gain: 8.9,
             cone_travel: 0.16,
             coupling: 0.22,
-            droplets: 5,
+            // Raised from 5 on the report that "the small splashes are cool" and there should be
+            // more of them. The per-frame cost is bounded elsewhere by MAX_DROPS, so this only
+            // changes how many a single crest throws.
+            droplets: 9,
             droplet_v: 120.0,
             caustics: true,
             iridescence: 0.0,
             sheen: 0.0,
             emissive: 0.0,
+            underglow: 0.85,
         }
     }
 }
@@ -601,6 +671,14 @@ pub struct Theme {
     /// field called `chroma` for different things, and a bare one beside `chroma: ChromaParams`
     /// would be a trap for the next reader.
     pub ink_chroma: f32,
+    /// Fraction of each ink's dwell spent MORPHING into the next one, 0.0..0.5.
+    ///
+    /// 0.0 snaps, which is what ink quantisation did when it was first wired up, and it was reviewed
+    /// as "random switching" and "hard jolting": a plate change was a single-frame jump between two
+    /// fully saturated process colours with nothing leading into it, so it read as a glitch rather
+    /// than as a decision. 0.35 keeps roughly two thirds of the dwell as a flat ink - which is the
+    /// whole point of a process palette - and eases through the remainder.
+    pub ink_morph: f32,
     pub aberration: f32,
     /// Minimum contrast ratio this colourway's lit colours must clear against its own panel.
     ///
@@ -675,6 +753,9 @@ impl Default for Theme {
             chroma: ChromaParams::default(),
 inks: 0,
             ink_chroma: RAINBOW_SAT,
+            // 0.0 by default so every existing colourway keeps its exact colours; the Pantone ones
+            // opt in.
+            ink_morph: 0.0,
             aberration: 0.0,
             contrast_floor: 3.0,
             rainbow: 0.0,

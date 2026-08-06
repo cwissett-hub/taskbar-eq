@@ -1898,6 +1898,7 @@ pub fn pantone_spectrum() -> Theme {
         lit: "#ff3fa8".into(),
         hot: "#ffffff".into(),
         inks: 0,
+        ink_morph: 0.35,
         pantone: PantoneParams { barcode: 0.16, halftone: 0.55, glitch: 4.0, split: true },
         ..pantone_base()
     }
@@ -1917,6 +1918,7 @@ pub fn pantone_process() -> Theme {
         hot: "#ffffff".into(),
         ink_chroma: 1.0,
         inks: 3,
+        ink_morph: 0.35,
         pantone: PantoneParams { barcode: 0.20, halftone: 0.75, glitch: 3.0, split: true },
         ..pantone_base()
     }
@@ -1958,6 +1960,7 @@ pub fn pantone_misregister() -> Theme {
         hot: "#ffffff".into(),
         ink_chroma: 0.92,
         inks: 6,
+        ink_morph: 0.35,
         bloom: 2.0,
         aberration: 6.0,
         pantone: PantoneParams { barcode: 0.10, halftone: 0.35, glitch: 8.0, split: true },
@@ -1979,6 +1982,7 @@ pub fn pantone_halftone() -> Theme {
         hot: "#ffffff".into(),
         ink_chroma: 1.0,
         inks: 2,
+        ink_morph: 0.35,
         aberration: 1.0,
         pantone: PantoneParams { barcode: 0.08, halftone: 1.0, glitch: 1.0, split: true },
         ..pantone_base()
@@ -2009,6 +2013,7 @@ pub fn vfd_pantone() -> Theme {
         rainbow_spread: 1.0,
         ink_chroma: 1.0,
         inks: 3,
+        ink_morph: 0.35,
         aberration: 2.0,
         ..vfd_ice()
     }
@@ -2036,6 +2041,7 @@ pub fn scope_pantone() -> Theme {
         rainbow_spread: 1.0,
         ink_chroma: 1.0,
         inks: 3,
+        ink_morph: 0.35,
         aberration: 3.0,
         ..scope_base()
     }
@@ -2061,6 +2067,7 @@ pub fn vu_pantone() -> Theme {
         rainbow_spread: 1.0,
         ink_chroma: 1.0,
         inks: 3,
+        ink_morph: 0.35,
         aberration: 2.0,
         ..vu_base()
     }
@@ -2308,7 +2315,7 @@ pub fn fluid_mercury() -> Theme {
             wave_speed: 0.65,
             // Mercury's surface tension is enormous, so it does not pile up - the amplitude is
             // deliberately lower than water's even though it rings far longer.
-            surface_gain: 6.5,
+            surface_gain: 3.6,
             cone_travel: 0.13,
             coupling: 0.30,
             droplets: 3,
@@ -2316,6 +2323,7 @@ pub fn fluid_mercury() -> Theme {
             droplet_v: 165.0,
             // Opaque metal - nothing focuses below the surface.
             caustics: false,
+            underglow: 0.0,
             sheen: 0.55,
             ..FluidParams::default()
         },
@@ -2360,13 +2368,14 @@ pub fn fluid_oil() -> Theme {
             // the amplitude was starved: the cone barely coupled into the liquid, so the shimmer
             // was there in the field and quantised away on the way to the screen. Raising the two
             // together keeps the short wavelength and gives it enough travel to survive rounding.
-            surface_gain: 8.0,
+            surface_gain: 4.4,
             cone_travel: 0.20,
             coupling: 0.34,
             // Light spray, and lots of it.
             droplets: 8,
             droplet_v: 105.0,
             caustics: true,
+            underglow: 0.45,
             // The signature: the meniscus is mixed toward `film` by the local slope, so a crest's
             // rising flank and its falling flank are different colours.
             iridescence: 0.85,
@@ -2458,6 +2467,7 @@ pub fn fluid_ink() -> Theme {
             // Nothing this viscous throws a droplet.
             droplets: 0,
             caustics: false,
+            underglow: 0.0,
             sheen: 0.12,
             ..FluidParams::default()
         },
@@ -2491,6 +2501,7 @@ pub fn fluid_pantone() -> Theme {
         rainbow_spread: 1.0,
         ink_chroma: 1.0,
         inks: 3,
+        ink_morph: 0.35,
         aberration: 2.0,
         fluid: FluidParams {
             surface: 0.34,
@@ -2502,7 +2513,7 @@ pub fn fluid_pantone() -> Theme {
             cone_dark: "#08080c".into(),
             damping: 0.9975,
             wave_speed: 1.15,
-            surface_gain: 7.5,
+            surface_gain: 3.5,
             cone_travel: 0.24,
             coupling: 0.30,
             // Ink spatter, and a fast one - it is the closest thing here to a printing accident.
@@ -2511,6 +2522,7 @@ pub fn fluid_pantone() -> Theme {
             // Off: caustics are a light-through-water effect and read as noise once the body is a
             // flat ink. The hard specular horizon replaces them, which is the printed-edge look.
             caustics: false,
+            underglow: 1.0,
             sheen: 0.55,
             ..FluidParams::default()
         },

@@ -148,6 +148,23 @@ const FLUX_REFRACTORY_MS: f32 = 200.0;
 /// rate-limited - so without this a snare displaces no more water than a sustained pad.
 const TRANSIENT_KICK: f32 = 0.35;
 
+/// How far below the rest surface the cone's base sits, as a fraction of the tank depth.
+///
+/// Was 0.55, and reviewed by eye as "woofers too high, hard to see the interaction": with the cone
+/// mouth that close to the surface there were only ~13px of clear water above it, so the waves it
+/// launched had almost no room to be seen travelling before they reached the crest line. Pushing the
+/// drivers down to 0.70 roughly doubles that clear water. It is bounded well above the tank floor -
+/// at the reference geometry the basket still finishes several pixels clear of it.
+const CONE_DEPTH: f32 = 0.70;
+
+/// How long the underglow takes to fade from full to nothing, in milliseconds.
+///
+/// 850ms is deliberately far slower than the vaporwave lightning it was compared to: that is a
+/// few-frame strike, and the brief for this was "more glow than flash". Long enough to still be
+/// visible when the next kick lands at 120bpm (500ms), so successive hits ride on each other rather
+/// than each starting from black.
+const UNDERGLOW_RELEASE_MS: f32 = 850.0;
+
 /// Gravity for the droplets, in px/s^2 at the 56px reference interior height, scaled with the
 /// panel. With the default launch speed this gives an apex around 8px and a flight of ~0.27s,
 /// which is long enough to read as an arc at 60fps and short enough that droplets do not
@@ -186,6 +203,8 @@ pub struct Fluid {
     flux_avg: f32,
     since_drop_ms: f32,
     seed: u32,
+    /// Underglow envelope, 0..1. Set to 1 on a transient, released slowly.
+    glow: f32,
     drops: Vec<Drop>,
 }
 
@@ -202,6 +221,7 @@ impl Default for Fluid {
             // zero here would mean no droplet for the first 200ms after every theme switch.
             since_drop_ms: 1.0e4,
             seed: 0x9e37_79b9,
+            glow: 0.0,
             drops: Vec::new(),
         }
     }
@@ -509,6 +529,16 @@ impl Family for Fluid {
 
         // ---- transient -----------------------------------------------------------------------
         let transient = self.update_flux(d, dt_ms);
+        // Underglow envelope. Instant attack, slow release - "more glow than flash". A linear
+        // release rather than exponential so the tail is actually visible for its whole duration
+        // instead of spending most of it below the eye's threshold.
+        if transient {
+            self.glow = 1.0;
+        }
+        self.glow = (self.glow - dt_ms / UNDERGLOW_RELEASE_MS).max(0.0);
+        if !self.glow.is_finite() {
+            self.glow = 0.0;
+        }
         if transient {
             for (k, m) in mouths.iter().enumerate() {
                 let kick = TRANSIENT_KICK * self.exc[k];
@@ -624,7 +654,7 @@ impl Family for Fluid {
         let cone_dark = Rgba::from_hex(&f.cone_dark, 0.92);
         let travel = ((depth as f32) * f.cone_travel.clamp(0.0, 0.45)).max(1.0);
         let cone_h = ((depth as f32 * 0.16).round() as i32).max(3);
-        let cone_base = rest + ((depth as f32) * 0.55).round() as i32;
+        let cone_base = rest + ((depth as f32) * CONE_DEPTH).round() as i32;
         let mut rims: [(i32, i32); 2] = [(0, 0); 2];
         for k in 0..2 {
             let cx = cxs[k];
@@ -646,10 +676,22 @@ impl Family for Fluid {
                 ],
                 cone_dark,
             );
-            // The diaphragm: a shallow cone pointing down at the voice coil, translated by this
-            // channel's excursion. POSITION is the primary cue at this size (rule 6).
-            let apex = cone_base - 1 - (self.exc[k] * travel).round() as i32;
-            let rim = apex - cone_h;
+            // The diaphragm: a shallow cone pointing down at the voice coil. Its APEX IS WELDED TO
+            // THE MOTOR and only the mouth travels, so the whole cone deepens and shallows.
+            //
+            // It used to translate as a rigid body - apex and rim moving together by the excursion -
+            // and that was reported as "the inner part of the sub coming disconnected from the
+            // bottom looks bad". It was: the apex is drawn sitting exactly on the surround at rest,
+            // so any upward travel opened a visible gap between the cone's point and the motor it is
+            // supposed to be driven by, and the part read as having come loose.
+            //
+            // Anchoring the apex and travelling the rim keeps it attached in every frame and still
+            // reads as a cone moving in and out - which is also the more honest mechanism, since a
+            // real driver's surround flexes while its coil stays in the gap. POSITION remains the
+            // primary cue at this size (rule 6): the mouth is the wide, high-contrast edge, so it is
+            // the part whose movement is actually legible at 60px.
+            let apex = cone_base - 1;
+            let rim = apex - cone_h - (self.exc[k] * travel).round() as i32;
             rims[k] = (cx, rim);
             c.fill_poly(
                 &[(cx - cone_hw, rim), (cx + cone_hw + 1, rim), (cx, apex)],
@@ -674,6 +716,34 @@ impl Family for Fluid {
         let irid = f.iridescence.clamp(0.0, 1.0);
         let emissive = f.emissive.clamp(0.0, 1.0);
         let emissive_rows = ((ih as f32 * 0.09).round() as i32).max(2);
+
+        // ---- underglow: the tank lit from beneath on a bass hit ------------------------------
+        // On the light layer and therefore bloomed, which is what makes it a glow rather than a
+        // flat brighter band - and it is drawn FIRST so the meniscus, glints and droplets all sit
+        // over it. Only inside the liquid: a column is skipped above its own surface, so the glow
+        // stops at the waterline and the air above stays dark. Alpha only ever ADDS, so this cannot
+        // punch a hole for the weather widget to show through.
+        let underglow = f.underglow.clamp(0.0, 1.0);
+        if underglow > 0.0 && self.glow > 0.0 {
+            let g = (self.glow * underglow).clamp(0.0, 1.0);
+            let band = (((depth as f32) * 0.60).round() as i32).max(2);
+            let col = tint(theme, 0.5, d.time_s, false, &theme.lit, 1.0);
+            for y in (floor_y - band).max(iy)..=floor_y {
+                // Brightest at the floor, falling off quadratically upward.
+                let up = (floor_y - y) as f32 / band as f32;
+                let a = g * (1.0 - up) * (1.0 - up) * 0.80;
+                if a <= 0.004 {
+                    continue;
+                }
+                let alpha = (a * 255.0).clamp(0.0, 255.0) as u8;
+                for i in 0..cols {
+                    if y >= surf[i] {
+                        lit.fill_rect(ix + i as i32, y, 1, 1, Rgba::new(col.r, col.g, col.b, alpha));
+                    }
+                }
+            }
+        }
+
         for i in 0..cols {
             let x = ix + i as i32;
             let s = surf[i];
@@ -902,6 +972,12 @@ mod tests {
         t.fluid.iridescence = 0.0;
         t.fluid.emissive = 0.0;
         t.fluid.droplets = 0;
+        // The underglow is composited over the body from the light layer, so it tints the marker
+        // cyan and the classifier stops recognising the body at all - every column measured 0. It is
+        // the SECOND element to break this harness the same way, after the ink path below, which is
+        // why the rule is stated as a rule: anything that can repaint a body pixel has to be
+        // neutralised here, and a new one has to be added to this list.
+        t.fluid.underglow = 0.0;
         // The ink path repaints the body from the colourway's hue cycle, which overwrites the marker
         // and made every column measure zero on `fluid-pantone` - a harness artifact, not a render
         // bug. Anything that can recolour the marker has to be neutralised here, aberration
@@ -1245,6 +1321,10 @@ mod tests {
         t.fluid.iridescence = 0.0;
         t.fluid.emissive = 0.0;
         t.fluid.droplets = 0;
+        // Fires from the floor on every bass hit, so it repaints exactly the deep pixel this test
+        // samples. A legitimate cause of variation, and therefore one this test has to exclude for
+        // its premise ("only the anchoring could have changed this pixel") to hold.
+        t.fluid.underglow = 0.0;
         let mut fam = Fluid::default();
         let mut c = Canvas::new(190, 60);
         let frames = real_music();
@@ -1371,6 +1451,10 @@ mod tests {
             }
             let bl = lum(c.get(95, 50));
             let pl = lum(c.get(95, 6));
+            // The SAME metric `every_fluid_colourway_renders_and_they_differ_structurally` asserts
+            // on, so the ladder can be tuned in one pass instead of one failing pair at a time.
+            let tr = drive(&t, &frames, 190, 60);
+            println!("  test-relief {:<16} {:>6.2}  gain={:.1}", t.id, pct(&mut tr.range.clone(), 0.50), t.fluid.surface_gain);
             println!("{:<16} {:>7.1} {:>8.1} {:>7.2} {:>9.1} {:>9.2}", t.id, pct(&mut sp, 0.50),
                      pct(&mut tv, 0.50), chop, bl, (bl + 5.0) / (pl + 5.0));
         }
@@ -1391,6 +1475,111 @@ mod tests {
             if lo >= hi { break; }
             eprintln!("{lo:3}..{hi:3}: {:?}", &row[lo..hi]);
         }
+    }
+
+    #[test]
+    fn the_underglow_actually_brightens_the_tank_on_a_bass_hit_and_then_fades() {
+        // Guards a feature that is easy to ship inert: an envelope that never rises, or a strength
+        // that is never read. Verified against both - pinning `self.glow` so it never rises fails this
+        // test, and so does switching the colourway's `underglow` off. It also
+        // pins the SHAPE the brief asked for - "more glow than flash" - by requiring the decay to
+        // still be visible several frames later, which a few-frame strike would fail.
+        let frames = real_music();
+        let mut t = builtin::fluid_deep();
+        // Everything else that varies a deep pixel, off, so the only thing moving is the underglow.
+        t.fluid.caustics = false;
+        t.fluid.droplets = 0;
+        t.fluid.sheen = 0.0;
+        t.fluid.emissive = 0.0;
+        assert!(t.fluid.underglow > 0.0, "fluid_deep must ship with the underglow on");
+
+        let lum = |p: crate::render::canvas::Rgba| {
+            0.2126 * p.r as f32 + 0.7152 * p.g as f32 + 0.0722 * p.b as f32
+        };
+        let mut fam = Fluid::default();
+        let mut c = Canvas::new(190, 60);
+        // A column away from both cone mouths, three rows off the floor - inside the glow band.
+        let (px, py) = (20, 53);
+        let mut series = Vec::new();
+        for (k, row) in frames.iter().take(400).enumerate() {
+            fam.draw(&mut c, &t, &fixture_frame(row, k as f32 * FIXTURE_DT_MS / 1000.0));
+            series.push((fam.glow, lum(c.get(px, py))));
+        }
+
+        let dark = series.iter().filter(|(g, _)| *g < 0.05).map(|(_, l)| *l).fold(f32::MAX, f32::min);
+        let bright = series.iter().filter(|(g, _)| *g > 0.9).map(|(_, l)| *l).fold(f32::MIN, f32::max);
+        assert!(bright > f32::MIN, "the underglow envelope never reached full on real music");
+        assert!(dark < f32::MAX, "the underglow envelope never returned to rest on real music");
+        assert!(
+            bright > dark + 12.0,
+            "the underglow only moved the tank from {dark:.1} to {bright:.1} luminance, which is not              a visible glow"
+        );
+        // HONEST LIMIT OF THIS TEST: it does NOT detect the glow being drawn on the opaque canvas
+        // instead of the bloomed light layer. That mutation was tried and this test still passed.
+        // The reason is legitimate rather than a hole worth papering over: this family's bloom
+        // radius is deliberately small (see `fluid_base`, which keeps it tight so the halo does not
+        // swallow the 1px meniscus) - far too small to carry the floor band's light up across ~25
+        // rows of liquid into the air. So for THIS element the light layer buys softness, not
+        // reach, and the two routings produce nearly identical pixels. Light drawn nearer the
+        // surface would need its own coverage.
+
+        // Glow rather than flash: from a peak, the envelope must still be meaningfully lit well
+        // after the few frames a vaporwave-style strike would last.
+        let peak = series.iter().position(|(g, _)| *g > 0.98).expect("no peak");
+        let later = (peak + 12).min(series.len() - 1);
+        assert!(
+            series[later].0 > 0.55,
+            "12 frames after a hit the envelope is already down to {:.2}; that is a flash, and the              brief asked for a glow",
+            series[later].0
+        );
+    }
+
+    #[test]
+    fn a_pantone_plate_change_never_jumps_in_a_single_frame() {
+        // The reported defect, verbatim: "I dont like the random switching ... not the hard jolting
+        // it currently is". Ink quantisation snapped the hue, so a plate change was a one-frame jump
+        // between two fully saturated process colours.
+        //
+        // This is the objective form of that complaint: sample the body and require that no single
+        // frame moves its colour far. It is killed by setting `ink_morph` back to 0 - the snap
+        // produces a single frame delta of well over 100 - so it cannot pass against the old
+        // behaviour.
+        let frames = real_music();
+        let mut t = builtin::fluid_pantone();
+        assert!(t.ink_morph > 0.0, "fluid_pantone must ship with the morph on");
+        // The underglow has a deliberately INSTANT attack, so it steps the body brightness on every
+        // hit. That is the requested behaviour and a different axis from hue morphing; off here so
+        // this test measures only the plate change.
+        t.fluid.underglow = 0.0;
+        t.fluid.caustics = false;
+        t.fluid.droplets = 0;
+
+        let mut fam = Fluid::default();
+        let mut c = Canvas::new(190, 60);
+        let (px, py) = (20, 50);
+        let mut worst = 0.0f32;
+        let mut prev: Option<(i32, i32, i32)> = None;
+        // Long enough to cross at least one plate change: at rainbow 0.05 with three inks a change
+        // comes every ~6.7s, and the fixture is 8s, so it is walked twice over two passes.
+        for pass in 0..2 {
+            for (k, row) in frames.iter().enumerate() {
+                let time = (pass * frames.len() + k) as f32 * FIXTURE_DT_MS / 1000.0;
+                fam.draw(&mut c, &t, &fixture_frame(row, time));
+                let p = c.get(px, py);
+                let now = (p.r as i32, p.g as i32, p.b as i32);
+                if let Some(q) = prev {
+                    let d = (((now.0 - q.0).pow(2) + (now.1 - q.1).pow(2) + (now.2 - q.2).pow(2))
+                        as f32)
+                        .sqrt();
+                    worst = worst.max(d);
+                }
+                prev = Some(now);
+            }
+        }
+        assert!(
+            worst < 40.0,
+            "the body colour jumps {worst:.1} in a single frame, which is the hard plate change the              morph is supposed to have replaced"
+        );
     }
 
     #[test]
@@ -2170,6 +2359,11 @@ mod tests {
             ("iridescence", |p| p.iridescence = 0.0),
             ("sheen", |p| p.sheen = 0.0),
             ("emissive", |p| p.emissive = 0.0),
+            // Switched OFF rather than up, because the default is already 0.85 - a probe that raised
+            // it could pass on a clamp alone. Off vs on is the difference that matters, and it is
+            // what proves the field is read at all: this repo has twice shipped a fully documented
+            // parameter that no code consumed.
+            ("underglow", |p| p.underglow = 0.0),
         ]
     }
 

@@ -72,6 +72,7 @@ struct RawLook {
     sensitivity: Option<f32>,
     inks: Option<u32>,
     ink_chroma: Option<f32>,
+    ink_morph: Option<f32>,
     aberration: Option<f32>,
     contrast_floor: Option<f32>,
     rainbow: Option<f32>,
@@ -267,6 +268,7 @@ struct RawFluid {
     iridescence: Option<f32>,
     sheen: Option<f32>,
     emissive: Option<f32>,
+    underglow: Option<f32>,
 }
 
 fn fluid_from(raw: Option<RawFluid>, d: FluidParams) -> FluidParams {
@@ -289,6 +291,7 @@ fn fluid_from(raw: Option<RawFluid>, d: FluidParams) -> FluidParams {
         iridescence: r.iridescence.unwrap_or(d.iridescence),
         sheen: r.sheen.unwrap_or(d.sheen),
         emissive: r.emissive.unwrap_or(d.emissive),
+        underglow: r.underglow.unwrap_or(d.underglow),
     }
 }
 
@@ -387,6 +390,7 @@ pub fn parse(src: &str) -> Result<Theme, ThemeError> {
         sensitivity: raw.look.sensitivity.unwrap_or(d.sensitivity),
         inks: raw.look.inks.unwrap_or(d.inks),
         ink_chroma: raw.look.ink_chroma.unwrap_or(d.ink_chroma),
+        ink_morph: raw.look.ink_morph.unwrap_or(d.ink_morph),
         aberration: raw.look.aberration.unwrap_or(d.aberration),
         contrast_floor: raw.look.contrast_floor.unwrap_or(d.contrast_floor),
         rainbow: raw.look.rainbow.unwrap_or(d.rainbow),

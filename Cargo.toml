@@ -13,6 +13,9 @@ toml = "1.1.4"
 [dependencies.windows]
 version = "0.62.2"
 features = [
+  # WinRT. Transitively enables Media + Foundation, which is what brings in the
+  # `IAsyncOperation::join()` used to await the media calls without an async runtime.
+  "Media_Control",
   "Win32_Foundation",
   "Win32_System_Com",
   "Win32_System_Console",
