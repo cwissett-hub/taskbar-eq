@@ -267,13 +267,47 @@ pub fn rainbow_hsv(t: &Theme, x01: f32, time_s: f32, hot: bool) -> Option<(f32, 
     }
     let x = if x01.is_finite() { x01.clamp(0.0, 1.0) } else { 0.0 };
     let time = if time_s.is_finite() { time_s } else { 0.0 };
-    let hue = time * t.rainbow + x * t.rainbow_spread;
+    let mut hue = time * t.rainbow + x * t.rainbow_spread;
+
+    // INK QUANTISATION. Snaps the hue to one of `inks` evenly spaced steps, so the palette becomes a
+    // set of process inks rather than a continuous wheel.
+    //
+    // This lived nowhere until now. The Pantone family set `inks` on four of its five colourways and
+    // its own comment said "`tint` resolves the rainbow (and its ink quantisation)" - but `tint` calls
+    // this function, which was written before that family existed and honoured neither `inks` nor
+    // `ink_chroma`. Both fields were completely inert, which is exactly why `pantone-process` at three
+    // inks was indistinguishable from the continuous `pantone-spectrum`: they were rendering the same
+    // colours. Same class of fault as the vaporwave auto-ranger - a documented feature that no code
+    // read.
+    //
+    // Quantising is also what makes full chroma legal: the 3:1 contrast rule is only binding on a
+    // CONTINUOUS wheel, because it is the dark blues that fail it. Snap to three inks and the wheel
+    // lands on yellow/cyan/magenta, none of which is dark, so `ink_chroma` can go to 1.0.
+    if t.inks > 0 {
+        let n = t.inks as f32;
+        // The HALF-STEP OFFSET is not cosmetic. Without it, N inks land ON the primaries: three gives
+        // hues 0/120/240, which is red/green/blue - the ADDITIVE primaries - and pure blue fails the
+        // 3:1 contrast rule at 2.34:1. Offset by half a step they straddle instead, and three lands on
+        // 60/180/300: yellow, cyan and magenta, the subtractive process set, worst 6.41:1.
+        //
+        // That is what the Pantone family's own module docs describe, and its stated measurements -
+        // 6.41:1 at three inks, 3.22:1 at two, 3.47:1 at six - reproduce exactly with this offset and
+        // not at all without it. The formula was correct in the design and simply never reached the
+        // code, because the quantisation belongs to this function and this function predates that
+        // family.
+        let step = (hue.rem_euclid(1.0) * n).floor();
+        hue = (step + 0.5) / n;
+    }
+
+    // `ink_chroma` rather than RAINBOW_SAT, defaulting to it, so a quantised palette can be fully
+    // saturated while a continuous one stays inside the contrast rule.
+    let sat = if t.ink_chroma.is_finite() { t.ink_chroma.clamp(0.0, 1.0) } else { RAINBOW_SAT };
     if hot {
         // The hot core keeps the hue but pulls hard toward white, exactly as the fixed colourways do
         // with their own `hot` - otherwise a rainbow loses the sense of a bright centre entirely.
-        Some((hue, RAINBOW_SAT * 0.30, 1.0))
+        Some((hue, sat * 0.30, 1.0))
     } else {
-        Some((hue, RAINBOW_SAT, 1.0))
+        Some((hue, sat, 1.0))
     }
 }
 

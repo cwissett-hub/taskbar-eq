@@ -929,6 +929,58 @@ mod tests {
     }
 
     #[test]
+    fn the_five_colourways_are_visibly_different_from_one_another() {
+        // Three of the five used to render almost identically, because `inks` and `ink_chroma` were
+        // both INERT - the quantisation was expected to live in `themes::rainbow_hsv`, which predates
+        // this family and honoured neither. `pantone-process` at three inks was drawing the exact
+        // same continuous rainbow as `pantone-spectrum`.
+        //
+        // Measured as mean absolute channel difference over the whole panel. With the fields wired up
+        // the closest pair is spectrum-vs-process at 24.6 and the rest span 39 to 83; before the fix
+        // that pair was indistinguishable. The floor here is well under the closest real pair, so it
+        // catches a colourway collapsing back onto another rather than policing taste.
+        let ids = [
+            "pantone-spectrum",
+            "pantone-process",
+            "pantone-barcode",
+            "pantone-misregister",
+            "pantone-halftone",
+        ];
+        let render = |id: &str| -> Vec<u8> {
+            let t = builtin::all().into_iter().find(|t| t.id == id).expect(id);
+            let mut p = Pantone::default();
+            let mut c = Canvas::new(190, 60);
+            for _ in 0..30 {
+                p.draw(&mut c, &t, &flat(0.6));
+            }
+            (0..(190 * 60))
+                .flat_map(|i| {
+                    let px = c.get(i % 190, i / 190);
+                    [px.r, px.g, px.b]
+                })
+                .collect()
+        };
+        let imgs: Vec<(&str, Vec<u8>)> = ids.iter().map(|id| (*id, render(id))).collect();
+        for i in 0..imgs.len() {
+            for j in (i + 1)..imgs.len() {
+                let d: f64 = imgs[i]
+                    .1
+                    .iter()
+                    .zip(imgs[j].1.iter())
+                    .map(|(a, b)| (*a as i32 - *b as i32).unsigned_abs() as f64)
+                    .sum::<f64>()
+                    / imgs[i].1.len() as f64;
+                assert!(
+                    d > 12.0,
+                    "{} and {} differ by only {d:.1} - one has collapsed onto the other",
+                    imgs[i].0,
+                    imgs[j].0
+                );
+            }
+        }
+    }
+
+    #[test]
     fn misregistration_shifts_red_and_blue_in_opposite_directions() {
         // SECOND formulation. The first asserted "some pixel left of bar 4 has r > b + 40", which the
         // orange bar body satisfies unaided; my replacement compared the leftmost red and blue edges,
