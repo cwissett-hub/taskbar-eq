@@ -1,3 +1,15 @@
+// No console window.
+//
+// Built as a CONSOLE subsystem app until now, so launching it from Explorer or from a
+// Start-with-Windows entry popped a black terminal that then sat there for the life of the process.
+// For a taskbar ornament that is simply wrong.
+//
+// The subsystem is fixed at LINK time - there is no way to turn a console on or off per run - so the
+// honest options are a GUI binary that can attach or allocate a console when asked, or a console
+// binary that hides its own window (which flickers visibly before it manages to). This takes the
+// first: see `attach_console_if_wanted`.
+#![windows_subsystem = "windows"]
+
 mod config;
 mod log;
 mod dsp;
@@ -167,7 +179,8 @@ fn diagnose() -> Result<()> {
     log::write(&format!(
         "capture: {frames} frames, peak rms {peak:.4}  {}",
         if frames == 0 {
-            "NO  <- no audio frames arrived at all, so the reveal gate can never open. This is              indistinguishable from 'nothing renders' and is the first thing to rule out."
+            "NO  <- no audio frames arrived at all, so the reveal gate can never open. 
+             This is indistinguishable from 'nothing renders' and is the first thing to rule out."
         } else if peak < 0.0005 {
             "silent - play something and run --diagnose again"
         } else {
@@ -349,7 +362,37 @@ fn measure_levels() -> Result<()> {
     Ok(())
 }
 
+/// Gives this process somewhere to print, when there is a reason to.
+///
+/// A GUI-subsystem binary starts with no stdout at all, so `println!` and `eprintln!` write into
+/// nothing. That is the right default for a taskbar ornament, but three cases still need output:
+///
+///   * `--console` allocates a fresh window on purpose, for watching it run;
+///   * `--diagnose` and `--levels` exist to be READ, so they allocate one too if they cannot inherit;
+///   * launched from an existing terminal, ATTACH_PARENT_PROCESS inherits that terminal, so
+///     `taskbar-eq.exe --diagnose` behaves exactly as it did before this change.
+///
+/// Nothing here is load-bearing for diagnostics regardless: the log file is written and flushed per
+/// line whether or not a console exists, which is the whole reason it was added.
+fn attach_console_if_wanted(force: bool) {
+    use windows::Win32::System::Console::{AllocConsole, AttachConsole, ATTACH_PARENT_PROCESS};
+    unsafe {
+        // Inheriting the caller's terminal is always preferable - it puts the output where whoever
+        // ran the command is already looking.
+        if AttachConsole(ATTACH_PARENT_PROCESS).is_ok() {
+            return;
+        }
+        if force {
+            let _ = AllocConsole();
+        }
+    }
+}
+
 fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    let wants_output = args.iter().any(|a| a == "--console" || a == "--diagnose" || a == "--levels");
+    attach_console_if_wanted(wants_output);
+
     if std::env::args().any(|a| a == "--levels") {
         return measure_levels();
     }

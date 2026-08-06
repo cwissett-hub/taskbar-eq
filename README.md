@@ -230,6 +230,23 @@ Layouts scale rather than stretch, because at 60 px tall some of them cannot sim
   stretched to a 37 px pitch with 20 px glass, which read as arched windows rather than valves.
 - **Segmented, oscilloscope and vaporwave** scale directly and gain from the room.
 
+### No console window
+
+It runs as a GUI application, so nothing appears on screen but the meter itself. Earlier builds were
+console-subsystem binaries and popped a black terminal that then sat there for the life of the
+process.
+
+The subsystem is fixed at link time, so there is no runtime switch — but you can ask for output:
+
+| | |
+|---|---|
+| `taskbar-eq.exe` | silent, no window |
+| `taskbar-eq.exe --console` | allocates a console so you can watch it run |
+| run from an existing terminal | inherits that terminal, so `--diagnose` prints where you ran it |
+
+Diagnostics never depend on a console either way: the log at
+`%APPDATA%	askbar-eq	askbar-eq.log` is written and flushed per line regardless.
+
 ### If it does not appear
 
 Run it once with `--diagnose`:
