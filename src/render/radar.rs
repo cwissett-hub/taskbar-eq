@@ -137,6 +137,26 @@ const WAKE_FLOOR: f32 = 0.12;
 
 /// Length of the sweep's own afterglow, in columns, and the alpha its freshest wash carries.
 ///
+/// Fraction of a pass at each end over which the beam fades out and back in - the retrace blanking.
+///
+/// The sweep is unidirectional and wraps, which is the right motion (see the long note in `draw`
+/// about why oscillation is actively wrong on a raster). What was wrong was the WRAP being visible:
+/// a 1px full-height line at 0.95 alpha is the brightest thing on the panel, and teleporting it 184px
+/// in one frame reads as the picture resetting, which is what it was reported as - twice, once on the
+/// fan and again here.
+///
+/// A CRT does not have this problem, and not because its flyback is slow: it BLANKS the beam during
+/// retrace, so there is nothing bright to see moving. The phosphor holds the picture meanwhile, which
+/// is exactly what the per-column wake does here. So the beam is faded out over the last 6% of the
+/// pass and back in over the first 6% - about 84ms each at the 1400ms sweep - and the line dissolves
+/// at the right edge and materialises at the left instead of jumping between them.
+///
+/// This also resolves, rather than merely tolerating, the wake clamp recorded in `draw`: the trail is
+/// clamped at the left edge rather than wrapped, so immediately after a flyback the beam had no wake
+/// at all. Now it is invisible at that moment anyway, so the two behaviours agree instead of the
+/// second being an artefact the first had to excuse.
+const RETRACE_FRAC: f32 = 0.06;
+
 /// 4.5 columns is 26px at the reference size. The per-column wake above is the AUDIO history; this
 /// is just the beam looking like a beam.
 ///
@@ -519,6 +539,14 @@ impl Family for Radar {
         let hot = &t.hot;
         let sweep_x = col_x(f, cols, self.pos);
 
+        // Retrace blanking. 0 at both ends of a pass, 1 across the middle, smoothstepped so the beam
+        // leaves and arrives at zero rate rather than snapping to black. Applied to the beam AND its
+        // wash, because fading the line while leaving a bright wash behind would just move the
+        // discontinuity into the wash.
+        let p01 = (self.pos / cols as f32).clamp(0.0, 1.0);
+        let edge = (p01 / RETRACE_FRAC).min((1.0 - p01) / RETRACE_FRAC).clamp(0.0, 1.0);
+        let beam = edge * edge * (3.0 - 2.0 * edge);
+
         // The sweep's own wash goes down FIRST, so the blips stay crisp on top of it. The fan drew
         // its beam last and the wedge visibly dimmed every return it was passing over.
         let trail = (TRAIL_CELLS * col_w).max(2.0) as i32;
@@ -533,7 +561,7 @@ impl Family for Radar {
                 f.y,
                 1,
                 f.h + 1,
-                Rgba::from_hex(&t.lit, (fade * fade * TRAIL_ALPHA).clamp(0.0, 1.0)),
+                Rgba::from_hex(&t.lit, (fade * fade * TRAIL_ALPHA * beam).clamp(0.0, 1.0)),
             );
         }
 
@@ -585,7 +613,7 @@ impl Family for Radar {
 
         // The sweep line itself, last and brightest: after the flyback it is the one feature the
         // eye can pick up immediately, which is what makes the wrap read as a wrap.
-        lit.fill_rect(sweep_x, f.y, 1, f.h + 1, Rgba::from_hex(hot, 0.95));
+        lit.fill_rect(sweep_x, f.y, 1, f.h + 1, Rgba::from_hex(hot, 0.95 * beam));
 
         if t.bloom > 0.0 {
             let mut halo = lit.clone();
@@ -751,7 +779,58 @@ mod tests {
     }
 
     #[test]
-    fn the_sweep_crosses_the_field_with_dt_and_flies_back_to_the_left() {
+fn the_beam_is_blanked_across_the_flyback_so_nothing_visibly_jumps() {
+        // The reported defect, twice on this family: "the radar should sweep left to right, not
+        // reset". The motion was already left-to-right; what read as a reset was the BEAM - a 1px
+        // full-height line at 0.95 alpha, the brightest thing on the panel - teleporting the full
+        // width of the field in a single frame.
+        //
+        // A CRT solves this by blanking during retrace, so this asserts the same thing: the beam is
+        // effectively invisible at the wrap and full brightness across the middle of the pass.
+        // Measured on the drawn pixel rather than on the alpha, so it cannot pass while the fade is
+        // computed and then ignored.
+        let t = builtin::radar_p1();
+        let mut c = Canvas::new(190, 60);
+        let f = field(190, 60);
+        let cols = column_count(190);
+
+        // Brightness of the sweep column, halfway down the field so no blip or range line is in the
+        // way. `flat(0.0)` keeps the returns dark, leaving the beam as the only bright thing.
+        let mut beam_lum = |pos: f32| -> f32 {
+            let mut r = Radar::default();
+            r.pos = pos;
+            // dt 0 so `draw` cannot advance the position away from the one under test.
+            let still = FrameData { dt_ms: 0.0, ..flat(0.0) };
+            r.draw(&mut c, &t, &still);
+            let p = c.get(col_x(f, cols, pos), f.y + f.h / 2);
+            0.2126 * p.r as f32 + 0.7152 * p.g as f32 + 0.0722 * p.b as f32
+        };
+
+        let mid = beam_lum(cols as f32 * 0.5);
+        let just_wrapped = beam_lum(0.0);
+        let about_to_wrap = beam_lum(cols as f32 - 0.01);
+
+        assert!(mid > 40.0, "the beam is not visible mid-pass at all ({mid:.1})");
+        assert!(
+            just_wrapped < mid * 0.25,
+            "immediately after the flyback the beam is at {just_wrapped:.1} against {mid:.1}              mid-pass, so it reappears bright and the wrap is visible as a jump"
+        );
+        assert!(
+            about_to_wrap < mid * 0.25,
+            "just before the flyback the beam is at {about_to_wrap:.1} against {mid:.1} mid-pass,              so it vanishes while still bright"
+        );
+
+        // And the blanking is NARROW: it must hide the wrap without dimming the beam for a
+        // noticeable part of the pass. At 6% each end, 15% in is already full brightness.
+        let early = beam_lum(cols as f32 * 0.15);
+        assert!(
+            early > mid * 0.9,
+            "the beam is still dim at 15% of the pass ({early:.1} against {mid:.1}); the blanking              window has grown wide enough to be seen as a fade rather than a retrace"
+        );
+    }
+
+    #[test]
+        fn the_sweep_crosses_the_field_with_dt_and_flies_back_to_the_left() {
         let t = builtin::radar_p1();
         let mut r = Radar::default();
         let mut c = Canvas::new(190, 60);
