@@ -272,10 +272,13 @@ impl Ticker {
         self.rect_tick = (self.rect_tick + 1) % 60;
 
         let t0 = std::time::Instant::now();
+        // Two relaxed atomic loads. These used to be two cross-process shell calls made on THIS
+        // thread every frame, and the stall log measured them at 280-380ms whenever the shell was
+        // busy - which is what a track change makes it. See `win::shell_state`.
         let inputs = win::visibility::Inputs {
             widget: self.rect,
-            notification_state: win::placement::notification_state(),
-            taskbar_visible: win::placement::taskbar_visible(),
+            notification_state: win::shell_state::notification_state(),
+            taskbar_visible: win::shell_state::taskbar_visible(),
         };
         self.phases.vis = t0.elapsed().as_millis() as u32;
 
@@ -872,6 +875,11 @@ fn main() -> Result<()> {
     // established (e.g. the directory is unwatchable) degrades to
     // `changed()` always returning false - already warned about inside
     // `Watcher::new` - rather than crashing the app.
+    // Seeds the shell state and starts its poller before the first frame. Two of the visibility
+    // inputs are cross-process shell calls; keeping them on the render thread cost 280-380ms
+    // whenever the shell was busy, which is what a track change makes it. See `win::shell_state`.
+    win::shell_state::start();
+
     let watcher = themes::watch::Watcher::new();
 
     let theme = all_themes

@@ -9,5 +9,6 @@ pub mod icon;
 pub mod media;
 pub mod overlay;
 pub mod placement;
+pub mod shell_state;
 pub mod tray;
 pub mod visibility;
