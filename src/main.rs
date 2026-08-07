@@ -65,8 +65,14 @@ const SUGGESTED: [&str; 3] = ["Win+Ctrl+Space", "Win+Ctrl+Period", "Win+Ctrl+Com
 fn rebind(
     hotkeys: &mut win::hotkeys::Registry,
     cfg: &Config,
-) -> [win::hotkeys::Outcome; 3] {
-    hotkeys.apply_all([&cfg.hotkeys.play_pause, &cfg.hotkeys.next_track, &cfg.hotkeys.prev_track])
+) -> [win::hotkeys::Outcome; win::hotkeys::SLOTS] {
+    hotkeys.apply_all([
+        &cfg.hotkeys.play_pause,
+        &cfg.hotkeys.next_track,
+        &cfg.hotkeys.prev_track,
+        &cfg.hotkeys.random_theme,
+        &cfg.hotkeys.random_colourway,
+    ])
 }
 
 /// What the tray menu should show, derived from the LIVE outcomes rather than from the config file.
@@ -75,7 +81,7 @@ fn rebind(
 /// absent from the machine, so a menu built from the config would claim it is set up while pressing
 /// it did nothing.
 fn transport_state(
-    outcomes: &[win::hotkeys::Outcome; 3],
+    outcomes: &[win::hotkeys::Outcome; win::hotkeys::SLOTS],
     cfg: &Config,
 ) -> win::tray::TransportState {
     let keys = std::array::from_fn(|i| match &outcomes[i] {
@@ -91,6 +97,18 @@ fn transport_state(
         broken: outcomes.iter().any(|o| o.is_broken()),
         media_keys_backend: cfg.media_backend == win::media::Backend::MediaKeys,
     }
+}
+
+/// Applies a shuffle, returning the chosen theme if anything changed.
+///
+/// Seeded from the clock, because the picker is deliberately pure - which is what makes its rules
+/// ("never the one already showing", "stay in the family") testable exactly rather than by chance.
+fn shuffle(all_themes: &[themes::Theme], current: &str, kind: themes::pick::RandomKind) -> Option<themes::Theme> {
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0x51ed_2701);
+    themes::pick::pick(all_themes, current, kind, seed).map(|i| all_themes[i].clone())
 }
 
 /// How often the backstop timer asks for a tick, in milliseconds.
@@ -855,13 +873,12 @@ fn main() -> Result<()> {
     // idle thread and it means the very first key press does not also pay for WinRT activation.
     win::hotkeys::install_media(win::media::start(), cfg.media_backend);
     let mut hotkeys = win::hotkeys::Registry::new(tray.hwnd());
-    let mut outcomes = hotkeys.apply_all([
-        &cfg.hotkeys.play_pause,
-        &cfg.hotkeys.next_track,
-        &cfg.hotkeys.prev_track,
-    ]);
+    let mut outcomes = rebind(&mut hotkeys, &cfg);
     let working = outcomes.iter().filter(|o| o.is_working()).count();
-    log::write(&format!("transport: {working} of 3 keys bound and working"));
+    log::write(&format!(
+        "hotkeys: {working} of {} bound and working",
+        win::hotkeys::SLOTS
+    ));
     if outcomes.iter().any(|o| o.is_broken()) {
         log::write("one or more transport keys are configured but NOT working - see the lines above");
     }
@@ -965,12 +982,26 @@ fn main() -> Result<()> {
                         }
                     }
                 }
+                Some(TrayEvent::RandomNow(kind)) => {
+                    let current = with_ticker(|t| t.theme.id.clone()).unwrap_or_default();
+                    match shuffle(&all_themes, &current, kind) {
+                        Some(t) => {
+                            log::write(&format!("{kind:?} from the menu: {current} -> {}", t.id));
+                            cfg.theme = t.id.clone();
+                            with_ticker(|k| k.set_theme(t, true));
+                            if let Err(e) = cfg.save() {
+                                log::write(&format!("config save failed: {e}"));
+                            }
+                        }
+                        None => log::write(&format!("{kind:?}: nothing else to switch to")),
+                    }
+                }
                 Some(TrayEvent::BindKey(i)) => {
                     // EVERY binding is released first. A registered hotkey consumes the keystroke,
                     // so the combinations most worth rebinding are exactly the ones that would fire
                     // play/pause instead of reaching the capture window.
                     hotkeys.release_all();
-                    let label = ["play / pause", "next track", "previous track"][i.min(2)];
+                    let label = win::hotkeys::Slot::ALL[i.min(win::hotkeys::SLOTS - 1)].label();
                     let dark = win::darkmode::windows_prefers_dark();
                     // The chords bound to the OTHER two actions, so the window can refuse a
                     // duplicate on the spot instead of storing one that quietly never fires.
@@ -978,6 +1009,8 @@ fn main() -> Result<()> {
                         &cfg.hotkeys.play_pause,
                         &cfg.hotkeys.next_track,
                         &cfg.hotkeys.prev_track,
+                        &cfg.hotkeys.random_theme,
+                        &cfg.hotkeys.random_colourway,
                     ]
                     .iter()
                     .enumerate()
@@ -991,7 +1024,9 @@ fn main() -> Result<()> {
                             match i {
                                 0 => cfg.hotkeys.play_pause = text,
                                 1 => cfg.hotkeys.next_track = text,
-                                _ => cfg.hotkeys.prev_track = text,
+                                2 => cfg.hotkeys.prev_track = text,
+                                3 => cfg.hotkeys.random_theme = text,
+                                _ => cfg.hotkeys.random_colourway = text,
                             }
                             if let Err(e) = cfg.save() {
                                 log::write(&format!("config save failed: {e}"));
@@ -1002,7 +1037,9 @@ fn main() -> Result<()> {
                             match i {
                                 0 => cfg.hotkeys.play_pause.clear(),
                                 1 => cfg.hotkeys.next_track.clear(),
-                                _ => cfg.hotkeys.prev_track.clear(),
+                                2 => cfg.hotkeys.prev_track.clear(),
+                                3 => cfg.hotkeys.random_theme.clear(),
+                                _ => cfg.hotkeys.random_colourway.clear(),
                             }
                             if let Err(e) = cfg.save() {
                                 log::write(&format!("config save failed: {e}"));
@@ -1021,6 +1058,10 @@ fn main() -> Result<()> {
                         play_pause: SUGGESTED[0].into(),
                         next_track: SUGGESTED[1].into(),
                         prev_track: SUGGESTED[2].into(),
+                        // The shuffles are left alone: "use suggested keys" is offered from the
+                        // Spotify submenu and should not silently claim two more keys the user did
+                        // not ask about.
+                        ..cfg.hotkeys.clone()
                     };
                     outcomes = rebind(&mut hotkeys, &cfg);
                     if let Err(e) = cfg.save() {
@@ -1066,6 +1107,24 @@ fn main() -> Result<()> {
                     }
                 }
                 None => {}
+            }
+        }
+
+        // A shuffle asked for by a hotkey. Done here rather than in the wndproc because the theme
+        // list lives in this loop, and because switching theme resets the meter - work that has no
+        // business happening inside a message handler.
+        if let Some(kind) = win::hotkeys::take_random_request() {
+            let current = with_ticker(|t| t.theme.id.clone()).unwrap_or_default();
+            match shuffle(&all_themes, &current, kind) {
+                Some(t) => {
+                    log::write(&format!("{kind:?}: {} -> {}", current, t.id));
+                    cfg.theme = t.id.clone();
+                    with_ticker(|k| k.set_theme(t, true));
+                    if let Err(e) = cfg.save() {
+                        log::write(&format!("config save failed: {e}"));
+                    }
+                }
+                None => log::write(&format!("{kind:?}: nothing else to switch to")),
             }
         }
 

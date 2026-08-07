@@ -32,16 +32,33 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 /// they are still looking at the dialog, instead of discovering at next logon that nothing happened.
 const E_HOTKEY_TAKEN: u32 = 0x8007_0581;
 
-/// The three things a hotkey can do.
+/// Everything a hotkey can do.
+///
+/// Not all of these are media commands - the two shuffles are internal app actions - which is why
+/// `media_action` returns an `Option` rather than every slot mapping onto a transport command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Slot {
     PlayPause,
     NextTrack,
     PrevTrack,
+    /// Any colourway from any family, so the family changes too.
+    RandomTheme,
+    /// A different colourway inside the family already showing.
+    RandomColourway,
 }
 
+/// How many hotkey slots there are. Used for the config array and the outcome array, so adding a
+/// slot cannot leave one of them behind.
+pub const SLOTS: usize = 5;
+
 impl Slot {
-    pub const ALL: [Slot; 3] = [Slot::PlayPause, Slot::NextTrack, Slot::PrevTrack];
+    pub const ALL: [Slot; SLOTS] = [
+        Slot::PlayPause,
+        Slot::NextTrack,
+        Slot::PrevTrack,
+        Slot::RandomTheme,
+        Slot::RandomColourway,
+    ];
 
     /// The `RegisterHotKey` id. Small and fixed, well inside the documented 0x0000..0xBFFF range
     /// available to an application.
@@ -50,28 +67,33 @@ impl Slot {
             Slot::PlayPause => 1,
             Slot::NextTrack => 2,
             Slot::PrevTrack => 3,
+            Slot::RandomTheme => 4,
+            Slot::RandomColourway => 5,
         }
     }
 
     fn from_id(id: usize) -> Option<Slot> {
-        match id {
-            1 => Some(Slot::PlayPause),
-            2 => Some(Slot::NextTrack),
-            3 => Some(Slot::PrevTrack),
-            _ => None,
-        }
+        Slot::ALL.into_iter().find(|s| s.id() as usize == id)
     }
 
-    pub fn action(self) -> Action {
+    /// The transport command this slot sends, or `None` for a slot that does something local.
+    pub fn media_action(self) -> Option<Action> {
         match self {
-            Slot::PlayPause => Action::PlayPause,
-            Slot::NextTrack => Action::NextTrack,
-            Slot::PrevTrack => Action::PrevTrack,
+            Slot::PlayPause => Some(Action::PlayPause),
+            Slot::NextTrack => Some(Action::NextTrack),
+            Slot::PrevTrack => Some(Action::PrevTrack),
+            Slot::RandomTheme | Slot::RandomColourway => None,
         }
     }
 
     pub fn label(self) -> &'static str {
-        self.action().label()
+        match self {
+            Slot::PlayPause => "play/pause",
+            Slot::NextTrack => "next track",
+            Slot::PrevTrack => "previous track",
+            Slot::RandomTheme => "random theme",
+            Slot::RandomColourway => "random colourway",
+        }
     }
 }
 
@@ -119,7 +141,7 @@ impl Outcome {
 /// `Send`-shared is a better enforcement than an assertion that only fires in a test harness.
 pub struct Registry {
     hwnd: HWND,
-    live: [Option<Chord>; 3],
+    live: [Option<Chord>; SLOTS],
 }
 
 /// The Win32 calls, behind a trait so the decision logic can be tested without a window.
@@ -182,21 +204,17 @@ pub fn apply_one(
 
 impl Registry {
     pub fn new(hwnd: HWND) -> Self {
-        Registry { hwnd, live: [None; 3] }
+        Registry { hwnd, live: [None; SLOTS] }
     }
 
     fn idx(slot: Slot) -> usize {
-        match slot {
-            Slot::PlayPause => 0,
-            Slot::NextTrack => 1,
-            Slot::PrevTrack => 2,
-        }
+        Slot::ALL.iter().position(|s| *s == slot).unwrap_or(0)
     }
 
     /// Applies all three bindings and logs what happened to each.
-    pub fn apply_all(&mut self, texts: [&str; 3]) -> [Outcome; 3] {
+    pub fn apply_all(&mut self, texts: [&str; SLOTS]) -> [Outcome; SLOTS] {
         let mut reg = Win32Registrar { hwnd: self.hwnd };
-        let mut out = [Outcome::Unbound, Outcome::Unbound, Outcome::Unbound];
+        let mut out = std::array::from_fn(|_| Outcome::Unbound);
         for (i, slot) in Slot::ALL.iter().enumerate() {
             // Chords already accepted in THIS pass, so a duplicate inside one config file is caught.
             let others: Vec<Chord> = self.live.iter().flatten().copied().collect();
@@ -264,6 +282,23 @@ fn backend() -> Backend {
     }
 }
 
+/// A pending shuffle request, set from the wndproc and taken by the main loop.
+///
+/// 0 none, 1 random theme, 2 random colourway. A flag rather than a channel because these are
+/// idempotent - pressing the shuffle key three times quickly should give one new colourway per
+/// visible frame, not queue three swaps the user never sees - which is the opposite of the transport
+/// commands, where every press must count and so goes down an unbounded channel.
+static RANDOM_REQUEST: AtomicU8 = AtomicU8::new(0);
+
+/// Takes any pending shuffle request.
+pub fn take_random_request() -> Option<crate::themes::pick::RandomKind> {
+    match RANDOM_REQUEST.swap(0, Ordering::Relaxed) {
+        1 => Some(crate::themes::pick::RandomKind::AnyTheme),
+        2 => Some(crate::themes::pick::RandomKind::SameFamily),
+        _ => None,
+    }
+}
+
 /// Handles a `WM_HOTKEY`. Returns true if it was one of ours.
 ///
 /// The id is MATCHED, never used to index or shift. An earlier draft did
@@ -275,9 +310,18 @@ pub fn on_wm_hotkey(id: usize) -> bool {
         log::write(&format!("unexpected WM_HOTKEY id {id}, ignored"));
         return false;
     };
-    match MEDIA.get() {
-        Some(h) => h.send(slot.action(), backend()),
-        None => log::write(&format!("{}: no media thread to send to", slot.label())),
+    match slot.media_action() {
+        Some(action) => match MEDIA.get() {
+            Some(h) => h.send(action, backend()),
+            None => log::write(&format!("{}: no media thread to send to", slot.label())),
+        },
+        None => {
+            // A local action. The main loop owns the theme list, so it does the work.
+            RANDOM_REQUEST.store(
+                if slot == Slot::RandomTheme { 1 } else { 2 },
+                Ordering::Relaxed,
+            );
+        }
     }
     true
 }
@@ -413,6 +457,6 @@ mod tests {
         }
         seen.sort_unstable();
         seen.dedup();
-        assert_eq!(seen.len(), 3, "two slots share an id");
+        assert_eq!(seen.len(), SLOTS, "two slots share an id");
     }
 }

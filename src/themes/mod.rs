@@ -1,3 +1,4 @@
+pub mod pick;
 pub mod builtin;
 pub mod schema;
 pub mod watch;

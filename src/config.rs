@@ -20,6 +20,10 @@ pub struct Hotkeys {
     pub play_pause: String,
     pub next_track: String,
     pub prev_track: String,
+    /// Shuffle to any colourway in any family.
+    pub random_theme: String,
+    /// Shuffle within the family already showing.
+    pub random_colourway: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

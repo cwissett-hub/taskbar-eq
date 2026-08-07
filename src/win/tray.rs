@@ -39,16 +39,21 @@ const ID_KEYS_CLEAR: usize = 1101;
 const ID_BACKEND_SESSION: usize = 1102;
 const ID_BACKEND_MEDIAKEYS: usize = 1103;
 const ID_KEYS_EDIT: usize = 1104;
-/// One id per action, so clicking a binding starts capturing for THAT action.
+/// One id per action, so clicking a binding starts capturing for THAT action. As wide as
+/// `hotkeys::SLOTS`.
 const ID_BIND_BASE: usize = 1110;
+const ID_RANDOM_THEME_NOW: usize = 1120;
+const ID_RANDOM_COLOURWAY_NOW: usize = 1121;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TrayEvent {
     Quit,
     SelectTheme(String),
     ToggleAutostart,
-    /// Capture a new key for one action, by index: 0 play/pause, 1 next, 2 previous.
+    /// Capture a new key for one action, by index into `hotkeys::Slot::ALL`.
     BindKey(usize),
+    /// Shuffle now, from the menu, without needing a key bound.
+    RandomNow(crate::themes::pick::RandomKind),
     /// Bind the suggested transport keys and register them immediately.
     SuggestKeys,
     /// Release every transport key.
@@ -66,8 +71,9 @@ pub enum TrayEvent {
 /// grabbed first is configured and not working, and a menu that reads the config cannot tell.
 #[derive(Debug, Clone, Default)]
 pub struct TransportState {
-    /// One label per action, already resolved to something a person can read.
-    pub keys: [String; 3],
+    /// One label per action, already resolved to something a person can read. Indexed the same way
+    /// as `hotkeys::Slot::ALL`, so the menu and the registry cannot disagree about which is which.
+    pub keys: [String; crate::win::hotkeys::SLOTS],
     /// True when at least one configured key failed to register.
     pub broken: bool,
     pub media_keys_backend: bool,
@@ -262,7 +268,7 @@ impl Tray {
                 // CLICKABLE, not informational. Selecting one opens the capture window for that
                 // action - which is the whole point, and was the gap: showing the bindings without
                 // any way to set them just tells the user what they cannot change.
-                for (i, label) in transport.keys.iter().enumerate() {
+                for (i, label) in transport.keys.iter().take(3).enumerate() {
                     let text = format!(
                         "{}:  {}",
                         ["Play / pause", "Next track", "Previous track"][i],
@@ -309,6 +315,33 @@ impl Tray {
                 );
             }
 
+            // ---- Random ----------------------------------------------------------------------
+            // Both shuffles are offered as ACTIONS as well as bindings, so they work before any key
+            // is set and remain usable if a key turns out to be taken by another program.
+            if let Ok(sub) = CreatePopupMenu() {
+                let _ = AppendMenuW(sub, MF_STRING, ID_RANDOM_THEME_NOW, w!("Any theme now"));
+                let _ = AppendMenuW(
+                    sub,
+                    MF_STRING,
+                    ID_RANDOM_COLOURWAY_NOW,
+                    w!("Another colourway of this theme now"),
+                );
+                let _ = AppendMenuW(sub, MF_SEPARATOR, 0, None);
+                for (i, label) in transport.keys.iter().enumerate().skip(3) {
+                    let text =
+                        format!("{}:  {}", ["Any theme key", "Colourway key"][i - 3], label);
+                    let mut wide: Vec<u16> =
+                        text.encode_utf16().chain(std::iter::once(0)).collect();
+                    let _ = AppendMenuW(
+                        sub,
+                        MF_STRING,
+                        ID_BIND_BASE + i,
+                        windows::core::PCWSTR(wide.as_mut_ptr()),
+                    );
+                }
+                let _ = AppendMenuW(menu, MF_POPUP, sub.0 as usize, w!("Random"));
+            }
+
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
             // Top level rather than inside the Spotify submenu: config.toml carries the theme, the
             // width and every timing as well as the key bindings, so it is not a transport setting.
@@ -346,7 +379,13 @@ impl Tray {
             let _ = PostMessageW(Some(self.hwnd), 0x0000, WPARAM(0), LPARAM(0));
 
             let id = cmd.0 as usize;
-            if (ID_BIND_BASE..ID_BIND_BASE + 3).contains(&id) {
+            if id == ID_RANDOM_THEME_NOW {
+                return Some(TrayEvent::RandomNow(crate::themes::pick::RandomKind::AnyTheme));
+            }
+            if id == ID_RANDOM_COLOURWAY_NOW {
+                return Some(TrayEvent::RandomNow(crate::themes::pick::RandomKind::SameFamily));
+            }
+            if (ID_BIND_BASE..ID_BIND_BASE + crate::win::hotkeys::SLOTS).contains(&id) {
                 return Some(TrayEvent::BindKey(id - ID_BIND_BASE));
             }
             if id == ID_KEYS_SUGGEST {
