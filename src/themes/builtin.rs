@@ -1,4 +1,7 @@
-use super::{FluidParams, ChromaParams, PantoneParams, Texture, Theme, TubeParams, VaporParams, Zone};
+use super::{
+    ChromaParams, FluidParams, PantoneParams, RadarParams, Texture, Theme, TubeParams, VaporParams,
+    Zone,
+};
 use crate::dsp::ballistics::Ballistics;
 
 pub fn all() -> Vec<Theme> {
@@ -57,6 +60,8 @@ pub fn all() -> Vec<Theme> {
         radar_ice(),
         radar_alert(),
         radar_mono(),
+        radar_ru(),
+        radar_cn(),
         fluid_deep(),
         fluid_mercury(),
         fluid_oil(),
@@ -1844,6 +1849,79 @@ pub fn radar_mono() -> Theme {
         panel_alpha: 1.0,
         edge: "#8fa4b8".into(),
         edge_alpha: 0.18,
+        ..radar_base()
+    }
+}
+
+
+/// Soviet/Russian cockpit, looking OUTWARD at Western hardware.
+///
+/// **What is authentic here is the threat list, not the instrument.** A real SPO-15 "Beryoza" is not a
+/// round coded scope at all - it is a lamp panel: a ring of sector lamps for bearing, a bar for
+/// relative range, and a row of class lamps. Reproducing that would be a different element rather than
+/// a recolour, and this family's scope geometry is deliberately shared with the other colourways. So
+/// what changes is the palette and, more usefully, WHO the emitters are.
+///
+/// A Russian receiver annotates Western systems, and Western systems are known by their US designation
+/// numbers rather than by the NATO reporting numbers a US receiver uses for Soviet ones. Hence 23 for
+/// the MIM-23 HAWK, 104 for the MIM-104 Patriot, 120 for the AIM-120, 9 for the AIM-9, 7 for the AIM-7,
+/// and the airframe numbers 15/16/18. That is the one substantive difference between this table and
+/// `radar_p1`'s: the SA-series numerals make no sense on a receiver operated by the people who field
+/// them.
+///
+/// This is a plausible operator-perspective set, not a transcription of any real aircraft's threat
+/// library - which is exactly why `codes` is a TOML list. Substitute your own.
+///
+/// The palette is the distinctive pale aquamarine of Soviet instrument lighting rather than the P1
+/// green or the ice blue, so it reads as a different cockpit and not a hue shift of an existing one.
+pub fn radar_ru() -> Theme {
+    Theme {
+        id: "radar-ru".into(),
+        name: "Beryoza (RU)".into(),
+        lit: "#5fe0c0".into(),
+        hot: "#ddfff4".into(),
+        panel: "#02100c".into(),
+        panel_alpha: 1.0,
+        edge: "#3c8a78".into(),
+        edge_alpha: 0.20,
+        radar: RadarParams {
+            codes: ["23", "104", "120", "16", "15", "9", "7", "18", "P", "H", "F", "A"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            ..RadarParams::default()
+        },
+        ..radar_base()
+    }
+}
+
+/// PLAAF-style receiver, also looking outward at Western and allied hardware.
+///
+/// Same honesty as `radar_ru`: Chinese RWR symbology is not meaningfully documented in public, so
+/// nothing here claims to be a transcription. What it is is a coherent second operator perspective -
+/// a shorter list, weighted toward the airframes and the naval systems a receiver in that theatre
+/// would see most, so it repeats sooner and reads as a narrower threat picture than the RU table.
+///
+/// The palette is a colder blue-white than `radar_ice`, closer to a modern LCD multi-function display
+/// than to a phosphor tube, which is also the right period cue for the airframes in the list.
+pub fn radar_cn() -> Theme {
+    Theme {
+        id: "radar-cn".into(),
+        name: "PLAAF (CN)".into(),
+        lit: "#7fb4ff".into(),
+        hot: "#e8f2ff".into(),
+        panel: "#03070f".into(),
+        panel_alpha: 1.0,
+        edge: "#4a6fa8".into(),
+        edge_alpha: 0.20,
+        // Shorter than the RU list on purpose - see the note above.
+        radar: RadarParams {
+            codes: ["16", "15", "35", "18", "120", "104", "3", "2", "F", "P"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            ..RadarParams::default()
+        },
         ..radar_base()
     }
 }

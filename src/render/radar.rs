@@ -1459,7 +1459,7 @@ mod tests {
             }
             seen.push(c.bits().to_vec());
         }
-        assert_eq!(seen.len(), 5, "expected the five radar colourways, got {}", seen.len());
+        assert_eq!(seen.len(), 7, "expected the seven radar colourways, got {}", seen.len());
     }
 
     /// Real music, captured with `--levels`: the committed fixture, or whatever `TASKBAR_EQ_FIXTURE`
