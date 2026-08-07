@@ -613,10 +613,21 @@ pub struct RadarParams {
     /// The knob for how RARE the launch flash is - the requirement was "fairly rare, just for big
     /// hits, but allow it to be tunable per theme so I can tune later to my taste".
     ///
-    /// 0.70 rather than a guess: measured on `tests/fixtures/real-music-bands.csv` the detector fires
-    /// 1.97 contacts/s, and this threshold turns 0.23/s of them into launches - one every four
-    /// seconds, roughly one contact in eight. Raise it toward 1.0 for only the very biggest hits
-    /// (0.15/s on the same fixture), drop it to 0.40 to see it about two and a half times as often.
+    /// 0.55 is measured across four tracks captured live from a real Spotify session, not chosen:
+    ///
+    /// ```text
+    ///   track                        @0.30    @0.55    @0.70    @0.85
+    ///   Sub Focus - Desire          every 1.0s  1.9s     2.6s    13.2s
+    ///   Campbell - Would You          never    never    never    never
+    ///   Ely Oaks - Running Around   every 0.9s  1.9s     2.6s     6.6s
+    ///   Skepsis - Been Here Before  every 4.4s  6.6s     never    never
+    /// ```
+    ///
+    /// 0.55 is the HIGHEST setting at which three of the four show the effect at all, and "never seen
+    /// it" was the actual reported failure - so it is the right side to err on. Raise it toward 0.85 for
+    /// only the biggest moments of the most dynamic material; drop it to 0.30 for roughly twice as
+    /// often. Above about 0.85 expect flat-mastered tracks never to fire at all, which is legitimate:
+    /// they genuinely have no big hits.
     pub launch: f32,
     /// Threat designators the scope annotates ordinary contacts with, low band to high.
     ///
@@ -640,7 +651,7 @@ impl Default for RadarParams {
     fn default() -> Self {
         RadarParams {
             rwr: true,
-            launch: 0.70,
+            launch: 0.55,
             codes: ["6", "8", "H", "10", "11", "P", "13", "A", "15", "M", "19", "R", "2", "U", "3"]
                 .iter()
                 .map(|s| s.to_string())

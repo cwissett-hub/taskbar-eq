@@ -131,26 +131,61 @@ const RANGE_REF: f32 = 1.6;
 
 /// Multiple of a track's typical transient that makes a launch, at `launch_at` 0 and at 1.
 ///
-/// **The floor is above 1.0, and that is what makes "never on a metronomic groove" structural rather
-/// than a matter of tuning.** A dead-steady kick has a ratio of 1.0 against `typical` by definition, so
-/// any mapping whose minimum exceeds 1.0 cannot fire on one at any setting.
+/// **The floor is above 1.0, which makes "never on a metronomic groove" structural rather than tuned.**
+/// A dead-steady kick has a ratio of exactly 1.0 against the median by definition, so a floor above 1.0
+/// cannot fire on one at any setting. The first version multiplied a single ratio of 2.4 by `launch_at`,
+/// which put the effective ratio BELOW 1.0 for every setting under 0.42 - so the "see it more often" end
+/// of the knob fired on literally every beat. Caught by the metronome assertion in the tests.
 ///
-/// The first version multiplied one ratio of 2.4 by `launch_at` directly, which put the effective ratio
-/// BELOW 1.0 for every setting under 0.42 - so the "see it more often" end of the knob fired on
-/// literally every beat, and the knob's two ends meant "constantly" and "sometimes" rather than
-/// "often" and "rarely". Caught by the metronome assertion below.
+/// The RANGE is measured, not chosen. The first guess put the floor at 1.3 on the reasoning that a
+/// launch should need a hit "nearly two and a half times an ordinary one". Four tracks captured live
+/// from the user's own Spotify session say that hits that big essentially do not occur in this material:
 ///
-/// The default 0.70 lands at 2.14x - a hit a little over twice an ordinary one.
-const LAUNCH_RATIO_MIN: f32 = 1.3;
-const LAUNCH_RATIO_MAX: f32 = 2.5;
+/// ```text
+///   track                          contacts/s   ratio p90   ratio max
+///   Sub Focus - Desire                   6.58        1.41        1.71
+///   Campbell - Would You                 1.36        1.02        1.08
+///   Ely Oaks - Running Around            5.44        1.45        1.91
+///   Skepsis - Been Here Before           3.93        1.18        1.54
+///   (the older committed fixture)        1.97        1.18        1.25
+/// ```
+///
+/// Nothing reaches 2.0. A 1.3 floor fired zero times on four of the five, which is precisely the
+/// reported "I havent seen a missile warning and flash yet". Real bass transients vary by tens of
+/// percent around the median, not by multiples, so the usable window is 1.05..1.80 - and that window
+/// spans a genuinely useful rate: on the most dynamic track, 2.12 launches/s at 0.0 down to none at 1.0.
+const LAUNCH_RATIO_MIN: f32 = 1.05;
+const LAUNCH_RATIO_MAX: f32 = 1.80;
 
-/// How fast `typical` adapts, and the floor it cannot fall below.
+/// Recent contact sizes the launch test measures against, and how many are needed before it means
+/// anything.
 ///
-/// 0.10 per contact is roughly a ten-transient memory - long enough that one big hit does not
-/// immediately become the new normal (which would make a second big hit unremarkable), short enough to
-/// follow a change of track. The floor stops a near-silent passage's tiny transients from becoming the
-/// reference, which would make the next ordinary beat look like a launch.
-const TYPICAL_EASE: f32 = 0.10;
+/// **A MEDIAN of a window, not a running average, and that choice is what finally made the launch
+/// fire at all.** Two entirely different outliers were poisoning a mean:
+///
+/// - **The detector's startup.** `bass_avg` begins at zero, so the first frames of audio report an
+///   excess of the whole bass level - 0.807 on the real-music fixture against an ordinary 0.09.
+/// - **A genuine big hit** - which is precisely the event that must NOT be allowed to redefine what
+///   ordinary means, or a second big hit becomes unremarkable.
+///
+/// Every exponential average tried failed on one horn or the other, and the failures were measured by
+/// driving the shipped code over the fixture at seven knob settings and counting real launches:
+///
+/// ```text
+///   symmetric 0.10        max ratio 1.24   0 launches at every setting
+///   asym 0.08 up/0.30 dn  max ratio 1.24   0 launches at every setting
+///   slow + 2-contact warm-up, max ratio 1.00   0 launches at every setting
+/// ```
+///
+/// A fast average tracks the beat so closely that nothing can stand out; a slow one never shakes off
+/// the startup transient. A median ignores both by construction - an outlier does not move it at all -
+/// and needs no warm-up special case.
+///
+/// 12 samples is about six seconds of music at two contacts a second: long enough to describe "what
+/// this track is like", short enough to follow a change of track. `MIN_SAMPLES` stops a launch firing
+/// off a two-sample median, where the startup transient could still be the middle value.
+const WINDOW: usize = 12;
+const MIN_SAMPLES: usize = 5;
 const TYPICAL_FLOOR: f32 = 0.02;
 
 /// Radius of the inner range ring, as a fraction of the scope radius.
@@ -275,9 +310,20 @@ pub struct Rwr {
     seq: u32,
     /// Time until another emitter may join.
     spawn_wait: f32,
-    /// Running size of an ordinary transient on the current material. Everything is measured against
-    /// this rather than against an absolute figure - see the module note.
-    typical: f32,
+    /// The last `WINDOW` contact sizes, oldest overwritten first. The median of these is what
+    /// everything is measured against - see the note on `WINDOW`.
+    recent: [f32; WINDOW],
+    /// How many have been written, saturating at `WINDOW`, and where the next one goes.
+    seen_n: usize,
+    head: usize,
+    /// Launches fired, for the calibration probe. It counts through the REAL code path rather than a
+    /// probe reimplementing the rule, which is the difference between measuring the shipped behaviour
+    /// and measuring a copy of it that has since drifted.
+    #[cfg(test)]
+    pub(super) launches: u32,
+    /// Every (ratio, typical) pair at a contact, for the calibration probe.
+    #[cfg(test)]
+    pub(super) seen: Vec<(f32, f32)>,
 }
 
 /// Shortest signed angle from `a` to `b`, in -PI..PI. Used by the tests to compare bearings.
@@ -416,27 +462,34 @@ impl Rwr {
         }
         self.flash = (self.flash - dt / LAUNCH_MS).max(0.0);
         self.spawn_wait = (self.spawn_wait - dt).max(0.0);
-        if !self.typical.is_finite() {
-            self.typical = 0.0;
+        for v in self.recent.iter_mut() {
+            if !v.is_finite() {
+                *v = TYPICAL_FLOOR;
+            }
         }
 
         let rise = if rise.is_finite() && rise > 0.0 { rise } else { return };
         if !excess.is_finite() || excess <= rise {
             return;
         }
-        // The very first transient IS the reference - there is nothing else to compare it against, and
-        // dividing by a zero `typical` would make it a launch and put it at the centre.
-        if self.typical <= 0.0 {
-            self.typical = excess.max(TYPICAL_FLOOR);
-        }
-        let typical = self.typical.max(TYPICAL_FLOOR);
+        // Recorded BEFORE the comparison, so the window always describes the material including this
+        // hit. A median cannot be skewed by the one sample being tested, which is the whole reason it
+        // can be updated first and read immediately.
+        self.recent[self.head] = excess;
+        self.head = (self.head + 1) % WINDOW;
+        self.seen_n = (self.seen_n + 1).min(WINDOW);
+
+        let typical = self.typical_now();
         // Both relative to this track's own dynamics - see the module note.
         let closeness = (excess / (typical * RANGE_REF)).clamp(0.0, 1.0);
         let ratio = excess / typical;
         let need = LAUNCH_RATIO_MIN
             + (LAUNCH_RATIO_MAX - LAUNCH_RATIO_MIN) * launch_at.clamp(0.0, 1.0);
-        let launched = ratio >= need;
-        self.typical += (excess - self.typical) * TYPICAL_EASE;
+        // No launch until the window describes something. Until then the startup transient could still
+        // be the middle value.
+        let launched = self.seen_n >= MIN_SAMPLES && ratio >= need;
+        #[cfg(test)]
+        self.seen.push((ratio, typical));
 
         // Every emitter still within its life is re-illuminated: they are all out there transmitting.
         // Keyed on `used`, NOT on the current glow - an emitter that dimmed to nothing across a sparse
@@ -493,7 +546,36 @@ impl Rwr {
             if let Some(i) = best {
                 self.threats[i].launch = 1.0;
                 self.flash = 1.0;
+                #[cfg(test)]
+                {
+                    self.launches += 1;
+                }
             }
+        }
+    }
+
+    /// Median of the recent contact sizes - what "an ordinary transient on this track" means.
+    ///
+    /// Insertion-sorted over at most twelve values on the frames where a transient arrives, which is a
+    /// couple of times a second. Sorting a fixed twelve is not worth a cleverer structure.
+    fn typical_now(&self) -> f32 {
+        let n = self.seen_n.min(WINDOW);
+        if n == 0 {
+            return TYPICAL_FLOOR;
+        }
+        let mut buf = [0.0f32; WINDOW];
+        buf[..n].copy_from_slice(&self.recent[..n]);
+        let slice = &mut buf[..n];
+        slice.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let mid = if n % 2 == 1 {
+            slice[n / 2]
+        } else {
+            (slice[n / 2 - 1] + slice[n / 2]) * 0.5
+        };
+        if mid.is_finite() {
+            mid.max(TYPICAL_FLOOR)
+        } else {
+            TYPICAL_FLOOR
         }
     }
 
@@ -746,29 +828,38 @@ mod tests {
     }
 
     #[test]
-    fn a_bigger_transient_pulls_the_contacts_closer_to_the_centre() {
+    fn a_hit_bigger_than_its_neighbours_pulls_the_contacts_closer_to_the_centre() {
         // The family's core mapping, and the one that is easy to get backwards: on a warning receiver
         // closer in is MORE dangerous, the opposite of the sweep field beside it where loud is high.
-        let settle = |amp: f32| -> f32 {
+        //
+        // Note WHAT is compared, because the first version of this test compared the wrong thing and
+        // failed once the reference became adaptive: it drove one run at a quiet level and another at a
+        // level eight times higher, and expected the loud one to sit closer in. Under a median-relative
+        // reference that is not just untestable, it is the wrong requirement - a track mastered louder
+        // adapts and looks normal, which is the entire point. What must move the mark is a hit that is
+        // big RELATIVE TO ITS NEIGHBOURS, so both runs here share one baseline groove and differ only
+        // in the spikes at the end.
+        let after = |spike: f32| -> f32 {
             let mut r = Rwr::default();
-            // Same typical-transient history in both cases, so what is compared is the last hits and
-            // not the adaptation.
-            groove(&mut r, 10, RISE * 2.0, 20);
-            for _ in 0..8 {
-                r.update(16.7, amp, RISE, 1.0);
-                for _ in 0..20 {
+            groove(&mut r, 14, RISE * 2.0, 20);
+            // Three spikes, not one: the range EASES toward its target, so a single hit moves it only
+            // about a third of the way and the two cases came out 0.09 apart - measurably in the right
+            // direction, but too close to assert on meaningfully.
+            for _ in 0..3 {
+                r.update(16.7, RISE * 2.0 * spike, RISE, 1.0);
+                for _ in 0..14 {
                     r.update(16.7, QUIET, RISE, 1.0);
                 }
             }
-            // Whichever emitters are up - slot 0's may have retired, and its range would then be a
-            // fresh spawn's rather than a settled one.
-            let live: Vec<f32> =
-                r.threats.iter().filter(|t| t.used).map(|t| t.range).collect();
+            let live: Vec<f32> = r.threats.iter().filter(|t| t.used).map(|t| t.range).collect();
             assert!(!live.is_empty(), "nothing was up to measure");
             live.iter().sum::<f32>() / live.len() as f32
         };
-        let (soft, hard) = (settle(RISE * 1.1), settle(RISE * 8.0));
-        assert!(hard < soft - 0.2, "a big hit must close on the centre: soft {soft:.2} hard {hard:.2}");
+        let (soft, hard) = (after(0.6), after(1.8));
+        assert!(
+            hard < soft - 0.15,
+            "a hit above the local average must close on the centre: soft {soft:.2} hard {hard:.2}"
+        );
         assert!(soft <= RANGE_RIM + 1e-4, "a soft hit must stay off the outer ring, got {soft:.2}");
         assert!(hard >= RANGE_CORE - 1e-4, "and a big one off the own-ship symbol, got {hard:.2}");
     }
@@ -816,11 +907,13 @@ mod tests {
         for at in [0.0f32, 0.2, 0.4, 0.7, 1.0] {
             assert!(!fires(at, 1.0), "a metronomic groove launched at threshold {at}");
         }
-        // A moderate spike gets through on a loose setting and not on a strict one.
-        assert!(fires(0.2, 2.0), "a 2x hit must launch on a loose setting");
-        assert!(!fires(1.0, 2.0), "a 2x hit must NOT launch on the strictest setting");
-        // And the very biggest hits get through even when strict.
-        assert!(fires(1.0, 6.0), "a 6x hit must launch even on the strictest setting");
+        // Spikes sized against the window real music actually occupies - see LAUNCH_RATIO_MIN. A 2x
+        // hit is off the top of the scale for this material and would pass at every setting, so it
+        // cannot tell a working knob from a stuck one.
+        assert!(fires(0.2, 1.3), "a 1.3x hit must launch on a loose setting");
+        assert!(!fires(1.0, 1.3), "a 1.3x hit must NOT launch on the strictest setting");
+        // And the biggest hits that do occur get through even when strict.
+        assert!(fires(1.0, 2.0), "a 2x hit must launch even on the strictest setting");
     }
 
     #[test]
@@ -882,7 +975,8 @@ mod tests {
                 && t.range.is_finite()),
             "a poisoned frame left the scope holding NaN, which never clears"
         );
-        assert!(r.typical.is_finite(), "the adaptive reference was poisoned");
+        assert!(r.typical_now().is_finite(), "the adaptive reference was poisoned");
+        assert!(r.recent.iter().all(|v| v.is_finite()), "the sample window holds NaN");
         // And it must still receive afterwards.
         groove(&mut r, 4, RISE * 3.0, 20);
         assert!(r.live() >= 1, "the scope never recovered after a NaN");

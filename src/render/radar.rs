@@ -316,7 +316,7 @@ pub struct Radar {
     hit_pos: f32,
     /// The warning receiver at the left of the panel. Fed from the same transient detector as `hit`,
     /// which is the point: one onset opinion, two displays reading it differently.
-    rwr: super::rwr::Rwr,
+    pub(super) rwr: super::rwr::Rwr,
     /// Last frame's rise above the slew-limited bass average, so a probe can measure on real music
     /// what the detector actually reports rather than re-deriving it and calibrating against a copy.
     #[cfg(test)]
@@ -1462,13 +1462,84 @@ mod tests {
         assert_eq!(seen.len(), 5, "expected the five radar colourways, got {}", seen.len());
     }
 
-    /// 8 seconds of real music, captured with `--levels` and committed as a fixture.
+    /// Real music, captured with `--levels`: the committed fixture, or whatever `TASKBAR_EQ_FIXTURE`
+    /// points at.
+    ///
+    /// The override exists because the committed fixture turned out to be 13 seconds of a STEADY
+    /// groove - its loudest bass transient is only 1.25x the median - so it cannot say anything about
+    /// how often a launch should fire on material that has dynamics. Calibrating against one capture is
+    /// how the launch came to be unfireable in the first place. `include_str!` is compile-time, so
+    /// without this every new capture cost a full rebuild and measuring several tracks was too slow to
+    /// bother with, which is exactly why it did not happen sooner.
     fn real_music() -> Vec<Vec<f32>> {
-        include_str!("../../tests/fixtures/real-music-bands.csv")
-            .lines()
+        let text = match std::env::var("TASKBAR_EQ_FIXTURE") {
+            Ok(p) => std::fs::read_to_string(&p)
+                .unwrap_or_else(|e| panic!("TASKBAR_EQ_FIXTURE={p}: {e}")),
+            Err(_) => include_str!("../../tests/fixtures/real-music-bands.csv").to_string(),
+        };
+        text.lines()
             .filter(|l| !l.trim().is_empty())
             .map(|l| l.split(',').filter_map(|v| v.parse::<f32>().ok()).collect())
             .collect()
+    }
+
+    /// The launch fires on dynamic material at the shipped default, and stays rare on flat material.
+    ///
+    /// **This is the test that would have caught every launch failure in this file's history**, and
+    /// there were four: an absolute threshold in detector units, then a fast-adapting reference that
+    /// tracked the beat too closely, then a slow one that never shook off the detector's startup
+    /// transient, then a ratio window (1.3x..2.5x) far above anything real music produces. Every one of
+    /// them passed the synthetic tests and fired zero times on real audio.
+    ///
+    /// Two committed fixtures, captured with `--levels` from a real session:
+    /// `real-music-dynamic.csv` is drum and bass with genuine dynamics, `real-music-flat.csv` is a
+    /// steady, flat-mastered track whose loudest bass transient is 1.08x its median.
+    #[test]
+    fn the_launch_fires_on_dynamic_music_and_stays_quiet_on_flat_music() {
+        let count = |csv: &str, at: f32| -> u32 {
+            let frames: Vec<Vec<f32>> = csv
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| l.split(',').filter_map(|v| v.parse::<f32>().ok()).collect())
+                .collect();
+            assert!(frames.len() > 500, "fixture looks truncated: {} frames", frames.len());
+            let mut t = builtin::radar_p1();
+            t.radar.launch = at;
+            let mut r = Radar::default();
+            let mut c = Canvas::new(190, 60);
+            for row in &frames {
+                let mut d = FrameData::default();
+                for (i, x) in d.levels.iter_mut().enumerate() {
+                    *x = row.get(i).copied().unwrap_or(0.0);
+                }
+                d.peaks = d.levels;
+                r.draw(&mut c, &t, &d);
+            }
+            r.rwr.launches
+        };
+        let dynamic = include_str!("../../tests/fixtures/real-music-dynamic.csv");
+        let flat = include_str!("../../tests/fixtures/real-music-flat.csv");
+        let default = builtin::radar_p1().radar.launch;
+
+        // The shipped default must actually fire on material that has big hits in it. 13 seconds is
+        // about five at the measured rate; three is a wide enough floor to survive retuning.
+        let n = count(dynamic, default);
+        assert!(
+            n >= 3,
+            "the launch fired only {n} times in 13s of dynamic music at the shipped default {default}"
+        );
+        // And it must stay an EVENT rather than a per-beat animation.
+        assert!(n <= 30, "{n} launches in 13s is not \"fairly rare\", it is the normal state");
+        // Flat material legitimately has no big hits, so it should be quiet - but this must be because
+        // the material is flat, not because the threshold is unreachable, which the line above proves.
+        let f = count(flat, default);
+        assert!(f < n, "flat material launched {f} times against dynamic material's {n}");
+
+        // The knob has to move the rate on real audio, not just on synthetic fixtures.
+        let loose = count(dynamic, 0.15);
+        let strict = count(dynamic, 0.95);
+        assert!(loose > n, "loosening the knob did nothing: {loose} vs {n} at the default");
+        assert!(strict < n, "tightening the knob did nothing: {strict} vs {n} at the default");
     }
 
     /// What the detector actually reports on real music, and what that means for the launch rate.
@@ -1542,42 +1613,42 @@ mod tests {
         let distinct = hist.iter().filter(|n| **n > 0).count();
         println!("  -> centroid spread would use {:.0}% of a circle, leading band gives {distinct} of 8 discrete bearings",
             (cs.last().copied().unwrap_or(0.0) - cs.first().copied().unwrap_or(0.0)) * 100.0);
-        // Where those contacts would sit on the scope. A range cue that pins everything to the rim
-        // is dead, and that is exactly what a launch-sized span does to it.
-        for span in [0.08f32, 0.12, 0.22, 0.60] {
-            let mut at_rim = 0;
-            let mut mid = 0;
-            let mut core = 0;
-            for e in excess.iter().filter(|e| **e > BASS_RISE) {
-                let k = ((*e - BASS_RISE) / span).clamp(0.0, 1.0);
-                if k < 0.2 {
-                    at_rim += 1;
-                } else if k < 0.8 {
-                    mid += 1;
-                } else {
-                    core += 1;
+
+        // The launch rate, counted through the SHIPPED code path at each knob setting: a fresh `Radar`
+        // per setting, driven over the same frames. Nothing here restates the rule, and that is the
+        // whole reason this number can be trusted - the version before measured a formula written out
+        // again in the test, which can drift from the one that ships without any test failing.
+        for at in [0.0f32, 0.1, 0.2, 0.3, 0.4, 0.55, 0.7, 0.85, 1.0] {
+            let mut tt = builtin::radar_p1();
+            tt.radar.launch = at;
+            let mut rr = Radar::default();
+            let mut cc = Canvas::new(190, 60);
+            for row in &frames {
+                let mut d = FrameData::default();
+                for (i, x) in d.levels.iter_mut().enumerate() {
+                    *x = row.get(i).copied().unwrap_or(0.0);
+                }
+                d.peaks = d.levels;
+                rr.draw(&mut cc, &tt, &d);
+            }
+            if at == 0.0 {
+                let mut rs: Vec<f32> = rr.rwr.seen.iter().map(|(r, _)| *r).collect();
+                rs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                if !rs.is_empty() {
+                    println!(
+                        "  ratio AT CONTACTS ({} of them): p10 {:.2}  p50 {:.2}  p90 {:.2}  max {:.2}   (need >= {:.2}..{:.2})",
+                        rs.len(), rs[rs.len()/10], rs[rs.len()/2], rs[rs.len()*9/10], rs[rs.len()-1],
+                        1.3, 2.5
+                    );
+                    let typ: Vec<f32> = rr.rwr.seen.iter().map(|(_, t)| *t).collect();
+                    println!("  typical over the run: first {:.3}  last {:.3}", typ[0], typ[typ.len()-1]);
                 }
             }
-            println!("  range span {span:.2}: rim {at_rim}  mid {mid}  core {core} (of {contacts})");
-        }
-        // A contact is only re-armed after the previous one decays, so the FRAME count above
-        // overstates what reaches the scope; what matters for rarity is the ordering of the rates.
-        for span in [0.10f32, 0.16, 0.22, 0.30, 0.45, 0.60] {
-            let rate = |at: f32| -> f32 {
-                let n = excess
-                    .iter()
-                    .filter(|e| {
-                        e.is_finite() && ((**e - BASS_RISE) / span).clamp(0.0, 1.0) >= at
-                    })
-                    .count();
-                n as f32 / secs
-            };
+            let n = rr.rwr.launches;
             println!(
-                "  span {span:.2}: launches/s at threshold 0.40 {:.2}  0.55 {:.2}  0.70 {:.2}  0.85 {:.2}",
-                rate(0.40),
-                rate(0.55),
-                rate(0.70),
-                rate(0.85)
+                "  launch = {at:.2}: {n} launches in {secs:.1}s ({:.2}/s, one every {:.1}s)",
+                n as f32 / secs,
+                if n > 0 { secs / n as f32 } else { f32::INFINITY }
             );
         }
     }
