@@ -95,7 +95,26 @@ pub struct Vu {
     /// stereo reading the narrow layout was approved on. Anything beyond them is a band, the
     /// way a broadcast console carries a stereo pair plus band meters.
     bands: Vec<(f32, f32)>,
+    /// The flourish: every needle slams to the end stop and the OVER lamps light. See `dsp::flourish`.
+    flourish: crate::dsp::flourish::Trigger,
+    pinned: crate::dsp::flourish::Envelope,
 }
+
+/// How long a pinned needle takes to fall back.
+///
+/// 900ms, which is deliberately slower than any other family's flourish and slower than the needle's
+/// own 300ms integration. A moving-coil needle driven to its end stop does not return promptly - it
+/// is a mass on a spring against a stop, and the slow fall IS the effect. Snapping back would read as
+/// a glitch in the drawing rather than as a meter being overdriven.
+const PINNED_MS: f32 = 900.0;
+
+/// Fraction of the dial radius the OVER lamp sits at, and its size in pixels.
+///
+/// Above the pivot and inboard of the arc, where a real console puts it. 3px so it reads as a lamp at
+/// the 190px width rather than a stray pixel; it scales no further because a lamp that grew with the
+/// panel would become a blob on a wide one.
+const LAMP_AT: f32 = 0.52;
+const LAMP_PX: i32 = 3;
 
 impl Family for Vu {
     fn id(&self) -> &'static str {
@@ -115,6 +134,12 @@ impl Family for Vu {
         // collapsing the needle to a dot at the pivot until process restart.
         // Guard exactly like `dsp::ballistics::Smoother::update` already
         // does for the same pattern.
+        // The flourish, advanced before the ballistics so a pinned needle is applied to this frame
+        // rather than the next one.
+        let dt = if d.dt_ms.is_finite() { d.dt_ms.clamp(0.0, 200.0) } else { 16.7 };
+        let fired = self.flourish.update(&d.levels, dt, t.flourish);
+        let pinned = self.pinned.update(fired, dt, PINNED_MS);
+
         let l_in = needle_level(d.rms_l, t.sensitivity);
         let r_in = needle_level(d.rms_r, t.sensitivity);
         self.l += (l_in - self.l) * VU_SMOOTHING;
@@ -183,6 +208,11 @@ impl Family for Vu {
         let mut dial = Canvas::new(w, h);
 
         for (idx, (level, peak)) in readings.iter().enumerate() {
+            // THE FLOURISH: the needle is driven to the end stop and falls back. A maximum against
+            // the live reading, not a replacement, so a genuinely loud passage is never DAMPED by the
+            // flourish - the needle only ever goes further over, which is the only direction an
+            // overdriven meter moves.
+            let level = &level.max(pinned);
             let cx = 2 + idx as i32 * (w / dials as i32) + dial_w / 2;
             let cy = h - 4;
             // Height caps the radius. Without this the arc's apex leaves the panel entirely on
@@ -244,6 +274,19 @@ impl Family for Vu {
                 cy + (pang.sin() * radius as f32) as i32,
                 Rgba::from_hex("#ffffff", 0.22),
             );
+
+            // The OVER lamp, lit only while a needle is pinned. Drawn on the ink layer so it takes
+            // the same bloom as the needles - a lamp that did not glow would read as a printed dot.
+            if pinned > 0.02 {
+                let ly = cy - (radius as f32 * LAMP_AT) as i32;
+                dial.fill_rect(
+                    cx - LAMP_PX / 2,
+                    ly - LAMP_PX / 2,
+                    LAMP_PX,
+                    LAMP_PX,
+                    Rgba::from_hex(t.overload_hex(), pinned.clamp(0.0, 1.0)),
+                );
+            }
 
             // Live needle, red past the overload point.
             let ang = a0 + (a1 - a0) * level.clamp(0.0, 1.0);
@@ -603,4 +646,68 @@ mod tests {
         }
         println!("wrote {} vu dumps to {}", n, dir.display());
     }
+    #[test]
+    fn the_flourish_pins_the_needles_and_lights_the_over_lamps() {
+        // A needle slam is only a slam if it puts the needle somewhere the audio did not. Measured on
+        // the pixels against the identical run with the flourish off.
+        //
+        // Measured on frames AFTER the firing frame, not on it: the firing frame is full-scale across
+        // every band, so on most families the display is already saturated there and the two runs come
+        // out identical. See `dsp::flourish::firing_sequence`.
+        let seq = crate::dsp::flourish::firing_sequence(64);
+        // Counted as pixels that DIFFER between the two runs, not as total ink. Total ink was the
+        // first attempt and it is polarity-dependent: `hifi_white` has a light panel and dark needles,
+        // so pinning a needle REDUCES total luminance - the measurement reported 934656 against
+        // 982034 and read as a regression when the effect was working correctly. How many pixels the
+        // flourish changes is the same claim without an opinion about which way brightness goes.
+        let differing = |x: &Canvas, y: &Canvas| -> u32 {
+            let mut n = 0;
+            for py in 0..60 {
+                for px in 0..190 {
+                    if x.get(px, py) != y.get(px, py) {
+                        n += 1;
+                    }
+                }
+            }
+            n
+        };
+        let run = |flourish: f32, after: usize| -> Canvas {
+            let mut t = builtin::hifi_white();
+            t.flourish = flourish;
+            let mut f = Vu::default();
+            let mut c = Canvas::new(190, 60);
+            for row in &seq {
+                let mut d = FrameData::default();
+                for (i, v) in d.levels.iter_mut().enumerate() {
+                    *v = row.get(i).copied().unwrap_or(0.0);
+                }
+                d.peaks = d.levels;
+                d.dt_ms = 16.7;
+                f.draw(&mut c, &t, &d);
+            }
+            // Silence afterwards, so anything still on the dial is the flourish and not the audio.
+            for _ in 0..after {
+                f.draw(&mut c, &t, &FrameData { dt_ms: 16.7, ..FrameData::default() });
+            }
+            c
+        };
+        let on = run(crate::themes::DEFAULT_FLOURISH, 3);
+        let off = run(0.0, 3);
+        let moved = differing(&on, &off);
+        assert!(
+            moved > 120,
+            "a pinned needle sweeps a wide arc and lights a lamp on every dial, but only {moved}              pixels differ from the run with the flourish off"
+        );
+        // The needles FALL BACK rather than latching - and slowly, which is the whole character of a
+        // moving-coil meter against its end stop. Two seconds is well past PINNED_MS.
+        let settled = differing(
+            &run(crate::themes::DEFAULT_FLOURISH, 120),
+            &run(0.0, 120),
+        );
+        assert!(
+            settled < moved / 4,
+            "the needles never fell back: {settled} pixels still differ against {moved} at the peak"
+        );
+    }
+
 }

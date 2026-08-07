@@ -16,7 +16,19 @@ const EDGE_RADIUS: i32 = 12;
 /// Everything inside this is punched out so the halo never touches the grid.
 const EDGE_BAND: i32 = 5;
 
-pub struct Segmented;
+/// How long the self-test takes to drain back to the real reading.
+///
+/// 620ms. A real VFD self-test snaps every segment on and holds for a moment before releasing, so this
+/// is deliberately slower than the panel's own ballistics - the point is that it reads as the DISPLAY
+/// doing something rather than as the music doing something.
+const SELF_TEST_MS: f32 = 620.0;
+
+#[derive(Default)]
+pub struct Segmented {
+    /// The flourish: a segment self-test on a rare, exceptional hit. See `dsp::flourish`.
+    flourish: crate::dsp::flourish::Trigger,
+    self_test: crate::dsp::flourish::Envelope,
+}
 
 impl Family for Segmented {
     fn id(&self) -> &'static str {
@@ -26,6 +38,14 @@ impl Family for Segmented {
     fn draw(&mut self, c: &mut Canvas, t: &Theme, d: &FrameData) {
         let (w, h) = (c.width(), c.height());
         c.clear();
+
+        // The flourish, advanced before the early size guard so a canvas too small to draw still keeps
+        // the trigger's history current - otherwise a resize would leave a stale window and fire a
+        // spurious self-test on the first frame back. Same reason the chroma field advances its glitch
+        // detector first.
+        let dt = if d.dt_ms.is_finite() { d.dt_ms.clamp(0.0, 200.0) } else { 16.7 };
+        let fired = self.flourish.update(&d.levels, dt, t.flourish);
+        let self_test = self.self_test.update(fired, dt, SELF_TEST_MS);
 
         // 1. panel
         c.rounded_rect(1, 2, w - 2, h - 4, 4, Rgba::from_hex(&t.panel, t.panel_alpha));
@@ -82,7 +102,12 @@ impl Family for Segmented {
             arr[lo..hi.min(arr.len())].iter().copied().fold(0.0f32, f32::max)
         };
 
-        let lit_of = |b: i32| (sample(&d.levels, b) * nseg as f32).round() as i32;
+        // THE FLOURISH: a segment self-test. Every segment lights, then DRAINS back down to the
+        // real reading as the envelope decays, which is what a VFD does when it is released - it does
+        // not cut, it collapses. Taken as a maximum against the live level so a loud band stays lit
+        // through the drain rather than blinking off and on again.
+        let floor = (nseg as f32 * self_test).round() as i32;
+        let lit_of = |b: i32| ((sample(&d.levels, b) * nseg as f32).round() as i32).max(floor);
 
         // 4-6. Lit marks, glow, and the crisp marks on top.
         //
@@ -325,7 +350,7 @@ mod tests {
     #[test]
     fn silence_still_draws_the_panel_and_ghost_grid() {
         let mut c = Canvas::new(190, 60);
-        Segmented.draw(&mut c, &builtin::vfd_ice(), &frame(0.0));
+        Segmented::default().draw(&mut c, &builtin::vfd_ice(), &frame(0.0));
         // Panel is opaque enough to be visible.
         assert!(c.get(95, 30).a > 100, "panel must be drawn even in silence");
         // Ghost grid present but dim.
@@ -354,7 +379,7 @@ mod tests {
     #[test]
     fn full_level_lights_the_top_of_the_bars() {
         let mut c = Canvas::new(190, 60);
-        Segmented.draw(&mut c, &builtin::vfd_ice(), &frame(1.0));
+        Segmented::default().draw(&mut c, &builtin::vfd_ice(), &frame(1.0));
         let top = c.get(first_bar_x() + 2, PAD_Y + 1);
         assert!(lum(top) > 150.0, "top segment should be lit at full level");
     }
@@ -362,7 +387,7 @@ mod tests {
     #[test]
     fn half_level_lights_the_bottom_but_not_the_top() {
         let mut c = Canvas::new(190, 60);
-        Segmented.draw(&mut c, &builtin::vfd_ice(), &frame(0.5));
+        Segmented::default().draw(&mut c, &builtin::vfd_ice(), &frame(0.5));
         let bottom = c.get(first_bar_x() + 2, 60 - PAD_Y - 2);
         let top = c.get(first_bar_x() + 2, PAD_Y + 1);
         // Assert on BRIGHTNESS, not alpha. The panel is 0.96 opaque, so every pixel
@@ -380,7 +405,7 @@ mod tests {
     #[test]
     fn segment_gaps_are_punched_through_to_transparent() {
         let mut c = Canvas::new(190, 60);
-        Segmented.draw(&mut c, &builtin::vfd_ice(), &frame(1.0));
+        Segmented::default().draw(&mut c, &builtin::vfd_ice(), &frame(1.0));
         // Walk a lit column and confirm the luminance is not monotonic - the
         // gaps must interrupt it. This is what distinguishes a segmented meter
         // from a solid bar.
@@ -404,7 +429,7 @@ mod tests {
     #[test]
     fn segment_gaps_glow_instead_of_going_dark() {
         let mut c = Canvas::new(190, 60);
-        Segmented.draw(&mut c, &builtin::vfd_ice(), &frame(0.5));
+        Segmented::default().draw(&mut c, &builtin::vfd_ice(), &frame(0.5));
         // Sample the EDGE of the first bar (offset 0 of its 5px width), which
         // sits outside the hot core's narrower highlight strip - measuring
         // the halo the bloom leaves behind, not the hot core's flat colour.
@@ -448,7 +473,7 @@ mod tests {
         // onto the bare taskbar and reads as a bright edge outside the
         // display. Checked at full level, where the halo is strongest.
         let mut c = Canvas::new(190, 60);
-        Segmented.draw(&mut c, &builtin::vfd_ice(), &frame(1.0));
+        Segmented::default().draw(&mut c, &builtin::vfd_ice(), &frame(1.0));
         for x in 0..190 {
             assert_eq!(c.get(x, 0), Rgba::TRANSPARENT, "row 0 is above the panel, x={x}");
             assert_eq!(c.get(x, 59), Rgba::TRANSPARENT, "row 59 is below the panel, x={x}");
@@ -470,14 +495,14 @@ mod tests {
     fn nothing_is_drawn_outside_the_canvas() {
         // Narrow rect - must clip, not panic.
         let mut c = Canvas::new(40, 20);
-        Segmented.draw(&mut c, &builtin::vfd_ice(), &frame(1.0));
+        Segmented::default().draw(&mut c, &builtin::vfd_ice(), &frame(1.0));
         assert_eq!(c.bits().len(), 40 * 20);
     }
 
     #[test]
     fn golden_vfd_ice_at_half_level() {
         let mut c = Canvas::new(190, 60);
-        Segmented.draw(&mut c, &builtin::vfd_ice(), &frame(0.5));
+        Segmented::default().draw(&mut c, &builtin::vfd_ice(), &frame(0.5));
         let expected = include_str!("../../tests/golden/vfd-ice.txt");
         assert!(
             crate::render::golden::matches_golden(&c, expected),
@@ -490,7 +515,7 @@ mod tests {
     #[ignore]
     fn regenerate_golden() {
         let mut c = Canvas::new(190, 60);
-        Segmented.draw(&mut c, &builtin::vfd_ice(), &frame(0.5));
+        Segmented::default().draw(&mut c, &builtin::vfd_ice(), &frame(0.5));
         std::fs::write("tests/golden/vfd-ice.txt", canvas_to_ascii(&c)).unwrap();
     }
 
@@ -513,7 +538,7 @@ mod tests {
             t.bloom = r;
             t.glow_strength = s;
             let mut c = Canvas::new(190, 60);
-            Segmented.draw(&mut c, &t, &frame(0.7));
+            Segmented::default().draw(&mut c, &t, &frame(0.7));
             let x = first_bar_x();
             let y = 60 - PAD_Y - 3;                 // inside a lit segment band
             let seg = lum(c.get(x + 2, y));
@@ -541,7 +566,7 @@ mod tests {
             let mut t = base.clone();
             t.edge_glow = e;
             let mut c = Canvas::new(190, 60);
-            Segmented.draw(&mut c, &t, &frame(0.75));
+            Segmented::default().draw(&mut c, &t, &frame(0.75));
             // brightest point on the left bezel ring, vertically over the lit region
             let mut bezel = 0.0f32;
             for y in 30..54 {
@@ -569,7 +594,7 @@ mod tests {
         println!("{:<22} {:>6} {:>8} {:>8} {:>6}  verdict", "theme", "bloom", "segment", "gap", "ratio");
         for t in builtin::all() {
             let mut c = Canvas::new(190, 60);
-            Segmented.draw(&mut c, &t, &frame(0.75));
+            Segmented::default().draw(&mut c, &t, &frame(0.75));
             let x = first_bar_x();
             let y = 60 - PAD_Y - 3;
             let seg = lum(c.get(x + 2, y));
@@ -582,4 +607,67 @@ mod tests {
             println!("{:<22} {:>6.1} {:>8.1} {:>8.1} {:>6.2}  {}", t.id, t.bloom, seg, gap, ratio, verdict);
         }
     }
+    #[test]
+    fn the_flourish_lights_every_segment_and_then_drains_back() {
+        // A self-test is only a self-test if it lights segments the music did not. Measured on the
+        // PIXELS against the identical run with the flourish disabled, so it cannot pass on the
+        // ordinary bars and it cannot pass if the effect is computed and never drawn.
+        //
+        // Measured on the frames AFTER the firing frame, not on it. The firing frame is full-scale
+        // across every band - that is what makes it exceptional - so the display is saturated by the
+        // music there and the two runs come out bit-identical. Comparing that frame is what the first
+        // version of this test did.
+        let quiet = frame(0.12);
+        let seq = crate::dsp::flourish::firing_sequence(quiet.levels.len());
+        let lit_count = |c: &Canvas| -> u32 {
+            (0..60)
+                .flat_map(|y| (0..190).map(move |x| (x, y)))
+                .filter(|(x, y)| {
+                    let p = c.get(*x, *y);
+                    p.r as u32 + p.g as u32 + p.b as u32 > 220
+                })
+                .count() as u32
+        };
+        // Runs the sequence, then `after` quiet frames, and returns the canvas.
+        let run = |flourish: f32, after: usize| -> Canvas {
+            let mut t = builtin::vfd_ice();
+            t.flourish = flourish;
+            let mut f = Segmented::default();
+            let mut c = Canvas::new(190, 60);
+            for row in &seq {
+                let mut d = FrameData::default();
+                for (i, v) in d.levels.iter_mut().enumerate() {
+                    *v = row.get(i).copied().unwrap_or(0.0);
+                }
+                d.peaks = d.levels;
+                d.dt_ms = 16.7;
+                f.draw(&mut c, &t, &d);
+            }
+            for _ in 0..after {
+                f.draw(&mut c, &t, &quiet);
+            }
+            c
+        };
+        // Three frames past the hit: the music is quiet, the envelope is still nearly full.
+        let on = run(crate::themes::DEFAULT_FLOURISH, 3);
+        let off = run(0.0, 3);
+        let (lit_on, lit_off) = (lit_count(&on), lit_count(&off));
+        assert_ne!(on.bits(), off.bits(), "the flourish changed nothing on the panel");
+        assert!(
+            lit_on > lit_off * 3,
+            "a self-test should light most of the display: {lit_on} lit against {lit_off} without it"
+        );
+        // And it DRAINS rather than latching: a second later the display is back to the music.
+        let drained = lit_count(&run(crate::themes::DEFAULT_FLOURISH, 90));
+        assert!(
+            drained < lit_on / 2,
+            "the self-test never drained: {drained} still lit against {lit_on} at its peak"
+        );
+        // A colourway with it switched off must be bit-identical to one that never had the feature,
+        // which is what makes `flourish = 0` a real escape hatch rather than a quieter version.
+        let plain = run(0.0, 90);
+        let plain2 = run(0.0, 90);
+        assert_eq!(plain.bits(), plain2.bits(), "the disabled path is not deterministic");
+    }
+
 }

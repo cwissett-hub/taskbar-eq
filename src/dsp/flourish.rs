@@ -175,6 +175,33 @@ impl Envelope {
     }
 }
 
+/// A frame sequence whose LAST frame fires a flourish, for the families' own tests.
+///
+/// Shared so that nine families agree about what "a flourish happened" looks like, and - more
+/// importantly - so that a change to the warm-up requirements here cannot silently turn nine family
+/// tests vacuous. `the_shared_firing_sequence_actually_fires` guards the helper itself, because a
+/// sequence that quietly stopped firing would make every one of those tests pass while asserting
+/// nothing.
+///
+/// **Measure a frame AFTER the last one, not the last one itself.** The firing frame is full-scale
+/// across every band - that is what makes it exceptional - so on most families the display is already
+/// saturated by the music there and the flourish changes nothing visible. The first attempt at the
+/// VFD's test compared exactly that frame and found the two canvases bit-identical. Draw a few quiet
+/// frames afterwards and compare those: the envelope is still high while the music has dropped, which
+/// is the only place the effect is separable from the audio.
+#[cfg(test)]
+pub fn firing_sequence(bands: usize) -> Vec<Vec<f32>> {
+    let mut out = Vec::new();
+    // An ordinary groove first: enough candidate hits to fill the median window past MIN_SAMPLES, and
+    // enough elapsed time to clear MIN_GAP_MS.
+    for i in 0..300 {
+        out.push(vec![if i % 20 == 0 { 0.45 } else { 0.15 }; bands]);
+    }
+    // Then one hit far above what this material has established as ordinary.
+    out.push(vec![1.0; bands]);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,6 +269,25 @@ mod tests {
         e.update(true, f32::NAN, f32::NAN);
         e.update(false, f32::INFINITY, -1.0);
         assert!(e.level().is_finite(), "a poisoned frame left the envelope at {}", e.level());
+    }
+
+    #[test]
+    fn the_shared_firing_sequence_actually_fires() {
+        // The guard on the helper the family tests depend on. If this sequence ever stopped producing
+        // a flourish, every family's flourish test would still pass - while asserting nothing at all.
+        let seq = firing_sequence(N);
+        let mut t = Trigger::default();
+        let mut fired_on = None;
+        for (i, row) in seq.iter().enumerate() {
+            if t.update(row, DT, crate::themes::DEFAULT_FLOURISH) {
+                fired_on = Some(i);
+            }
+        }
+        assert_eq!(
+            fired_on,
+            Some(seq.len() - 1),
+            "the sequence must fire on its LAST frame and only there, fired on {fired_on:?}"
+        );
     }
 
     #[test]

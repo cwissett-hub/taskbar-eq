@@ -134,7 +134,7 @@ pub fn family_for(id: &str) -> Box<dyn Family> {
         "pantone" => Box::new(pantone::Pantone::default()),
         "chroma" => Box::new(chroma::Chroma::default()),
         "vu" => Box::new(vu::Vu::default()),
-        _ => Box::new(segmented::Segmented),
+        _ => Box::new(segmented::Segmented::default()),
     }
 }
 
