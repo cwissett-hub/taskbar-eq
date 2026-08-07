@@ -307,6 +307,18 @@ impl Canvas {
             'M' => [0b101, 0b111, 0b111, 0b101, 0b101],
             'D' => [0b110, 0b101, 0b101, 0b101, 0b110],
             'B' => [0b110, 0b101, 0b110, 0b101, 0b110],
+            // Added for the radar warning receiver's threat designators, which annotate a contact
+            // the way a real RWR does - numerals for the SA-series, letters for the named systems.
+            //
+            // Only letters that stay UNAMBIGUOUS in a 3x5 cell are here, which is the rule this font
+            // was built on. Three obvious candidates are deliberately absent: 'S' is pixel-identical
+            // to '5' at this size, 'T' differs from 'I' only in its bottom row, and 'N' has no
+            // 3-wide form that does not read as 'D' or 'M'. A designator that can be misread is worse
+            // than one that is not offered, so those systems are simply not in the default table.
+            'A' => [0b010, 0b101, 0b111, 0b101, 0b101],
+            'U' => [0b101, 0b101, 0b101, 0b101, 0b111],
+            'F' => [0b111, 0b100, 0b111, 0b100, 0b100],
+            'P' => [0b111, 0b101, 0b111, 0b100, 0b100],
             '1' => [0b010, 0b110, 0b010, 0b010, 0b111],
             '2' => [0b111, 0b001, 0b111, 0b100, 0b111],
             '3' => [0b111, 0b001, 0b111, 0b001, 0b111],

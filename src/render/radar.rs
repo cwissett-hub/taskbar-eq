@@ -78,8 +78,12 @@ const COL_PITCH: f32 = 5.75;
 ///
 /// Capped at four times the reference count so the persistence buffers stay bounded; the cap holds
 /// the pitch out to about 740px, well past the widest overlay rect ever observed.
-fn column_count(w: i32) -> usize {
-    ((field_w(w) as f32 / COL_PITCH).round() as usize).clamp(8, CELLS * 4)
+///
+/// Takes the height and the warning-receiver flag because the scope eats width the field would
+/// otherwise have had: with the RWR on at 190px the field keeps 24 columns rather than 32. The PITCH
+/// is what must not move, and it does not - see the width test.
+fn column_count(w: i32, h: i32, rwr: bool) -> usize {
+    ((field_w(w, h, rwr) as f32 / COL_PITCH).round() as usize).clamp(8, CELLS * 4)
 }
 
 /// Milliseconds for the sweep to cross the whole field.
@@ -168,6 +172,10 @@ const BASS_FALL_MS: f32 = 300.0;
 /// among them.
 const HIT_RANGE: f32 = 0.14;
 
+/// Bands the low-energy centroid is measured over. See `low_centroid`.
+#[cfg(test)]
+const LOW_BANDS: usize = 12;
+
 /// Blip half-width as a fraction of the column pitch.
 ///
 /// 0.42 of 5.75px is 2.4px, which leaves a 1px gap between the returns of two neighbouring
@@ -203,9 +211,30 @@ struct Field {
     h: i32,
 }
 
-/// Field width alone, because `column_count` needs it before there is a height to speak of.
-fn field_w(w: i32) -> i32 {
+/// The whole panel interior the display has to divide up, before the scope takes its share.
+fn usable_w(w: i32) -> i32 {
     (w - 6).max(1)
+}
+
+/// Field height. The scope is sized from this, so it has to be available before the field exists.
+fn field_h(h: i32) -> i32 {
+    (h - 10).max(2)
+}
+
+/// Width the warning receiver takes, including its gap to the field.
+///
+/// 0 when the colourway has it off, and also 0 when the panel is too narrow or too short for it -
+/// `rwr::width_for` gives up rather than starving the spectrum, so no width is special-cased here.
+fn scope_w(w: i32, h: i32, rwr: bool) -> i32 {
+    if !rwr {
+        return 0;
+    }
+    super::rwr::width_for(usable_w(w), h, COL_PITCH)
+}
+
+/// Field width alone, because `column_count` needs it before there is a `Field` to speak of.
+fn field_w(w: i32, h: i32, rwr: bool) -> i32 {
+    (usable_w(w) - scope_w(w, h, rwr)).max(1)
 }
 
 /// The field for a given panel, inset from the panel's own rounded rect.
@@ -214,8 +243,14 @@ fn field_w(w: i32) -> i32 {
 /// and right frame lines (drawn one pixel further out again) to clear the rounded corners at
 /// radius 4. Two rows are left below the datum so the datum reads as a baseline with the panel
 /// under it rather than as the bottom bezel.
-fn field(w: i32, h: i32) -> Field {
-    Field { x: 3, y: 5, w: field_w(w), h: (h - 10).max(2) }
+///
+/// The left inset grows by the scope's width when the warning receiver is on: the sweep field gives
+/// up its left end, keeping its own pitch and its own full height. Shrinking the field's HEIGHT to
+/// make room instead was the alternative and it is worse twice over - range is the sweep field's
+/// audio axis, so shortening it costs the display's resolution rather than its extent, and a scope
+/// wide enough to matter would have had to be an ellipse.
+fn field(w: i32, h: i32, rwr: bool) -> Field {
+    Field { x: 3 + scope_w(w, h, rwr), y: 5, w: field_w(w, h, rwr), h: field_h(h) }
 }
 
 /// Pixel column for a (possibly fractional) position in column units.
@@ -279,6 +314,20 @@ pub struct Radar {
     /// fired rather than following the sweep - a return does not move because the antenna did.
     hit: f32,
     hit_pos: f32,
+    /// The warning receiver at the left of the panel. Fed from the same transient detector as `hit`,
+    /// which is the point: one onset opinion, two displays reading it differently.
+    rwr: super::rwr::Rwr,
+    /// Last frame's rise above the slew-limited bass average, so a probe can measure on real music
+    /// what the detector actually reports rather than re-deriving it and calibrating against a copy.
+    #[cfg(test)]
+    last_excess: f32,
+    /// Companion to `last_excess`: where the low energy sat, and which single band led it. Both are
+    /// recorded so a probe can ask which of the two makes a better bearing cue on real music instead
+    /// of assuming, which is how the bearing ended up stuck in one quadrant.
+    #[cfg(test)]
+    last_centroid: f32,
+    #[cfg(test)]
+    last_argmax: usize,
 }
 
 impl Radar {
@@ -320,6 +369,44 @@ impl Radar {
         (((level - RESP_FLOOR) / RESP_SPAN) * sensitivity.max(0.0)).clamp(0.0, 1.0)
     }
 
+    /// Where in the low region the energy sits, 0..1.
+    ///
+    /// **Nothing shipped reads this any more, and that is the point of keeping it.** It WAS the warning
+    /// receiver's bearing and designator cue, and `probe_rwr_rates` measures it to record why it is
+    /// not: on real music the value spans 0.527..0.604 at contact moments - 8% of a circle - which put
+    /// every contact in one quadrant and made the designator flicker across a quantisation boundary.
+    /// Deleting it would delete the evidence, and the next person to reach for "key the bearing to the
+    /// spectrum" should be able to re-run the measurement rather than re-ship the bug.
+    ///
+    /// A level-weighted centroid of the lowest twelve bands, which is four more than the detector
+    /// itself watches. Deliberately: the detector only has to decide THAT an onset happened, and it
+    /// uses the peak of the lowest eight for that, while the bearing has to say something about the
+    /// SHAPE of the low end - and over eight bands a 40Hz kick and an 80Hz one land close enough
+    /// together that the scope showed one bearing for everything. Twelve bands spread them.
+    ///
+    /// Returns the midpoint when there is nothing to weigh, so silence points a contact dead ahead
+    /// rather than snapping it to a limit. Nothing spawns at silence anyway; this is only so the
+    /// value is never a lie.
+    #[cfg(test)]
+    fn low_centroid(d: &FrameData) -> f32 {
+        let hi = LOW_BANDS.min(d.levels.len());
+        if hi < 2 {
+            return 0.5;
+        }
+        let mut num = 0.0f32;
+        let mut den = 0.0f32;
+        for (i, v) in d.levels[..hi].iter().enumerate() {
+            if v.is_finite() && *v > 0.0 {
+                num += i as f32 * *v;
+                den += *v;
+            }
+        }
+        if den <= 0.0 {
+            return 0.5;
+        }
+        (num / den / (hi - 1) as f32).clamp(0.0, 1.0)
+    }
+
     /// Peak of the lowest bands, for the transient detector.
     fn bass_of(d: &FrameData) -> f32 {
         let hi = 8.min(d.levels.len());
@@ -352,9 +439,22 @@ impl Family for Radar {
         }
         c.rounded_rect(1, 2, w - 2, h - 4, 4, panel);
 
-        let f = field(w, h);
-        let cols = column_count(w);
+        // The warning receiver is a per-colourway element, and everything downstream of it is
+        // geometry: whether it is on decides where the sweep field starts and therefore how many
+        // columns the spectrum gets. Resolved once, here, so the two can never disagree.
+        let use_rwr = t.radar.rwr;
+        let f = field(w, h, use_rwr);
+        let cols = column_count(w, h, use_rwr);
         let col_w = f.w as f32 / cols as f32;
+        // Both conditions are load-bearing. `scope()` only refuses when the panel is too SHORT for a
+        // circle, while `scope_w` also refuses when the field would be left too narrow - and it is
+        // `scope_w` that decided where the field starts. Dropping the width check here would draw the
+        // scope at x = 3 on a narrow panel where the field also starts at x = 3, i.e. on top of it.
+        let scope = if use_rwr && scope_w(w, h, true) > 0 {
+            super::rwr::scope(3, h)
+        } else {
+            None
+        };
 
         // ---- timing ----
         //
@@ -473,11 +573,31 @@ impl Family for Radar {
         if !self.bass_avg.is_finite() {
             self.bass_avg = 0.0;
         }
-        if bass - self.bass_avg > BASS_RISE {
+        // Captured BEFORE the average moves, and shared with the warning receiver. One detector
+        // feeding both displays is the whole reason the scope has no threshold of its own: this
+        // project already carries two independently-written onset detectors, and a third would have
+        // been a third chance to ship a threshold that never fires.
+        let excess = bass - self.bass_avg;
+        #[cfg(test)]
+        {
+            self.last_excess = excess;
+            self.last_centroid = Self::low_centroid(d);
+            self.last_argmax = d.levels[..8.min(d.levels.len())]
+                .iter()
+                .enumerate()
+                .filter(|(_, v)| v.is_finite())
+                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+        }
+        if excess > BASS_RISE {
             self.hit = 1.0;
             self.hit_pos = self.pos;
         }
         self.bass_avg += (bass - self.bass_avg) * 0.22;
+        if scope.is_some() {
+            self.rwr.update(dt, excess, BASS_RISE, t.radar.launch);
+        }
 
         // ---- the grid ----
         //
@@ -541,6 +661,12 @@ impl Family for Radar {
         while k < cols {
             c.fill_rect(col_x(f, cols, k as f32), datum - 2, 1, 2, ink);
             k += tstep;
+        }
+
+        // The warning receiver's graticule, in the SAME two inks as the field's - so the two halves
+        // of the panel read as one instrument rather than two pasted together.
+        if let Some(s) = scope {
+            self.rwr.print(c, s, ink, ink_faint);
         }
 
         // ---- light ----
@@ -621,6 +747,11 @@ impl Family for Radar {
         // eye can pick up immediately, which is what makes the wrap read as a wrap.
         lit.fill_rect(sweep_x, f.y, 1, f.h + 1, Rgba::from_hex(hot, 0.95));
 
+        // Threat contacts and the launch flash, on the same light layer so they bloom with the rest.
+        if let Some(s) = scope {
+            self.rwr.light(&mut lit, t, s, &t.radar.codes);
+        }
+
         if t.bloom > 0.0 {
             let mut halo = lit.clone();
             halo.bloom(t.bloom.max(0.0) as i32, t.glow_strength.clamp(0.0, 1.0));
@@ -699,9 +830,9 @@ mod tests {
     /// print - so an unmasked probe would silently stop measuring the data and start measuring the
     /// graticule as soon as the frame count, `fade` or `SWEEP_MS` moved. That is the class of
     /// failure this project keeps catching after the fact, so the mask goes in now.
-    fn peak_range(c: &Canvas, w: i32, h: i32, cell: usize) -> f32 {
-        let f = field(w, h);
-        let cols = column_count(w);
+    fn peak_range(c: &Canvas, t: &Theme, w: i32, h: i32, cell: usize) -> f32 {
+        let f = field(w, h, t.radar.rwr);
+        let cols = column_count(w, h, t.radar.rwr);
         let x = col_x(f, cols, cell as f32 + 0.5);
         let print: Vec<i32> = RANGE_LINES.iter().map(|r| range_y(f, *r)).collect();
         let mut best = (0.0f64, -1.0f32);
@@ -799,7 +930,7 @@ mod tests {
         let mut r = Radar::default();
         let mut c = Canvas::new(190, 60);
         let d = flat(0.4);
-        let cols = column_count(190) as f32;
+        let cols = column_count(190, 60, t.radar.rwr) as f32;
 
         r.draw(&mut c, &t, &d);
         let (mut min_pos, mut max_pos) = (r.pos, r.pos);
@@ -835,11 +966,12 @@ mod tests {
         // The defining behaviour: the picture is BUILT UP over a pass rather than redrawn. A fresh
         // display must have empty columns, and a settled one must have none.
         let t = builtin::radar_p1();
+        let cols = column_count(190, 60, t.radar.rwr);
         let (fresh, _) = run(&t, &uneven(4..9, 0.62, 0.18), 190, 60, 6);
         let painted = fresh.glow.iter().filter(|g| **g > 0.01).count();
         assert!(
-            painted < CELLS / 2,
-            "after 6 frames most columns should still be unpainted, {painted} of {CELLS} are lit"
+            painted < cols / 2,
+            "after 6 frames most columns should still be unpainted, {painted} of {cols} are lit"
         );
 
         let (settled, _) = run(&t, &uneven(4..9, 0.62, 0.18), 190, 60, 100);
@@ -856,7 +988,11 @@ mod tests {
         // different columns - so it cannot pass on a display that only changes colour, and it
         // cannot pass on a flat spectrum either.
         let t = builtin::radar_p1();
-        let (r, c) = run(&t, &uneven(4..8, 0.62, 0.17), 190, 60, 200);
+        // 220 frames, not 200: with the warning receiver taking the left of the panel the field has
+        // 23 columns rather than 32, so the sweep is fewer COLUMNS along at the same elapsed time and
+        // at 200 frames it sat within the trail's reach of probe column 5. The guard below is what
+        // caught that, which is why it is an assertion rather than a comment.
+        let (r, c) = run(&t, &uneven(4..8, 0.62, 0.17), 190, 60, 220);
         // Both probes must sit clear of the sweep and its wash, which run the full height of the
         // field and would swamp the measurement. The wash is BEHIND the sweep, i.e. at lower
         // columns, so a probe is safe if it is either well ahead or more than TRAIL_CELLS behind.
@@ -868,8 +1004,8 @@ mod tests {
                 r.pos
             );
         }
-        let loud = peak_range(&c, 190, 60, 5);
-        let quiet = peak_range(&c, 190, 60, 1);
+        let loud = peak_range(&c, &t, 190, 60, 5);
+        let quiet = peak_range(&c, &t, 190, 60, 1);
         assert!(
             loud > quiet + 0.25,
             "a loud column's blip must sit clearly higher: loud {loud:.2} vs quiet {quiet:.2}"
@@ -882,14 +1018,19 @@ mod tests {
 
     #[test]
     fn the_audio_actually_changes_the_pixels() {
-        // Whole-canvas, so it catches a family that draws its grid and sweep and ignores the
-        // spectrum entirely.
+        // Summed over the FIELD, not the whole canvas, and the difference is not cosmetic: this used
+        // to be a whole-canvas sum and it measured 1.12x once the warning receiver arrived, against a
+        // 1.15x requirement. Nothing had regressed - the scope is a quarter of the panel and, on a
+        // held flat level with no transients in it, contributes a constant print pedestal that
+        // dilutes the ratio. Measuring the region the assertion actually talks about is the tighter
+        // test, and the scope's own response is asserted separately below.
         let t = builtin::radar_p1();
         let total = |d: &FrameData| -> f64 {
             let (_, c) = run(&t, d, 190, 60, 100);
+            let f = field(190, 60, t.radar.rwr);
             let mut sum = 0.0;
-            for y in 0..60 {
-                for x in 0..190 {
+            for y in f.y..=(f.y + f.h) {
+                for x in f.x..(f.x + f.w) {
                     sum += lum(c.get(x, y));
                 }
             }
@@ -911,9 +1052,10 @@ mod tests {
         // A flat spectrum on purpose: every column was painted from the same level, so any
         // difference between them is the decay and nothing else.
         let t = builtin::radar_p1();
+        let cols = column_count(190, 60, t.radar.rwr);
         let (r, _) = run(&t, &flat(0.5), 190, 60, 200);
-        let behind = (r.pos.floor() as usize).min(CELLS - 1);
-        let ahead = (behind + 3) % CELLS;
+        let behind = (r.pos.floor() as usize).min(cols - 1);
+        let ahead = (behind + 3) % cols;
         assert!(
             r.glow[behind] > r.glow[ahead] * 1.5,
             "the column just swept must out-glow one swept a pass ago: {} vs {}",
@@ -937,8 +1079,8 @@ mod tests {
         // asymmetry near the sweep is the wash itself.
         let t = builtin::radar_p1();
         let (r, c) = run(&t, &flat(0.45), 190, 60, 200);
-        let f = field(190, 60);
-        let cols = column_count(190);
+        let f = field(190, 60, t.radar.rwr);
+        let cols = column_count(190, 60, t.radar.rwr);
         let sx = col_x(f, cols, r.pos);
         // Well inside the field, so neither sample falls off the end.
         assert!(sx - 12 > f.x && sx + 12 < f.x + f.w, "the sweep is too near an edge at {sx}");
@@ -983,8 +1125,8 @@ mod tests {
         assert!(r_hit.hit > 0.5, "a bass jump must fire the transient, got {}", r_hit.hit);
         assert!(r_no.hit < 0.05, "a steady bass must not fire it, got {}", r_no.hit);
 
-        let f = field(190, 60);
-        let cols = column_count(190);
+        let f = field(190, 60, t.radar.rwr);
+        let cols = column_count(190, 60, t.radar.rwr);
         let (hx, hy) = plot(f, cols, r_hit.hit_pos, HIT_RANGE);
         // It has to be CLOSE IN, or it is just another blip: below every band return.
         assert!(
@@ -1005,6 +1147,62 @@ mod tests {
         assert!(
             with > without + 400.0,
             "the transient must put real light close in: {without:.0} -> {with:.0}"
+        );
+    }
+
+    #[test]
+    fn a_bass_transient_puts_a_contact_on_the_warning_receiver() {
+        // The scope's own tests drive its state directly. This one goes through the family's `draw`,
+        // so it additionally proves the scope is COMPOSITED - a state test cannot tell the difference
+        // between a contact that was received and one that was received and then never drawn.
+        let t = builtin::radar_p1();
+        let steady = flat(0.10);
+        let mut kick = flat(0.10);
+        for v in &mut kick.levels[..8] {
+            *v = 0.85;
+        }
+        // Identical run in both cases bar the last three frames, so the graticule and everything
+        // else printed inside the scope is the same and the difference measured is the contact alone.
+        let render = |hit: bool| -> Canvas {
+            let mut r = Radar::default();
+            let mut c = Canvas::new(190, 60);
+            for _ in 0..100 {
+                r.draw(&mut c, &t, &steady);
+            }
+            for _ in 0..3 {
+                r.draw(&mut c, &t, if hit { &kick } else { &steady });
+            }
+            c
+        };
+        let s = super::super::rwr::scope(3, 60)
+            .expect("the reference panel must carry a scope");
+        // Strictly INSIDE the outer ring, so the printed ring itself is not part of the measurement.
+        let inside = |c: &Canvas| -> f64 {
+            let mut sum = 0.0;
+            for dy in -s.r..=s.r {
+                for dx in -s.r..=s.r {
+                    if dx * dx + dy * dy < (s.r - 2) * (s.r - 2) {
+                        sum += lum(c.get(s.cx + dx, s.cy + dy));
+                    }
+                }
+            }
+            sum
+        };
+        let (with, without) = (inside(&render(true)), inside(&render(false)));
+        assert!(
+            with > without + 300.0,
+            "the transient must put light on the scope: {without:.0} -> {with:.0}"
+        );
+
+        // And the colourway's flag has to actually switch it off, or "per-colourway" is a lie.
+        let mut off = builtin::radar_p1();
+        off.radar.rwr = false;
+        let (_, plain) = run(&off, &kick, 190, 60, 103);
+        let (_, scoped) = run(&t, &kick, 190, 60, 103);
+        assert_ne!(plain.bits(), scoped.bits(), "the rwr flag changed nothing about the render");
+        assert!(
+            field(190, 60, false).x < field(190, 60, true).x,
+            "with the scope off the field must reclaim the left of the panel"
         );
     }
 
@@ -1044,38 +1242,72 @@ mod tests {
 
     #[test]
     fn a_wide_panel_adds_columns_instead_of_fattening_them() {
-        assert_eq!(column_count(190), CELLS, "the reference panel keeps the tuned column count");
-        assert!(column_count(380) >= CELLS * 2, "double the width must buy double the resolution");
-        assert!(column_count(4000) <= CELLS * 4, "capped, or the buffers grow without bound");
-        // Column pitch is the thing that must not drift: it is what sets the blip width and the
-        // separation between neighbouring returns. The fan's face-count version of this stepped
-        // once per whole panel width, so 240px (150% DPI) stretched to a 7.31px pitch.
-        let pitch = |w: i32| field(w, 60).w as f32 / column_count(w) as f32;
-        for w in [190, 200, 240, 300, 380, 456, 600, 740] {
-            let p = pitch(w);
-            assert!(
-                (p - COL_PITCH).abs() < 0.2,
-                "at width {w} the column pitch drifted to {p:.2} from the tuned {COL_PITCH:.2}"
-            );
+        // Both modes, because the warning receiver takes width off the field and the invariant that
+        // has to survive it is the PITCH, not the column count.
+        for rwr in [false, true] {
+            // Column pitch is the thing that must not drift: it is what sets the blip width and the
+            // separation between neighbouring returns. The fan's face-count version of this stepped
+            // once per whole panel width, so 240px (150% DPI) stretched to a 7.31px pitch.
+            let pitch = |w: i32| field(w, 60, rwr).w as f32 / column_count(w, 60, rwr) as f32;
+            for w in [190, 200, 240, 300, 380, 456, 600, 740] {
+                let p = pitch(w);
+                assert!(
+                    (p - COL_PITCH).abs() < 0.2,
+                    "rwr={rwr}: at width {w} the pitch drifted to {p:.2} from the tuned {COL_PITCH:.2}"
+                );
+            }
+            // The printed grid is spaced in pixels for the same reason, and it is the part that is
+            // easy to get wrong: a step counted in COLUMNS looks identical at the reference size and
+            // comes out at half the density in wide mode.
+            for w in [190, 240, 380, 456] {
+                let cw = pitch(w);
+                let spacing = (GRID_PX / cw).round().max(1.0) * cw;
+                assert!(
+                    (spacing - GRID_PX).abs() < 1.5,
+                    "rwr={rwr}: at {w}px bearing lines land {spacing:.1}px apart, not {GRID_PX:.0}px"
+                );
+            }
+            // Monotonic WITHIN a mode, so a wider panel never shows less of the spectrum than a
+            // narrower one at the same setting.
+            //
+            // Across the scope switching on it is NOT monotonic and cannot be: the scope costs a fixed
+            // ~57px, so at the first width where it fits, the field loses ten columns it had one pixel
+            // earlier. There is no threshold that avoids that - the drop is the scope's width divided
+            // by the pitch, whatever width it happens at - so the honest property is this one, plus
+            // the assertion below that the two sizes actually shipped both keep a usable field.
+            let mut prev = 0;
+            let mut prev_has_scope = None;
+            for w in [96, 150, 190, 240, 380, 456, 600] {
+                // Whether the scope FITS is itself width-dependent, so even at rwr=true the sweep
+                // crosses the switch-on. Compare only across widths that agree about it.
+                let has = scope_w(w, 60, rwr) > 0;
+                let n = column_count(w, 60, rwr);
+                if prev_has_scope == Some(has) {
+                    assert!(n >= prev, "rwr={rwr}: count fell from {prev} to {n} at width {w}");
+                }
+                prev = n;
+                prev_has_scope = Some(has);
+            }
         }
-        // The printed grid is spaced in pixels for the same reason, and it is the part that is easy
-        // to get wrong: a step counted in COLUMNS looks identical at the reference size and comes
-        // out at half the density in wide mode.
-        for w in [190, 240, 380, 456] {
-            let cw = pitch(w);
-            let spacing = (GRID_PX / cw).round().max(1.0) * cw;
-            assert!(
-                (spacing - GRID_PX).abs() < 1.5,
-                "at width {w} the bearing lines land {spacing:.1}px apart, not {GRID_PX:.0}px"
-            );
+        // The widths this actually runs at. 190 is the default and 380 the doubled mode the config
+        // uses, and both must keep enough spectrum to be worth looking at.
+        for w in [190, 380] {
+            let n = column_count(w, 60, true);
+            assert!(n >= 20, "at the shipped width {w} the field is only {n} columns");
+            assert!(scope_w(w, 60, true) > 0, "no scope at {w}px");
         }
-        // Monotonic, so a wider panel never shows LESS of the spectrum than a narrower one.
-        let mut prev = 0;
-        for w in [96, 150, 190, 240, 380, 456, 600] {
-            let n = column_count(w);
-            assert!(n >= prev, "column count fell from {prev} to {n} at width {w}");
-            prev = n;
-        }
+        // With no scope the reference panel keeps the count the whole family was tuned at.
+        assert_eq!(column_count(190, 60, false), CELLS, "the reference panel keeps the tuned count");
+        assert!(column_count(380, 60, false) >= CELLS * 2, "double the width, double the resolution");
+        assert!(column_count(4000, 60, false) <= CELLS * 4, "capped, or the buffers grow unbounded");
+        // With it, the cost is real and bounded. It has to cost SOMETHING - a scope that took no
+        // width would not be drawn at all - but a third of the spectrum would be too much to give up.
+        let with = column_count(190, 60, true);
+        assert!(with < CELLS, "the scope must cost width, or it is not being drawn: {with}");
+        assert!(
+            with >= CELLS * 2 / 3,
+            "the scope took too much of the spectrum: {with} columns of {CELLS}"
+        );
     }
 
     #[test]
@@ -1092,7 +1324,7 @@ mod tests {
         d.peaks = d.levels;
         for w in [190, 380] {
             let (r, _) = run(&t, &d, w, 60, 220);
-            let cols = column_count(w);
+            let cols = column_count(w, 60, t.radar.rwr);
             let half = |lo: usize, hi: usize| -> f32 {
                 r.echo[lo..hi].iter().sum::<f32>() / (hi - lo) as f32
             };
@@ -1108,7 +1340,12 @@ mod tests {
     fn the_field_fills_the_panel_rather_than_wasting_its_corners() {
         // The whole reason the fan went. A 190x60 panel has 188x56 of interior and the elliptical
         // fan touched it only along the bottom centre; the rectangle must reach all four corners.
-        let f = field(190, 60);
+        // Measured with the warning receiver OFF, because that is what the claim is about: the
+        // sweep field ALONE has to fill the panel. With the scope on the panel is still fully
+        // occupied, but by two instruments, and a round instrument legitimately leaves its own
+        // corners as panel - which is why the pixel probe below is split by mode rather than
+        // relaxed to whatever both happen to pass.
+        let f = field(190, 60, false);
         assert!(f.x >= 2 && f.x + f.w <= 187, "the field must stay inside the panel: {} {}", f.x, f.w);
         assert!(
             f.w as f32 >= 188.0 * 0.95,
@@ -1124,18 +1361,39 @@ mod tests {
         // The TOP two are the discriminating ones - a half-fan rising from the bottom centre
         // reaches the bottom corners with its outer ring but cannot put anything at all in the top
         // corners, at any level, because they are outside the ellipse.
-        let t = builtin::radar_p1();
-        let (_, c) = run(&t, &uneven(0..CELLS, 0.6, 0.2), 190, 60, 120);
-        let panel = lum(Rgba::from_hex(&t.panel, 1.0));
-        for (x0, y0) in [(3, 4), (180, 4), (3, 49), (180, 49)] {
-            let best = (y0..y0 + 7)
+        let mut plain = builtin::radar_p1();
+        plain.radar.rwr = false;
+        let panel = lum(Rgba::from_hex(&plain.panel, 1.0));
+        let peak = |c: &Canvas, x0: i32, y0: i32| -> f64 {
+            (y0..y0 + 7)
                 .flat_map(|y| (x0..x0 + 7).map(move |x| (x, y)))
                 .map(|(x, y)| lum(c.get(x, y)))
-                .fold(0.0f64, f64::max);
+                .fold(0.0f64, f64::max)
+        };
+        let (_, c) = run(&plain, &uneven(0..CELLS, 0.6, 0.2), 190, 60, 120);
+        for (x0, y0) in [(3, 4), (180, 4), (3, 49), (180, 49)] {
             assert!(
-                best > panel + 6.0,
-                "the corner at ({x0},{y0}) is bare panel (peak {best:.1} vs panel {panel:.1})"
+                peak(&c, x0, y0) > panel + 6.0,
+                "the corner at ({x0},{y0}) is bare panel (peak {:.1} vs panel {panel:.1})",
+                peak(&c, x0, y0)
             );
+        }
+        // As the family actually ships, with the scope on: the RIGHT corners are still the field's,
+        // and the left third has to carry the scope's own ring at its top and bottom rather than
+        // being dead space.
+        let t = builtin::radar_p1();
+        let (_, c) = run(&t, &uneven(0..CELLS, 0.6, 0.2), 190, 60, 120);
+        for (x0, y0) in [(180, 4), (180, 49)] {
+            assert!(
+                peak(&c, x0, y0) > panel + 6.0,
+                "with the scope on, the field corner at ({x0},{y0}) went bare"
+            );
+        }
+        let s = super::super::rwr::scope(3, 60)
+            .expect("the reference panel must carry a scope");
+        for y in [s.cy - s.r, s.cy + s.r] {
+            let best = ((s.cx - 3)..=(s.cx + 3)).map(|x| lum(c.get(x, y))).fold(0.0f64, f64::max);
+            assert!(best > panel + 4.0, "the scope's ring is missing at row {y} (peak {best:.1})");
         }
     }
 
@@ -1204,6 +1462,126 @@ mod tests {
         assert_eq!(seen.len(), 5, "expected the five radar colourways, got {}", seen.len());
     }
 
+    /// 8 seconds of real music, captured with `--levels` and committed as a fixture.
+    fn real_music() -> Vec<Vec<f32>> {
+        include_str!("../../tests/fixtures/real-music-bands.csv")
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| l.split(',').filter_map(|v| v.parse::<f32>().ok()).collect())
+            .collect()
+    }
+
+    /// What the detector actually reports on real music, and what that means for the launch rate.
+    ///
+    /// Run: cargo test --release probe_rwr_rates -- --ignored --nocapture
+    ///
+    /// This exists because the first cut scaled the strength by `rise * 3`, i.e. saturating at an
+    /// excess of 0.22, and a synthetic fixture made that look sane. It is not: this project has
+    /// already shipped one transient threshold that could not fire on real music at all (see the
+    /// vaporwave lightning note), and the mirror-image mistake - one that fires on EVERYTHING - is
+    /// just as easy. So the excess distribution is measured, and the span is read off it.
+    #[test]
+    #[ignore]
+    fn probe_rwr_rates() {
+        let frames = real_music();
+        let secs = frames.len() as f32 * 16.7 / 1000.0;
+        let t = builtin::radar_p1();
+        let mut r = Radar::default();
+        let mut c = Canvas::new(190, 60);
+        let mut excess = Vec::new();
+        let mut cent = Vec::new();
+        let mut argmax = Vec::new();
+        for row in &frames {
+            let mut d = FrameData::default();
+            for (i, x) in d.levels.iter_mut().enumerate() {
+                *x = row.get(i).copied().unwrap_or(0.0);
+            }
+            d.peaks = d.levels;
+            r.draw(&mut c, &t, &d);
+            excess.push(r.last_excess);
+            cent.push(r.last_centroid);
+            argmax.push(r.last_argmax);
+        }
+        let mut sorted: Vec<f32> = excess.iter().copied().filter(|e| e.is_finite()).collect();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let pct = |p: f32| sorted[((sorted.len() - 1) as f32 * p) as usize];
+        println!("{} frames, {secs:.1}s of music", frames.len());
+        println!(
+            "  excess percentiles: p50 {:.3}  p90 {:.3}  p99 {:.3}  max {:.3}",
+            pct(0.50),
+            pct(0.90),
+            pct(0.99),
+            sorted[sorted.len() - 1]
+        );
+        let contacts = excess.iter().filter(|e| **e > BASS_RISE).count();
+        println!("  contacts fired: {contacts} ({:.2}/s)", contacts as f32 / secs);
+
+        // WHERE the bearing cue actually points. The live overlay put every contact in the top-right
+        // quadrant with the same designator on every one, which means the quantity driving both is
+        // barely moving - so measure its spread rather than assume a window for it.
+        let fired: Vec<usize> =
+            (0..excess.len()).filter(|i| excess[*i] > BASS_RISE).collect();
+        let mut cs: Vec<f32> = fired.iter().map(|i| cent[*i]).collect();
+        cs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        if !cs.is_empty() {
+            println!(
+                "  centroid AT CONTACTS: min {:.3}  p25 {:.3}  p50 {:.3}  p75 {:.3}  max {:.3}  (spread {:.3})",
+                cs[0],
+                cs[cs.len() / 4],
+                cs[cs.len() / 2],
+                cs[cs.len() * 3 / 4],
+                cs[cs.len() - 1],
+                cs[cs.len() - 1] - cs[0]
+            );
+        }
+        let mut hist = [0usize; 8];
+        for i in &fired {
+            hist[argmax[*i].min(7)] += 1;
+        }
+        println!("  leading band AT CONTACTS: {hist:?}  (bands 0..8)");
+        let distinct = hist.iter().filter(|n| **n > 0).count();
+        println!("  -> centroid spread would use {:.0}% of a circle, leading band gives {distinct} of 8 discrete bearings",
+            (cs.last().copied().unwrap_or(0.0) - cs.first().copied().unwrap_or(0.0)) * 100.0);
+        // Where those contacts would sit on the scope. A range cue that pins everything to the rim
+        // is dead, and that is exactly what a launch-sized span does to it.
+        for span in [0.08f32, 0.12, 0.22, 0.60] {
+            let mut at_rim = 0;
+            let mut mid = 0;
+            let mut core = 0;
+            for e in excess.iter().filter(|e| **e > BASS_RISE) {
+                let k = ((*e - BASS_RISE) / span).clamp(0.0, 1.0);
+                if k < 0.2 {
+                    at_rim += 1;
+                } else if k < 0.8 {
+                    mid += 1;
+                } else {
+                    core += 1;
+                }
+            }
+            println!("  range span {span:.2}: rim {at_rim}  mid {mid}  core {core} (of {contacts})");
+        }
+        // A contact is only re-armed after the previous one decays, so the FRAME count above
+        // overstates what reaches the scope; what matters for rarity is the ordering of the rates.
+        for span in [0.10f32, 0.16, 0.22, 0.30, 0.45, 0.60] {
+            let rate = |at: f32| -> f32 {
+                let n = excess
+                    .iter()
+                    .filter(|e| {
+                        e.is_finite() && ((**e - BASS_RISE) / span).clamp(0.0, 1.0) >= at
+                    })
+                    .count();
+                n as f32 / secs
+            };
+            println!(
+                "  span {span:.2}: launches/s at threshold 0.40 {:.2}  0.55 {:.2}  0.70 {:.2}  0.85 {:.2}",
+                rate(0.40),
+                rate(0.55),
+                rate(0.70),
+                rate(0.85)
+            );
+        }
+    }
+
     /// Run: cargo test --release dump_radar_frames -- --ignored --nocapture
     #[test]
     #[ignore]
@@ -1252,8 +1630,83 @@ mod tests {
         // that is invisible at the reference size.
         let (_, wide) = run(&t, &d, 380, 60, 100);
         dump(&wide, "radar-wide-p1.rgba");
+
+        // The warning receiver needs TRANSIENTS to have anything on it, and the static spectrum
+        // above has none - a held level settles the detector's average and the scope goes empty,
+        // which would make an eyeball dump of it look broken when it is working exactly as designed.
+        // So this drives a groove: a kick every 500ms, one of them hard enough to launch.
+        // The low bands are damped for this fixture, and that is not cosmetic. `d` above is a
+        // display-shape spectrum whose lowest bands already peak near 0.77, so a kick laid on top of
+        // it produced NO rise at all - the detector watches the peak of bands 0..8 and it was already
+        // there. The first version of this dump came out with an empty scope for exactly that reason,
+        // and it looked like a broken feature rather than a broken fixture.
+        // 0.02, not 0.12. The centroid is a level-weighted mean over twelve bands, so a high floor
+        // DOMINATES it: at 0.12 the five kicks below produced centroids 0.44-0.51, a spread of 0.07
+        // against a merge window of 0.072, and every beat merged into one contact. A near-silent floor
+        // lets the kick decide where the energy is, which is the whole premise of the bearing cue.
+        let mut base = d.levels;
+        for v in &mut base[..12] {
+            *v = 0.02;
+        }
+        let beat = |th: &Theme, r: &mut Radar, c: &mut Canvas, frames: usize, hard_at: usize| {
+            for i in 0..frames {
+                let mut f = FrameData::default();
+                f.levels = base;
+                // A kick every 30 frames (~500ms, 120bpm), two frames long.
+                if i % 30 < 2 {
+                    let b = i / 30;
+                    // Amplitudes chosen against the measured spans: an excess of 0.06-0.11 over the
+                    // floor spreads ordinary contacts from the rim to mid-scope, and the hard one
+                    // clears LAUNCH_SPAN outright.
+                    let amp = if b == hard_at { 0.90 } else { [0.08, 0.11, 0.09, 0.13, 0.10][b % 5] };
+                    // Each kick sits in a DIFFERENT part of the low band, so the centroid moves and
+                    // successive beats land at different bearings with different designators. A
+                    // fixture that kicked the same bands every beat exercised the merge rule instead
+                    // and put exactly one contact on the scope - which also looks like a bug and is
+                    // not one. Kept inside bands 0..8, which is the window the detector watches.
+                    let o = [0usize, 5, 2, 4, 1, 3][b % 6];
+                    for v in &mut f.levels[o..(o + 3).min(8)] {
+                        *v = amp;
+                    }
+                }
+                f.peaks = f.levels;
+                r.draw(c, th, &f);
+            }
+        };
+        // Frame 92 is two frames after the hard kick at beat 3, so the launch ring is still fresh.
+        let mut r = Radar::default();
+        let mut c = Canvas::new(190, 60);
+        beat(&t, &mut r, &mut c, 92, 3);
+        dump(&c, "radar-rwr-launch-p1.rgba");
+        // No hard beat at all (hard_at is past the run), five beats in, so the scope is holding
+        // several ordinary contacts and every one shows its designator. This is the frame that says
+        // whether the labels are legible at 45px.
+        let mut r = Radar::default();
+        let mut c = Canvas::new(190, 60);
+        beat(&t, &mut r, &mut c, 158, 99);
+        dump(&c, "radar-rwr-hold-p1.rgba");
+        // The same groove at the wide size, where the scope keeps its size and the field gets the
+        // extra width - the proportion is completely different and only a dump shows it.
+        let mut r = Radar::default();
+        let mut c = Canvas::new(380, 60);
+        beat(&t, &mut r, &mut c, 92, 3);
+        dump(&c, "radar-rwr-wide-p1.rgba");
+        // With the scope switched off, for the side-by-side that decides whether its width is
+        // worth eight columns of spectrum.
+        let mut plain = builtin::radar_p1();
+        plain.radar.rwr = false;
+        let (_, off) = run(&plain, &d, 190, 60, 100);
+        dump(&off, "radar-rwr-off-p1.rgba");
+        // One more colourway with the scope, since the rings and contacts are drawn in the
+        // colourway's own two inks and alert is the most saturated of the five.
+        let alert = builtin::radar_alert();
+        let mut r = Radar::default();
+        let mut c = Canvas::new(190, 60);
+        beat(&alert, &mut r, &mut c, 92, 3);
+        dump(&c, "radar-rwr-launch-alert.rgba");
+
         println!(
-            "wrote {} radar dumps (190x60) + flyback + 1 wide (380x60) to {}",
+            "wrote {} radar dumps (190x60) + flyback + wide + 5 rwr dumps to {}",
             n,
             dir.display()
         );

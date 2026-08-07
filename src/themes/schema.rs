@@ -1,4 +1,4 @@
-use super::{FluidParams, ChromaParams, PantoneParams, Texture, Theme, TubeParams, VaporParams, Zone};
+use super::{FluidParams, ChromaParams, PantoneParams, RadarParams, Texture, Theme, TubeParams, VaporParams, Zone};
 use crate::dsp::ballistics::Ballistics;
 use serde::Deserialize;
 use std::fmt;
@@ -246,6 +246,29 @@ fn chroma_from(raw: Option<RawChroma>, d: ChromaParams) -> ChromaParams {
     }
 }
 
+/// The `[radar]` table. Structure parameters for the radar family; all optional. Names match
+/// `RadarParams` exactly and must not be renamed without bumping `schema`.
+#[derive(Deserialize, Default)]
+struct RawRadar {
+    rwr: Option<bool>,
+    launch: Option<f32>,
+    codes: Option<Vec<String>>,
+}
+
+fn radar_from(raw: Option<RawRadar>, d: RadarParams) -> RadarParams {
+    let Some(r) = raw else { return d };
+    RadarParams {
+        rwr: r.rwr.unwrap_or(d.rwr),
+        launch: r.launch.unwrap_or(d.launch),
+        // An empty list falls back to the default rather than leaving the scope unable to label
+        // anything: `codes = []` is much more likely to be a mistake than a request for blank marks.
+        codes: match r.codes {
+            Some(c) if !c.is_empty() => c,
+            _ => d.codes,
+        },
+    }
+}
+
 /// The `[fluid]` table. Tank, liquid and driver parameters; all optional, so a theme file
 /// overrides only what it cares about. Names match `FluidParams` exactly and must not be renamed
 /// without bumping `schema`.
@@ -321,6 +344,7 @@ struct RawTheme {
     tube: Option<RawTube>,
     fluid: Option<RawFluid>,
     chroma: Option<RawChroma>,
+    radar: Option<RawRadar>,
     pantone: Option<RawPantone>,
     #[serde(default)]
     zone: Vec<RawZone>,
@@ -414,6 +438,7 @@ pub fn parse(src: &str) -> Result<Theme, ThemeError> {
         tube: tube_from(raw.tube, d.tube),
         fluid: fluid_from(raw.fluid, d.fluid),
         chroma: chroma_from(raw.chroma, d.chroma),
+        radar: radar_from(raw.radar, d.radar),
         pantone: pantone_from(raw.pantone, d.pantone),
     })
 }

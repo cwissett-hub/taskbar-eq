@@ -8,6 +8,7 @@ pub mod fluid;
 pub mod pantone;
 pub mod banner;
 pub mod radar;
+pub mod rwr;
 pub mod text;
 pub mod reel;
 pub mod tube;

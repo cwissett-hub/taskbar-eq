@@ -598,6 +598,57 @@ impl Default for FluidParams {
     }
 }
 
+/// Radar-family structure parameters; inert for the other families.
+#[derive(Debug, Clone)]
+pub struct RadarParams {
+    /// Draw the radar warning receiver - the round scope at the left of the panel.
+    ///
+    /// On by default, because the scope was asked for and this is how it gets seen. It is a
+    /// per-colourway flag rather than a constant so the plain sweep field remains reachable: turning
+    /// it off in a `[radar]` table gives back the eight columns of spectrum resolution the scope
+    /// costs at 190px, which is a real trade and belongs to whoever is looking at it.
+    pub rwr: bool,
+    /// Transient strength, 0..1, at which a contact becomes a launch warning.
+    ///
+    /// The knob for how RARE the launch flash is - the requirement was "fairly rare, just for big
+    /// hits, but allow it to be tunable per theme so I can tune later to my taste".
+    ///
+    /// 0.70 rather than a guess: measured on `tests/fixtures/real-music-bands.csv` the detector fires
+    /// 1.97 contacts/s, and this threshold turns 0.23/s of them into launches - one every four
+    /// seconds, roughly one contact in eight. Raise it toward 1.0 for only the very biggest hits
+    /// (0.15/s on the same fixture), drop it to 0.40 to see it about two and a half times as often.
+    pub launch: f32,
+    /// Threat designators the scope annotates ordinary contacts with, low band to high.
+    ///
+    /// A real US/NATO warning receiver labels each contact with an alphanumeric identifying the
+    /// emitter: numerals for the SA-series surface-to-air systems (a `6` is an SA-6, a `10` an
+    /// SA-10), letters for the named ones. That convention is what this follows, and the default
+    /// below is a plausible mixed threat environment rather than any one aircraft's real table.
+    ///
+    /// A LIST rather than a constant because it is exactly the kind of thing worth substituting -
+    /// swap in a set from a particular airframe, or shorten it so codes repeat less. Index is chosen
+    /// from where the transient sat in the low band, so a given emitter always reports the same
+    /// designator, which is the entire point of a designator.
+    ///
+    /// Only characters the 3x5 font has will draw; anything else leaves a gap rather than failing, so
+    /// a hand-edited list cannot break the render. `S`, `T` and `N` are not available - see the note
+    /// in `canvas::glyph_3x5`.
+    pub codes: Vec<String>,
+}
+
+impl Default for RadarParams {
+    fn default() -> Self {
+        RadarParams {
+            rwr: true,
+            launch: 0.70,
+            codes: ["6", "8", "H", "10", "11", "P", "13", "A", "15", "M", "19", "R", "2", "U", "3"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Zone {
     pub upto: f32,
@@ -654,6 +705,8 @@ pub struct Theme {
     pub pantone: PantoneParams,
     /// Chroma-field-only print parameters; inert for the other families.
     pub chroma: ChromaParams,
+    /// Radar-only structure parameters; inert for the other families.
+    pub radar: RadarParams,
     /// Hue quantisation: 0 for a continuous wheel, N for N evenly spaced ink plates. See
     /// `quantise_hue`.
     pub inks: u32,
@@ -752,6 +805,7 @@ impl Default for Theme {
             sensitivity: 1.0,
             pantone: PantoneParams::default(),
             chroma: ChromaParams::default(),
+            radar: RadarParams::default(),
 inks: 0,
             ink_chroma: RAINBOW_SAT,
             // 0.0 by default so every existing colourway keeps its exact colours; the Pantone ones
