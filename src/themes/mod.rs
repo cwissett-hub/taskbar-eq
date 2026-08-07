@@ -406,9 +406,40 @@ pub struct ChromaParams {
     /// - at 1.24 the single-driven case only reaches 37px and the realistic case collapses to
     /// 12..25px, which is a field that moves without the pinch reading as a pinch.
     pub swell: f32,
-    /// Stripe saturation. 1.0 - full chroma - is the point of the family; the keylines are
-    /// what keep that legible. See `contrast_floor`.
+    /// Stripe chroma, as a fraction of the most sRGB holds at this `lightness` and hue.
+    ///
+    /// 1.0 - full chroma - is the point of the family. Note what it now means: the MAXIMUM AVAILABLE
+    /// at a fixed perceptual lightness, which is a different number for every hue. That is the honest
+    /// reading of "full chroma" once the ramp is perceptual, and it is much less than pure #0000ff for
+    /// the blues - deliberately, because pure blue is what made the field flicker in brightness and
+    /// what forced this family out of the 3:1 contrast rule. See `lightness`.
     pub sat: f32,
+    /// Perceptual lightness (OKLab L) the whole hue ramp is held at, 0..1.
+    ///
+    /// **Holding this constant is the fix for "the colours are not the most pleasing".** The ramp used
+    /// to be an HSV sweep at full saturation and value, which is uneven in two measurable ways: HSV hue
+    /// steps are not perceptually even, and lightness swings from L* 97 at yellow to L* 32 at blue, so
+    /// the field visibly flickered in brightness across its width. A constant-lightness ramp in OKLab
+    /// looks deliberate because every stripe carries the same weight and every hue step is the same
+    /// size.
+    ///
+    /// It also earns the contrast rule back. Because luminance no longer depends on hue, the worst case
+    /// is the same as the best case, and the family stops needing its `contrast_floor` opt-in - see
+    /// `render::chroma::tests::the_perceptual_ramp_holds_its_lightness_and_clears_the_contrast_rule`.
+    ///
+    /// Lower is deeper and more saturated (more chroma is available low down); higher is lighter and
+    /// necessarily softer. This is the main per-colourway character knob.
+    pub lightness: f32,
+    /// How much of each hue's NATURAL lightness to give back, 0..1.
+    ///
+    /// A perfectly flat ramp fixes the flicker and introduces one problem of its own: yellow's natural
+    /// lightness is near 0.97, so holding it down to a mid value is precisely what makes olive, and the
+    /// middle of the ramp went muddy. Visible on the first eyeball sheet at every flat lightness tried.
+    ///
+    /// 0 is dead flat. 1 restores the full natural variation, which is the HSV flicker back again. A
+    /// third or so keeps the field even enough to read as one weight while letting the yellows be
+    /// yellow - the same compress-don't-remove trick as any tone curve.
+    pub lightness_tilt: f32,
     /// Hue turns spanned left to right across the field, and the hue the left edge starts at.
     /// 0.85 from 0.0 runs red through to violet without wrapping back to red.
     pub hue_span: f32,
@@ -450,6 +481,8 @@ impl Default for ChromaParams {
             stripe_px: 18.0,
             swell: 4.0,
             sat: 1.0,
+            lightness: 0.72,
+            lightness_tilt: 0.35,
             hue_span: 0.85,
             hue_offset: 0.0,
             inks: Vec::new(),

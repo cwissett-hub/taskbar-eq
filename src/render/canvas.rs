@@ -37,6 +37,124 @@ impl Rgba {
         )
     }
 
+    /// Builds a colour from OKLCh - perceptual lightness, chroma, and hue in turns.
+    ///
+    /// **Why a second colour space exists here at all.** `from_hsv` above is what the chroma field
+    /// used, and an HSV sweep at full saturation and value has two defects that are measurable rather
+    /// than matters of taste, and that were reported as "the colours are not the most pleasing":
+    ///
+    /// - **Hue steps are not perceptually even.** HSV spends a huge span on yellow-green and compresses
+    ///   the blues, so an evenly spaced sweep does not look evenly spaced.
+    /// - **Lightness swings wildly.** Pure yellow sits near L* 97 and pure blue near L* 32, so a field
+    ///   painted across the hue circle flickers in brightness from one side to the other. That is also
+    ///   what forced this family to opt out of the project's 3:1 contrast rule: pure blue on a
+    ///   near-black panel manages only 2.36:1, and no panel colour fixes it.
+    ///
+    /// OKLab is near enough perceptually uniform that constant `l` really does look like constant
+    /// lightness and equal hue steps really do look equal. Holding `l` fixed across a ramp fixes both
+    /// defects at once - and because every hue then carries the same luminance, the contrast floor
+    /// stops depending on hue.
+    ///
+    /// Out-of-gamut combinations are REDUCED IN CHROMA, never clipped per channel: clipping a channel
+    /// shifts the hue, which would undo the evenness this is here to provide. See `oklch_max_chroma`.
+    pub fn from_oklch(l: f32, chroma: f32, hue_turns: f32, alpha: f32) -> Rgba {
+        let l = if l.is_finite() { l.clamp(0.0, 1.0) } else { 0.0 };
+        let h = if hue_turns.is_finite() { hue_turns.rem_euclid(1.0) } else { 0.0 };
+        let c = if chroma.is_finite() { chroma.max(0.0) } else { 0.0 };
+        let c = c.min(Self::oklch_max_chroma(l, h));
+        let (r, g, b) = Self::oklch_to_linear(l, c, h);
+        Rgba::new(
+            Self::encode_srgb(r),
+            Self::encode_srgb(g),
+            Self::encode_srgb(b),
+            (alpha.clamp(0.0, 1.0) * 255.0).round() as u8,
+        )
+    }
+
+    /// Largest chroma that stays inside sRGB at this lightness and hue.
+    ///
+    /// Bisection rather than an analytic boundary: the sRGB gamut in OKLab is a lumpy solid with no
+    /// closed form, and 18 halvings resolve chroma to about 1e-6, far finer than an 8-bit channel can
+    /// show. Called once per stripe per frame at most, so the cost is irrelevant.
+    ///
+    /// This is what makes "maximum chroma" a well-defined instruction. The chroma field's whole
+    /// identity is full chroma, and at a FIXED lightness full chroma is a different number for every
+    /// hue - much lower for blue than for yellow. Asking for more than the gamut holds and clipping
+    /// would silently desaturate some hues and shift others.
+    pub fn oklch_max_chroma(l: f32, hue_turns: f32) -> f32 {
+        let inside = |c: f32| {
+            let (r, g, b) = Self::oklch_to_linear(l, c, hue_turns);
+            let ok = |v: f32| (-0.0005..=1.0005).contains(&v);
+            ok(r) && ok(g) && ok(b)
+        };
+        if !inside(0.0) {
+            return 0.0;
+        }
+        // 0.45 is past the most chromatic colour sRGB holds in OKLab, so the bracket always contains
+        // the boundary.
+        let (mut lo, mut hi) = (0.0f32, 0.45f32);
+        for _ in 0..18 {
+            let mid = (lo + hi) * 0.5;
+            if inside(mid) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        lo
+    }
+
+    /// OKLCh to LINEAR sRGB, unclamped so the caller can test gamut membership.
+    fn oklch_to_linear(l: f32, chroma: f32, hue_turns: f32) -> (f32, f32, f32) {
+        let hr = hue_turns * std::f32::consts::TAU;
+        let (a, b) = (chroma * hr.cos(), chroma * hr.sin());
+        // Bjorn Ottosson's OKLab -> LMS' -> linear sRGB, coefficients as published.
+        let l_ = l + 0.396_337_78 * a + 0.215_803_76 * b;
+        let m_ = l - 0.105_561_346 * a - 0.063_854_17 * b;
+        let s_ = l - 0.089_484_18 * a - 1.291_485_5 * b;
+        let (lc, mc, sc) = (l_ * l_ * l_, m_ * m_ * m_, s_ * s_ * s_);
+        (
+            4.076_741_7 * lc - 3.307_711_6 * mc + 0.230_969_94 * sc,
+            -1.268_438 * lc + 2.609_757_4 * mc - 0.341_319_38 * sc,
+            -0.004_196_086_3 * lc - 0.703_418_6 * mc + 1.707_614_7 * sc,
+        )
+    }
+
+    /// OKLab lightness of the most chromatic sRGB colour at this hue.
+    ///
+    /// "Natural" lightness: what the hue wants to be. Yellow comes out near 0.97 and blue near 0.45,
+    /// which is the whole reason an HSV ramp flickers - and also why a perfectly FLAT perceptual ramp
+    /// turns yellow into olive, since holding yellow down to a mid lightness is exactly what olive is.
+    /// `ChromaParams::lightness_tilt` uses this to give a little of that back.
+    pub fn oklch_natural_l(hue_turns: f32) -> f32 {
+        let c = Rgba::from_hsv(hue_turns, 1.0, 1.0, 1.0);
+        Self::oklab_l_of(c)
+    }
+
+    /// OKLab lightness of an sRGB colour.
+    pub fn oklab_l_of(c: Rgba) -> f32 {
+        let d = |v: u8| {
+            let v = v as f32 / 255.0;
+            if v <= 0.040_45 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let (r, g, b) = (d(c.r), d(c.g), d(c.b));
+        let l = (0.412_221_47 * r + 0.536_332_54 * g + 0.051_445_995 * b).cbrt();
+        let m = (0.211_903_5 * r + 0.680_699_5 * g + 0.107_396_96 * b).cbrt();
+        let s = (0.088_302_46 * r + 0.281_718_84 * g + 0.629_978_5 * b).cbrt();
+        0.210_454_26 * l + 0.793_617_8 * m - 0.004_072_047 * s
+    }
+
+    /// Linear light to an 8-bit sRGB channel.
+    fn encode_srgb(v: f32) -> u8 {
+        let v = v.clamp(0.0, 1.0);
+        let e = if v <= 0.003_130_8 { 12.92 * v } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 };
+        (e.clamp(0.0, 1.0) * 255.0).round() as u8
+    }
+
     pub fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
         Rgba { r, g, b, a }
     }

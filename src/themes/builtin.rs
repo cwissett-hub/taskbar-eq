@@ -82,6 +82,8 @@ pub fn all() -> Vec<Theme> {
         chroma_barcode(),
         chroma_misreg(),
         chroma_halftone(),
+        chroma_riso(),
+        chroma_duotone(),
         vapor_sunset(),
         vapor_miami(),
         vapor_outrun(),
@@ -2193,38 +2195,36 @@ pub fn vu_pantone() -> Theme {
 }
 
 // ===================== Chroma field =====================
-/// The contrast floor a full-chroma stripe field can honestly reach, MEASURED.
-///
-/// Swept all 360 hues at saturation 1.0, value 1.0 against each of these colourways' own
-/// near-black panels. The worst hue is pure blue every time, and the three that declare this
-/// floor measure 2.358:1 (`chroma-spectrum`, panel `#05060a`), 2.365:1 (`chroma-misreg`,
-/// `#06050a`) and 2.370:1 (`chroma-halftone`, `#050508`). So 2.30 is the tightest round floor
-/// that passes with a little headroom, and it is declared per colourway rather than becoming a
-/// new global rule.
-///
-/// This is not a way out of the project's 3:1 requirement. It is bought and paid for by the
-/// 1px black keyline around every stripe, which delineates a stripe regardless of its hue -
-/// so legibility here does not depend on hue-versus-panel contrast at all. The alternative was
-/// pulling the saturation back to 0.70 (the first value that passes at every hue, at 3.59:1),
-/// which is exactly the "bar chart wearing a rainbow" this family exists not to be.
-///
-/// Two guards keep it honest: `only_the_recorded_colourways_lower_the_contrast_floor` below
-/// names the colourways allowed to declare it, and
-/// `render::chroma::tests::every_stripe_colour_clears_its_own_colourways_declared_contrast_floor`
-/// requires a lowered floor to be TIGHT against what is actually measured - so a deliberate
-/// 2.3:1 is recorded and passes while an accidental 1.2:1 still fails.
-const CHROMA_BLUE_FLOOR: f32 = 2.30;
+// RETIRED: `CHROMA_BLUE_FLOOR`, the 2.30:1 contrast opt-in this family used to need.
+//
+// It existed for exactly one reason: the stripe ramp was an HSV sweep at saturation 1.0 and value
+// 1.0, whose worst hue is pure blue, and pure blue on a near-black panel measures 2.358:1 whatever
+// panel colour it is given. The three ramp colourways declared 2.30 and paid for it with the 1px
+// keyline around every stripe.
+//
+// The perceptual ramp removes the CAUSE rather than the symptom. Holding OKLab lightness constant
+// means luminance no longer depends on hue, so the worst case stops being a dark blue. Measured by
+// `render::chroma::tests::probe_chroma_inks`: `chroma-spectrum`'s worst ink is now #0854ff at
+// 3.59:1, and misregistration and halftone reach 5.53:1 - all clear of the project's 3:1 rule with
+// room to spare, at the full chroma the gamut allows.
+//
+// So the whole family is back on the standard floor and no colourway in this project lowers it any
+// more, which `no_colourway_lowers_the_contrast_floor_any_more` now asserts.
 
 fn chroma_base() -> Theme {
     Theme {
         family: "chroma".into(),
         texture: Texture::None_,
         ghost: 0.0,
-        // NOT bloomed, unlike every other family here. The others model something that emits;
-        // this one models ink on paper, and a halo would soften exactly the hard edges the
-        // whole family depends on.
-        bloom: 0.0,
-        glow_strength: 0.0,
+        // A LIGHTBOX glow: the field is bloomed on its own layer, so the halo lands behind the
+        // print and escapes into the panel margin rather than softening any edge. See the note at
+        // the top of `render::chroma`. 0 on a colourway gives the flat print back.
+        //
+        // 7px at 0.80, up from 5 at 0.55 on the first eyeball pass, where the bleed was present but
+        // too faint to read as backlighting at all - the margin is only 4px, so the halo has to be
+        // wider than the gap it is escaping into or all of it lands under the print that made it.
+        bloom: 7.0,
+        glow_strength: 0.80,
         edge_glow: 0.0,
         hot: "#ffffff".into(),
         panel_alpha: 1.0,
@@ -2237,14 +2237,20 @@ pub fn chroma_spectrum() -> Theme {
     Theme {
         id: "chroma-spectrum".into(),
         name: "Full spectrum".into(),
-        // The BLUEST ink this colourway prints, declared here deliberately: it is the reason
-        // the floor below is what it is, and putting it in `lit` means the ordinary contrast
-        // test measures the real worst case rather than a flattering average.
-        lit: "#0000ff".into(),
+        // The WORST-CONTRAST ink this colourway actually prints, declared here deliberately so the
+        // ordinary contrast test measures the real worst case rather than a flattering average. Read
+        // off `probe_chroma_inks`, not remembered: it measures 3.59:1 against the panel below.
+        lit: "#0854ff".into(),
         panel: "#05060a".into(),
         edge: "#8f8fa0".into(),
         edge_alpha: 0.16,
-        contrast_floor: CHROMA_BLUE_FLOOR,
+        chroma: ChromaParams {
+            // Chosen by eye from a six-way sheet: deep and print-like, the golds reading as gold
+            // rather than olive. See `ChromaParams::lightness` and `lightness_tilt`.
+            lightness: 0.62,
+            lightness_tilt: 0.35,
+            ..ChromaParams::default()
+        },
         ..chroma_base()
     }
 }
@@ -2328,12 +2334,17 @@ pub fn chroma_misreg() -> Theme {
     Theme {
         id: "chroma-misreg".into(),
         name: "Misregistration".into(),
-        lit: "#0000ff".into(),
+        // Measured worst ink: 5.53:1 against the panel below.
+        lit: "#0088eb".into(),
         panel: "#06050a".into(),
         edge: "#a08f9a".into(),
         edge_alpha: 0.16,
-        contrast_floor: CHROMA_BLUE_FLOOR,
         chroma: ChromaParams {
+            // Brighter and flatter than the reference, because the SUBJECT here is the fringe: a
+            // lighter ink leaves more room for the displaced red and blue plates to show against it,
+            // and less hue-to-hue lightness variation stops the ramp competing with the fringe.
+            lightness: 0.74,
+            lightness_tilt: 0.20,
             stripe_px: 20.0,
             shift_r: 3,
             shift_b: -3,
@@ -2354,17 +2365,113 @@ pub fn chroma_halftone() -> Theme {
     Theme {
         id: "chroma-halftone".into(),
         name: "Halftone".into(),
-        lit: "#0000ff".into(),
+        // Measured worst ink: 5.55:1 against the panel below.
+        lit: "#0088eb".into(),
         panel: "#050508".into(),
         edge: "#9a9aa8".into(),
         edge_alpha: 0.16,
-        contrast_floor: CHROMA_BLUE_FLOOR,
         chroma: ChromaParams {
+            // Lightest of the ramps. A screen covering the whole field removes ink everywhere, so a
+            // darker ramp would put dots on colours already close to the panel and the tone steps
+            // would stop reading as tone.
+            lightness: 0.80,
+            lightness_tilt: 0.25,
             stripe_px: 16.0,
             halftone: 1.0,
             halftone_pitch: 5,
             halftone_strength: 1.0,
             // Light, so the dots fringe without the stripes themselves smearing.
+            shift_r: 1,
+            shift_b: -1,
+            ..ChromaParams::default()
+        },
+        ..chroma_base()
+    }
+}
+
+/// Risograph: the real fluorescent spot inks, on a warm paper-ish key.
+///
+/// A Riso has no process ramp at all - it prints from a small drum of premixed inks, one pass each,
+/// and its palette is famous precisely because those inks are outside CMYK's gamut. So this is an
+/// `inks` colourway rather than a hue ramp, and the six hexes are the actual Riso spot colours:
+/// Fluorescent Pink, Blue, Yellow, Green, Orange and Bright Red.
+///
+/// Scrambled rather than cycled, unlike CMYK. A press lays plates in sequence; a Riso operator
+/// changes drums between passes and the order is whatever the job wanted, so a repeating six-cycle
+/// would read as a pattern the process does not have.
+///
+/// The key is a warm near-black rather than pure ink, because Riso black is a soft, slightly brown
+/// drum rather than a dense process K - and the keylines are what keep full-chroma stripes legible,
+/// so this is the one place the family's warmth can show without costing contrast.
+pub fn chroma_riso() -> Theme {
+    Theme {
+        id: "chroma-riso".into(),
+        name: "Risograph".into(),
+        // The worst-contrast ink of the six against the panel below - measured, not guessed.
+        lit: "#0078bf".into(),
+        panel: "#0a0806".into(),
+        edge: "#a8927f".into(),
+        edge_alpha: 0.18,
+        chroma: ChromaParams {
+            inks: vec![
+                "#ff48b0".into(), // Fluorescent Pink
+                "#0078bf".into(), // Blue
+                "#ffe800".into(), // Yellow
+                "#00a95c".into(), // Green
+                "#ff6c2f".into(), // Orange
+                "#f15060".into(), // Bright Red
+            ],
+            scramble: true,
+            ink: "#140f0a".into(),
+            // Wider stripes than the reference: six spot inks in a narrow field repeat too often to
+            // read as separate passes.
+            stripe_px: 22.0,
+            // A Riso's registration is genuinely poor - the paper is fed once per drum - so the plates
+            // sitting a pixel apart is characteristic rather than a defect.
+            shift_r: 1,
+            shift_b: -1,
+            halftone: 0.40,
+            halftone_pitch: 3,
+            ..ChromaParams::default()
+        },
+        ..chroma_base()
+    }
+}
+
+/// Two inks and nothing else: a deep teal and a warm bone, with the accent picking out the energy.
+///
+/// The counterweight to the rest of the family. Everything else here is about how much colour a print
+/// can carry; this is about how little. Two inks cannot encode a spectrum, so the WIDTHS do all the
+/// work and the single accented stripe says where the energy is - which is the same trick the barcode
+/// colourway uses, at half the palette.
+///
+/// The accent's hue is pinned narrow and warm so it stays legible against both inks, and because a
+/// duotone with a rainbow accent would not be a duotone.
+pub fn chroma_duotone() -> Theme {
+    Theme {
+        id: "chroma-duotone".into(),
+        name: "Duotone".into(),
+        lit: "#e8dcc8".into(),
+        panel: "#04080a".into(),
+        edge: "#7f9a96".into(),
+        edge_alpha: 0.16,
+        chroma: ChromaParams {
+            inks: vec![
+                "#0f6b6b".into(), // deep teal
+                "#e8dcc8".into(), // warm bone
+                "#0f6b6b".into(),
+                "#a8bfb8".into(), // the teal knocked back, so the pattern has three weights
+            ],
+            scramble: true,
+            accent: true,
+            // Warm and narrow - see the note above.
+            hue_offset: 0.04,
+            hue_span: 0.06,
+            lightness: 0.66,
+            lightness_tilt: 0.0,
+            stripe_px: 14.0,
+            halftone: 0.45,
+            halftone_pitch: 3,
             shift_r: 1,
             shift_b: -1,
             ..ChromaParams::default()
@@ -2800,14 +2907,32 @@ mod tests {
     }
 
     #[test]
+    fn no_colourway_lowers_the_contrast_floor_any_more() {
+        // The note where CHROMA_BLUE_FLOOR used to be claimed a guard called
+        // `only_the_recorded_colourways_lower_the_contrast_floor` kept the 2.30:1 opt-in from
+        // spreading. That test never existed - the doc comment described an intention. This is it,
+        // and now that the perceptual ramp has removed the need for any opt-in it can assert
+        // something stronger than a permitted list: that the list is EMPTY.
+        let lowered: Vec<(String, f32)> = all()
+            .into_iter()
+            .filter(|t| t.contrast_floor < 3.0)
+            .map(|t| (t.id.clone(), t.contrast_floor))
+            .collect();
+        assert!(
+            lowered.is_empty(),
+            "no colourway should need a contrast opt-in any more, but these declare one: {lowered:?}"
+        );
+    }
+
+    #[test]
     fn every_lit_colour_clears_three_to_one_against_its_own_panel() {
         // The spec's hard requirement, computed rather than eyeballed.
         //
-        // Measured against each colourway's DECLARED floor, which is 3.0 for all but the three
-        // chroma-field colourways that print at maximum chroma - see `CHROMA_BLUE_FLOOR`. The
-        // floor is a per-colourway declaration precisely so that this test still bites on
-        // every one of them: it is not an exemption list, and the guard immediately below
-        // keeps a lowered floor from spreading anywhere it was not measured.
+        // Measured against each colourway's DECLARED floor, which is now 3.0 for every one of them:
+        // the chroma field used to declare 2.30 and no longer needs to. The floor stays a
+        // per-colourway declaration rather than a constant precisely so this test still bites on
+        // every colourway, and so the next family that genuinely cannot meet the rule has to record
+        // the fact rather than quietly relaxing it for everyone.
         for t in all() {
             let ratio = contrast(&t.lit, &t.panel);
             assert!(

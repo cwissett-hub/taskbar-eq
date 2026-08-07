@@ -21,7 +21,7 @@
 //!   this project's 3:1 contrast rule at every hue against any flat panel - measured, pure
 //!   blue reaches only 2.36:1 on a near-black panel, and on a light panel yellow drops to
 //!   1.00:1. The keyline delineates each stripe regardless of its hue, so legibility does
-//!   not depend on hue-versus-panel contrast at all. See `CHROMA_BLUE_FLOOR` in
+//!   not depend on hue-versus-panel contrast at all. See the retired-constant note in
 //!   `themes::builtin` for the recorded per-colourway opt-in that this buys.
 //!
 //! - **RGB CHANNEL MISREGISTRATION.** Red and blue displaced horizontally a pixel or two
@@ -35,13 +35,37 @@
 //! - **A HALFTONE screen** over part of the field, ramping as a printed tone does, which
 //!   beats against the moving stripe edges into moire.
 //!
-//! Deliberately NOT bloomed. Every other family glows because it is modelling something
-//! that emits; this one is modelling ink on paper, and a halo would soften exactly the hard
-//! edges the whole family depends on.
+//! **The glow is a LIGHTBOX, and the ordering is the whole trick.** This family used to refuse
+//! bloom outright, on the grounds that it models ink on paper and a halo would soften exactly the
+//! hard edges everything here depends on. That reasoning is sound about compositing a halo ON TOP;
+//! it is not an argument against a halo BEHIND. The field is now built in its own transparent
+//! canvas, bloomed there - `Canvas::bloom` puts the halo underneath the content it came from - and
+//! composited over the panel in one pass, with the field inset far enough from the panel edge that
+//! the halo has somewhere to escape to.
+//!
+//! So the print is ink on film on a lightbox: every interior edge is exactly as hard as before,
+//! every keyline is still pure ink, and colour bleeds out around the outside. Set `bloom = 0` on a
+//! colourway to get the flat print back.
 
 use super::canvas::{Canvas, Rgba};
 use super::{Family, FrameData};
 use crate::themes::{ChromaParams, Theme};
+
+/// The stripe field's rect inside a panel of `w` x `h`: `(x, y, w, h)`.
+///
+/// Inset 4px horizontally and 5 vertically, which at 190x60 leaves 182x50 for the stripes.
+///
+/// The extra 2px each way over the original 2/3 is WHERE THE HALO GOES. The field used to reach
+/// within 2px of the panel edge, and a bloom behind something that covers the whole interior is
+/// invisible - there is nowhere for it to show. Giving up 4px of width and 4 of height buys a bleed
+/// band wide enough to read as backlighting at every size the overlay actually takes.
+///
+/// **Shared with the tests deliberately.** Two of them hardcoded the old 2px inset and the old 186px
+/// interior, and when the field moved they probed 2px off and reported a perfectly good red stripe as
+/// a failed keyline. Geometry computed independently in two places is geometry that will disagree.
+fn field_rect(w: i32, h: i32) -> (i32, i32, i32, i32) {
+    (4, 5, w - 8, h - 10)
+}
 
 /// Band level at which a stripe starts to swell, and the span it swells over.
 ///
@@ -343,6 +367,35 @@ impl Chroma {
         self.glitch
     }
 
+    /// Which ink a scrambled stripe takes: BALANCED but non-periodic.
+    ///
+    /// Each ink appears exactly once per cycle of `len` stripes, and the order within each cycle is
+    /// reshuffled by the cycle index. So the sequence never repeats and never clusters.
+    ///
+    /// The obvious version - hash the stripe index and take it modulo the palette size - is neither.
+    /// Measured on the six Riso inks across a 190px field it put FIVE of eight stripes on the same
+    /// orange, which does not read as a random palette, it reads as a broken one. A hash is uniform in
+    /// the limit; eight draws is not the limit.
+    ///
+    /// Fisher-Yates, seeded per cycle, over at most a handful of entries - the cost is nothing and it
+    /// is exact rather than approximately fair.
+    fn shuffled_slot(i: usize, len: usize) -> usize {
+        if len == 0 {
+            return 0;
+        }
+        let cycle = (i / len) as u32;
+        let mut order = [0usize; 16];
+        let n = len.min(16);
+        for (j, o) in order[..n].iter_mut().enumerate() {
+            *o = j;
+        }
+        for j in (1..n).rev() {
+            let pick = (hash(0x5EED ^ cycle, j as u32) as usize) % (j + 1);
+            order.swap(j, pick);
+        }
+        order[i % n]
+    }
+
     /// The ink for one stripe.
     ///
     /// `inks` empty is the spectrum ramp: hue from position, at whatever chroma the colourway
@@ -357,7 +410,19 @@ impl Chroma {
             let span = if p.hue_span.is_finite() { p.hue_span } else { 0.85 };
             let off = if p.hue_offset.is_finite() { p.hue_offset } else { 0.0 };
             let sat = if p.sat.is_finite() { p.sat.clamp(0.0, 1.0) } else { 1.0 };
-            Rgba::from_hsv(off + x01 * span, sat, 1.0, 1.0)
+            let base = if p.lightness.is_finite() { p.lightness.clamp(0.05, 0.98) } else { 0.72 };
+            let tilt = if p.lightness_tilt.is_finite() { p.lightness_tilt.clamp(0.0, 1.0) } else { 0.0 };
+            let h = off + x01 * span;
+            // A little of each hue's natural lightness, so the yellows do not go olive. Referenced to
+            // 0.75, which is about the mean natural lightness around the hue circle, so a tilt leaves
+            // the ramp's average weight where `lightness` put it instead of lifting the whole field.
+            let l = (base + tilt * (Rgba::oklch_natural_l(h) - 0.75)).clamp(0.05, 0.98);
+            // OKLCh, not HSV. See `ChromaParams::lightness` - an HSV sweep at full saturation and
+            // value is uneven in hue spacing AND in lightness, and both were visible on the panel.
+            // `sat` scales the chroma against the most the gamut holds at this lightness, so 1.0 is
+            // still "as chromatic as possible" and every hue is as chromatic as it can be WITHOUT
+            // changing weight relative to its neighbours.
+            Rgba::from_oklch(l, sat * Rgba::oklch_max_chroma(l, h), h, 1.0)
         };
         if accent == Some(i) {
             return hue();
@@ -365,11 +430,7 @@ impl Chroma {
         if p.inks.is_empty() {
             return hue();
         }
-        let k = if p.scramble {
-            (hash(0x5EED, i as u32) % p.inks.len() as u32) as usize
-        } else {
-            i % p.inks.len()
-        };
+        let k = if p.scramble { Self::shuffled_slot(i, p.inks.len()) } else { i % p.inks.len() };
         let c = Rgba::from_hex(&p.inks[k], 1.0);
         // A malformed hex parses to TRANSPARENT; force it opaque so a typo in a theme file
         // cannot punch a hole through the panel.
@@ -394,12 +455,7 @@ impl Family for Chroma {
         let panel = Rgba::from_hex(&t.panel, t.panel_alpha);
         c.rounded_rect(1, 2, (w - 2).max(1), (h - 4).max(1), 3, panel);
 
-        // Interior: 2px inset either side of the panel, which at 190px leaves 186px for the
-        // stripes. The vertical inset lands the field flush inside the panel's 3px rounded
-        // corners at every row, so no clip is needed to keep it off the taskbar.
-        let (fx, fy) = (2, 3);
-        let fw = w - 4;
-        let fh = h - 6;
+        let (fx, fy, fw, fh) = field_rect(w, h);
         if fw < 8 || fh < 4 {
             // Too small for a stripe field with keylines in it. The panel alone is the
             // graceful degradation, exactly as the valve row does below its own minimum.
@@ -556,14 +612,25 @@ impl Family for Chroma {
             }
         }
 
-        // Blit, forcing alpha 255 on every pixel. This is the invariant the whole buffer
-        // approach exists to guarantee: no pixel inside the panel is ever see-through.
+        // The field goes onto its OWN transparent canvas, not straight onto the panel, so it can
+        // be bloomed with the halo landing behind it - see the module note on the lightbox. Alpha is
+        // forced to 255 on every field pixel, which is the invariant the whole buffer approach
+        // exists to guarantee: no pixel inside the field is ever see-through.
+        let mut film = Canvas::new(w, h);
         for row in 0..fh {
             for px in 0..fw {
                 let v = buf[(row * fw + px) as usize];
-                c.fill_rect(fx + px, fy + row, 1, 1, Rgba::new(v.r, v.g, v.b, 255));
+                film.fill_rect(fx + px, fy + row, 1, 1, Rgba::new(v.r, v.g, v.b, 255));
             }
         }
+        if t.bloom > 0.0 && t.glow_strength > 0.0 {
+            // `bloom` composites its halo UNDERNEATH the content that produced it, so this leaves
+            // every field pixel bit-identical and only adds light outside the field's own footprint.
+            // That is precisely the property that makes a glow compatible with a family built on
+            // hard edges.
+            film.bloom(t.bloom.max(0.0) as i32, t.glow_strength.clamp(0.0, 1.0));
+        }
+        c.draw_over(&film);
 
         // Insurance, not correction: the field is already flush inside the rounded panel at
         // every row, so this clips nothing today. It is here because every future change to
@@ -780,14 +847,16 @@ mod tests {
         let t = builtin::chroma_spectrum();
         let d = uneven();
         let c = render(&t, &d, 190, 60, 8);
-        let n = stripe_count(186, t.chroma.stripe_px);
+        let (fx, fy, fw, _) = field_rect(190, 60);
+        let n = stripe_count(fw, t.chroma.stripe_px);
         let resp: Vec<f32> = (0..n)
             .map(|i| Chroma::response(Chroma::level_for(&d, i, n), t.sensitivity))
             .collect();
-        let widths = stripe_widths(&resp, 186, t.chroma.swell);
-        // Row 6 is above the halftone band, so a dark pixel there can only be a keyline.
-        let y = 6;
-        let mut x = 2;
+        let widths = stripe_widths(&resp, fw, t.chroma.swell);
+        // Three rows into the field, which is above the halftone band, so a dark pixel there can
+        // only be a keyline.
+        let y = fy + 3;
+        let mut x = fx;
         let mut checked = 0;
         for w in &widths {
             if *w >= MIN_KEYLINE_W {
@@ -891,31 +960,45 @@ mod tests {
         // lattice's first reachable coverage step and carried no ink at all - on the one
         // colourway whose entire identity is the screen. See HALFTONE_FLOOR.
         //
-        // Measured against the same colourway with the screen switched off, so it cannot pass on
-        // the keylines: over the upper half of the field the shipped values give 419 inked pixels
-        // against 260 with no screen at all, and over the whole field 1635 against 520.
+        // Measured as a PER-PIXEL DIFFERENTIAL against the same colourway with the screen switched
+        // off, rather than as a count of pixels below an absolute luminance.
+        //
+        // The absolute version was calibrated against this colourway when its ramp was darker, and it
+        // broke the moment the ramp's lightness changed - reporting 376 inked against 300 where it
+        // wanted a margin of 100. Nothing about the screen had regressed; the threshold was measuring
+        // the palette as much as the ink. A differential cannot: it compares each pixel with what
+        // that same pixel is without the screen, so it is immune to the ramp, to the keylines, and to
+        // the lightbox halo alike.
         let t = builtin::chroma_halftone();
         let mut off = t.clone();
         off.chroma.halftone = 0.0;
-        let ink = |th: &Theme, y0: i32, y1: i32| -> u32 {
-            let c = render(th, &flat(0.4), 190, 60, 8);
+        let (fx, fy, fw, fh) = field_rect(190, 60);
+        let on_c = render(&t, &flat(0.4), 190, 60, 8);
+        let off_c = render(&off, &flat(0.4), 190, 60, 8);
+        let lum = |p: Rgba| p.r as i32 + p.g as i32 + p.b as i32;
+        let screened = |y0: i32, y1: i32| -> u32 {
             let mut n = 0;
             for y in y0..y1 {
-                for x in 4..186 {
-                    let p = c.get(x, y);
-                    if (p.r as u32 + p.g as u32 + p.b as u32) < 90 {
+                for x in fx..(fx + fw) {
+                    if lum(off_c.get(x, y)) - lum(on_c.get(x, y)) > 60 {
                         n += 1;
                     }
                 }
             }
             n
         };
-        let upper_on = ink(&t, 4, 30);
-        let upper_off = ink(&off, 4, 30);
+        let upper = screened(fy, fy + fh / 2);
+        let whole = screened(fy, fy + fh);
+        // The shallow end of the ramp is the half that used to carry NO ink at all, because it fell
+        // below the dot lattice's first reachable coverage step.
         assert!(
-            upper_on > upper_off + 100,
-            "the screen must lay ink over the shallow end of its region too: {upper_on} inked \
-             with the screen on vs {upper_off} with it off"
+            upper > 150,
+            "the screen must lay ink over the shallow end of its region too, only {upper} pixels              darkened in the upper half"
+        );
+        // And more over the whole field than over half of it, or the ramp is not ramping.
+        assert!(
+            whole > upper * 3 / 2,
+            "the screen is not deepening with the ramp: {upper} in the upper half, {whole} overall"
         );
     }
 
@@ -1004,15 +1087,44 @@ mod tests {
             "the frame after a bass transient must be displaced"
         );
         // And the displacement is a SLICE: most rows must be identical between the two.
-        let mut moved_rows = 0;
-        for y in 3..57 {
-            if (2..188).any(|x| ca.get(x, y) != cb.get(x, y)) {
-                moved_rows += 1;
+        //
+        // Counted twice, because the lightbox halo widens the answer. A displaced band of rows also
+        // changes the bloom for a bloom-radius either side of itself, so on the shipped configuration
+        // 22 rows differ where the slice itself is 8 - which failed a bound of 20 with nothing wrong.
+        // The tight bound belongs on the glitch alone; the shipped configuration gets the bound that
+        // actually matters, which is that it is nowhere near the whole field.
+        let (fx, fy, fw, fh) = field_rect(190, 60);
+        let rows_differing = |x: &Canvas, y: &Canvas| -> i32 {
+            let mut n = 0;
+            for row in fy..(fy + fh) {
+                if (fx..(fx + fw)).any(|c| x.get(c, row) != y.get(c, row)) {
+                    n += 1;
+                }
             }
-        }
+            n
+        };
+        let with_glow = rows_differing(&ca, &cb);
         assert!(
-            (1..=20).contains(&moved_rows),
-            "the glitch must displace one slice, not the whole field: {moved_rows} rows moved"
+            with_glow < fh / 2,
+            "the glitch must displace a slice, not the whole field: {with_glow} of {fh} rows moved"
+        );
+        // The same comparison with the halo held off, which isolates the slice itself.
+        let mut flat_t = t.clone();
+        flat_t.bloom = 0.0;
+        let mut flat_calm = flat_t.clone();
+        flat_calm.chroma.glitch_sens = 0.0;
+        let (mut fa, mut fb) = (Chroma::default(), Chroma::default());
+        let (mut fca, mut fcb) = (Canvas::new(190, 60), Canvas::new(190, 60));
+        for _ in 0..12 {
+            fa.draw(&mut fca, &flat_t, &quiet);
+            fb.draw(&mut fcb, &flat_t, &quiet);
+        }
+        fa.draw(&mut fca, &flat_t, &kick);
+        fb.draw(&mut fcb, &flat_calm, &kick);
+        let bare = rows_differing(&fca, &fcb);
+        assert!(
+            (1..=20).contains(&bare),
+            "the glitch slice itself must be a slice: {bare} rows moved with the halo off"
         );
     }
 
@@ -1256,6 +1368,106 @@ mod tests {
         }
     }
 
+    /// Every colourway's actual inks and their contrast, so `lit` and `contrast_floor` can be set
+    /// from measurement instead of from memory.
+    ///
+    /// Run: cargo test --release probe_chroma_inks -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn probe_chroma_inks() {
+        for t in builtin::all().into_iter().filter(|t| t.family == "chroma") {
+            let panel = Rgba::from_hex(&t.panel, 1.0);
+            let ink = Rgba::from_hex(&t.chroma.ink, 1.0);
+            let mut worst = (f32::MAX, Rgba::TRANSPARENT);
+            let mut hexes = Vec::new();
+            for i in 0..10 {
+                let col = Chroma::stripe_colour(&t, i, 10, None);
+                hexes.push(format!("#{:02x}{:02x}{:02x}", col.r, col.g, col.b));
+            }
+            for i in 0..360 {
+                let col = Chroma::stripe_colour(&t, i, 360, None);
+                if contrast(col, ink) < 1.5 {
+                    continue;
+                }
+                let c = contrast(col, panel);
+                if c < worst.0 {
+                    worst = (c, col);
+                }
+            }
+            println!(
+                "{:18} worst {:.2}:1 at #{:02x}{:02x}{:02x}   floor {:.2}   ramp {}",
+                t.id,
+                worst.0,
+                worst.1.r,
+                worst.1.g,
+                worst.1.b,
+                t.contrast_floor,
+                hexes.join(" ")
+            );
+        }
+    }
+
+    #[test]
+    fn the_perceptual_ramp_holds_its_lightness_and_so_clears_the_contrast_rule_at_every_hue() {
+        // The whole reason the ramp moved from HSV to OKLCh, asserted rather than described.
+        //
+        // The old sweep's lightness ran from L* 97 at yellow to L* 32 at blue, which is what made the
+        // field flicker in brightness across its width AND what forced this family to declare a
+        // 2.30:1 contrast floor - pure blue cannot clear 3:1 on any panel. Hold lightness constant and
+        // both problems are the same problem, solved once.
+        let t = builtin::chroma_spectrum();
+        let panel = Rgba::from_hex(&t.panel, 1.0);
+        let mut lums = Vec::new();
+        let mut worst = f32::MAX;
+        for i in 0..360 {
+            let col = Chroma::stripe_colour(&t, i, 360, None);
+            lums.push(Rgba::oklab_l_of(col));
+            worst = worst.min(contrast(col, panel));
+        }
+        let (lo, hi) = (
+            lums.iter().copied().fold(f32::MAX, f32::min),
+            lums.iter().copied().fold(f32::MIN, f32::max),
+        );
+        // The tilt deliberately allows SOME variation - a dead-flat ramp turns yellow to olive - but
+        // it must stay far inside the 0.52 spread an HSV sweep produces.
+        assert!(
+            hi - lo < 0.22,
+            "lightness across the ramp spans {:.3} ({lo:.3}..{hi:.3}), which is a visible flicker",
+            hi - lo
+        );
+        assert!(hi - lo > 0.01, "a dead-flat ramp makes the yellows olive - the tilt did nothing");
+        // And the payoff: the project's rule, met at every hue, with no opt-in.
+        assert!(
+            worst >= 3.0,
+            "worst hue reaches only {worst:.2}:1 - the ramp no longer earns the 3:1 rule"
+        );
+        assert_eq!(t.contrast_floor, 3.0, "this colourway should be back on the standard floor");
+    }
+
+    #[test]
+    fn scrambled_inks_are_balanced_rather_than_merely_random() {
+        // A plain hash-per-stripe put five of the six Riso inks' eight stripes on one orange. Every
+        // ink must appear about equally often over a run, and no ink may take more than a third.
+        for len in [2usize, 3, 4, 6, 8] {
+            let n = len * 6;
+            let mut counts = vec![0usize; len];
+            for i in 0..n {
+                counts[Chroma::shuffled_slot(i, len)] += 1;
+            }
+            assert!(
+                counts.iter().all(|c| *c == 6),
+                "with {len} inks over {n} stripes the counts are {counts:?}, not balanced"
+            );
+            // Balanced is not enough on its own - walking the palette in order is perfectly balanced
+            // and reads as a repeating pattern, which is what `scramble` exists to avoid.
+            if len >= 3 {
+                let ordered: Vec<usize> = (0..n).map(|i| i % len).collect();
+                let got: Vec<usize> = (0..n).map(|i| Chroma::shuffled_slot(i, len)).collect();
+                assert_ne!(ordered, got, "with {len} inks the scramble is just the plain cycle");
+            }
+        }
+    }
+
     // ---------- robustness ----------
 
     #[test]
@@ -1360,7 +1572,7 @@ mod tests {
             ids.push(t.id.clone());
             seen.push(bits);
         }
-        assert_eq!(seen.len(), 5, "the family ships five colourways, found {}", seen.len());
+        assert_eq!(seen.len(), 7, "the family ships seven colourways, found {}", seen.len());
     }
 
     /// Run: cargo test --release dump_chroma_frames -- --ignored --nocapture
@@ -1411,6 +1623,57 @@ mod tests {
             }
         }
         println!("wrote {n} chroma dumps ({} colourways x 190/380) to {}", n / 2, dir.display());
+    }
+
+    /// The perceptual ramp at a spread of lightnesses, for choosing one by eye.
+    ///
+    /// Run: cargo test --release dump_chroma_lightness -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn dump_chroma_lightness() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
+        std::fs::create_dir_all(&dir).unwrap();
+        for (l, tilt) in [
+            (0.62f32, 0.0f32),
+            (0.62, 0.35),
+            (0.62, 0.60),
+            (0.70, 0.0),
+            (0.70, 0.35),
+            (0.70, 0.60),
+        ] {
+            let mut t = builtin::chroma_spectrum();
+            t.chroma.lightness = l;
+            t.chroma.lightness_tilt = tilt;
+            let mut f = Chroma::default();
+            let mut c = Canvas::new(190, 60);
+            for k in 0..24 {
+                let mut d = FrameData::default();
+                let phase = k as f32 / 24.0;
+                for (i, v) in d.levels.iter_mut().enumerate() {
+                    let x = i as f32 / 63.0;
+                    *v = (0.16 + 0.48 * ((x * 9.0 + phase * 4.0).sin().abs())) * (1.0 - x * 0.35);
+                }
+                d.peaks = d.levels;
+                d.dt_ms = 16.7;
+                d.time_s = k as f32 * 0.0167;
+                f.draw(&mut c, &t, &d);
+            }
+            let (w, h) = (190, 60);
+            let mut out = Vec::with_capacity((w * h * 4) as usize);
+            for y in 0..h {
+                for x in 0..w {
+                    let px = c.get(x, y);
+                    let a = px.a as f32 / 255.0;
+                    for ch in [px.r, px.g, px.b] {
+                        out.push((ch as f32 + 22.0 * (1.0 - a)).min(255.0) as u8);
+                    }
+                    out.push(255);
+                }
+            }
+            let tag = format!("{}-{}", (l * 100.0).round() as i32, (tilt * 100.0).round() as i32);
+            std::fs::write(dir.join(format!("chromaL-{tag}.rgba")), &out).unwrap();
+        }
+        println!("wrote 6 lightness/tilt variants to {}", dir.display());
     }
 }
 
