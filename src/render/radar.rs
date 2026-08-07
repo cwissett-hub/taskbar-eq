@@ -137,26 +137,6 @@ const WAKE_FLOOR: f32 = 0.12;
 
 /// Length of the sweep's own afterglow, in columns, and the alpha its freshest wash carries.
 ///
-/// Fraction of a pass at each end over which the beam fades out and back in - the retrace blanking.
-///
-/// The sweep is unidirectional and wraps, which is the right motion (see the long note in `draw`
-/// about why oscillation is actively wrong on a raster). What was wrong was the WRAP being visible:
-/// a 1px full-height line at 0.95 alpha is the brightest thing on the panel, and teleporting it 184px
-/// in one frame reads as the picture resetting, which is what it was reported as - twice, once on the
-/// fan and again here.
-///
-/// A CRT does not have this problem, and not because its flyback is slow: it BLANKS the beam during
-/// retrace, so there is nothing bright to see moving. The phosphor holds the picture meanwhile, which
-/// is exactly what the per-column wake does here. So the beam is faded out over the last 6% of the
-/// pass and back in over the first 6% - about 84ms each at the 1400ms sweep - and the line dissolves
-/// at the right edge and materialises at the left instead of jumping between them.
-///
-/// This also resolves, rather than merely tolerating, the wake clamp recorded in `draw`: the trail is
-/// clamped at the left edge rather than wrapped, so immediately after a flyback the beam had no wake
-/// at all. Now it is invisible at that moment anyway, so the two behaviours agree instead of the
-/// second being an artefact the first had to excuse.
-const RETRACE_FRAC: f32 = 0.06;
-
 /// 4.5 columns is 26px at the reference size. The per-column wake above is the AUDIO history; this
 /// is just the beam looking like a beam.
 ///
@@ -270,6 +250,15 @@ fn plot(f: Field, cols: usize, cell_pos: f32, range: f32) -> (i32, i32) {
 
 #[derive(Default)]
 pub struct Radar {
+    /// Monotonic sweep phase, 0..1 over one there-and-back cycle.
+    ///
+    /// The position is DERIVED from this rather than accumulated into directly, because a beam that
+    /// has to reverse cannot be an accumulator that wraps - which is exactly what the previous version
+    /// was, and why it flew back instead of returning.
+    phase: f32,
+    /// +1 travelling right, -1 travelling left. The wake trails BEHIND the beam, so it has to know
+    /// which way behind is.
+    dir: f32,
     /// Sweep position, in column units, 0..cols.
     ///
     /// Accumulated directly and wrapped. The fan derived this from a monotonic `phase` and carried
@@ -435,19 +424,43 @@ impl Family for Radar {
         // returns, which are the ones the wake exists to show. On a raster that clamp is not a
         // compromise: a beam with no wake at the moment it reappears is exactly what a flyback
         // looks like.
+        // IT SWEEPS THERE AND BACK: left to right, then right to left. Reported twice, and the
+        // second report was explicit - "needs to sweep left to right, then right to left".
+        //
+        // The first attempt at this complaint kept the unidirectional wrap and merely BLANKED the beam
+        // across the flyback, on the reading that what was disliked was the visible jump. That was the
+        // wrong reading. The module's long note argued oscillation was actively wrong on a raster
+        // because it reverses which end of the picture is freshest on every pass; that is true, and it
+        // is worth less than the sweep looking right. The wake now follows the direction of travel,
+        // which is what carries the reading instead.
+        //
+        // Derived from a monotonic phase, so a reversal cannot be lost to floating-point drift the way
+        // an accumulator that has to change sign can.
         let prev = self.pos;
-        let step = dt / SWEEP_MS * cols as f32;
-        let raw = prev + step;
-        self.pos = raw.rem_euclid(cols as f32);
+        self.phase = (self.phase + dt / (SWEEP_MS * 2.0)).rem_euclid(1.0);
+        if !self.phase.is_finite() {
+            self.phase = 0.0;
+        }
+        // Triangle wave: 0 -> 1 -> 0 across one cycle.
+        let tri = if self.phase < 0.5 { self.phase * 2.0 } else { 2.0 - self.phase * 2.0 };
+        // A MILD ease, 35% of the way to a smoothstep. Not the full raised cosine the fan used: that
+        // brings the beam to a stop at each limit, and on an evenly spaced field the dwell refreshes
+        // the two edge columns many times over while mid-field columns get one look, leaving a pair of
+        // permanently bright edge stripes. This softens the turn without stopping at it.
+        let eased = tri + 0.35 * (tri * tri * (3.0 - 2.0 * tri) - tri);
+        // Scaled by `cols`, not `cols - 1`, and held just inside it. With `cols - 1` the beam reached
+        // the final column only when the phase landed exactly on 0.5, which a discrete frame interval
+        // essentially never does - so the rightmost column was never sampled.
+        self.pos = (eased * cols as f32).min(cols as f32 - 0.001);
+        self.dir = if self.phase < 0.5 { 1.0 } else { -1.0 };
         if !self.pos.is_finite() {
             self.pos = 0.0;
         }
-        let first = prev.floor() as i64;
-        // Capped at a full pass so a pathological dt cannot spin this loop, even though `dt` is
-        // already clamped to 120ms (2.7 columns).
-        let last = raw.floor().min(prev.floor() + cols as f32) as i64;
-        for k in first..=last {
-            let ci = k.rem_euclid(cols as i64) as usize;
+        // Every cell between where the beam was and where it is now, in whichever direction. No
+        // wrapping: the beam no longer crosses the ends, it turns round at them.
+        let (lo, hi) = if self.pos >= prev { (prev, self.pos) } else { (self.pos, prev) };
+        for k in (lo.floor() as i64).max(0)..=(hi.floor() as i64).min(cols as i64 - 1) {
+            let ci = k as usize;
             let resp = Self::response(Self::cell_level(d, ci, cols), t.sensitivity);
             self.echo[ci] = resp;
             self.glow[ci] = BLIP_FLOOR + (1.0 - BLIP_FLOOR) * resp;
@@ -539,20 +552,13 @@ impl Family for Radar {
         let hot = &t.hot;
         let sweep_x = col_x(f, cols, self.pos);
 
-        // Retrace blanking. 0 at both ends of a pass, 1 across the middle, smoothstepped so the beam
-        // leaves and arrives at zero rate rather than snapping to black. Applied to the beam AND its
-        // wash, because fading the line while leaving a bright wash behind would just move the
-        // discontinuity into the wash.
-        let p01 = (self.pos / cols as f32).clamp(0.0, 1.0);
-        let edge = (p01 / RETRACE_FRAC).min((1.0 - p01) / RETRACE_FRAC).clamp(0.0, 1.0);
-        let beam = edge * edge * (3.0 - 2.0 * edge);
-
         // The sweep's own wash goes down FIRST, so the blips stay crisp on top of it. The fan drew
         // its beam last and the wedge visibly dimmed every return it was passing over.
         let trail = (TRAIL_CELLS * col_w).max(2.0) as i32;
         for back in 1..=trail {
-            let x = sweep_x - back;
-            if x < f.x {
+            // Behind means the opposite way on the return leg.
+            let x = sweep_x - (back as f32 * self.dir).round() as i32;
+            if x < f.x || x >= f.x + f.w {
                 break;
             }
             let fade = 1.0 - back as f32 / trail as f32;
@@ -561,7 +567,7 @@ impl Family for Radar {
                 f.y,
                 1,
                 f.h + 1,
-                Rgba::from_hex(&t.lit, (fade * fade * TRAIL_ALPHA * beam).clamp(0.0, 1.0)),
+                Rgba::from_hex(&t.lit, (fade * fade * TRAIL_ALPHA).clamp(0.0, 1.0)),
             );
         }
 
@@ -613,7 +619,7 @@ impl Family for Radar {
 
         // The sweep line itself, last and brightest: after the flyback it is the one feature the
         // eye can pick up immediately, which is what makes the wrap read as a wrap.
-        lit.fill_rect(sweep_x, f.y, 1, f.h + 1, Rgba::from_hex(hot, 0.95 * beam));
+        lit.fill_rect(sweep_x, f.y, 1, f.h + 1, Rgba::from_hex(hot, 0.95));
 
         if t.bloom > 0.0 {
             let mut halo = lit.clone();
@@ -778,105 +784,50 @@ mod tests {
         assert!(r.glow.iter().any(|g| *g > 0.1), "the display never recovered after a NaN");
     }
 
+
+
     #[test]
-fn the_beam_is_blanked_across_the_flyback_so_nothing_visibly_jumps() {
-        // The reported defect, twice on this family: "the radar should sweep left to right, not
-        // reset". The motion was already left-to-right; what read as a reset was the BEAM - a 1px
-        // full-height line at 0.95 alpha, the brightest thing on the panel - teleporting the full
-        // width of the field in a single frame.
+    fn the_sweep_goes_there_and_back_without_ever_jumping() {
+        // The reported behaviour, twice: "needs to sweep left to right, then right to left". The
+        // previous version wrapped, and the test that guarded it asserted the sweep MUST wrap and must
+        // NOT oscillate - so that test had to be replaced rather than repaired, along with the retrace
+        // blanking that existed only to hide the wrap.
         //
-        // A CRT solves this by blanking during retrace, so this asserts the same thing: the beam is
-        // effectively invisible at the wrap and full brightness across the middle of the pass.
-        // Measured on the drawn pixel rather than on the alpha, so it cannot pass while the fade is
-        // computed and then ignored.
-        let t = builtin::radar_p1();
-        let mut c = Canvas::new(190, 60);
-        let f = field(190, 60);
-        let cols = column_count(190);
-
-        // Brightness of the sweep column, halfway down the field so no blip or range line is in the
-        // way. `flat(0.0)` keeps the returns dark, leaving the beam as the only bright thing.
-        let mut beam_lum = |pos: f32| -> f32 {
-            let mut r = Radar::default();
-            r.pos = pos;
-            // dt 0 so `draw` cannot advance the position away from the one under test.
-            let still = FrameData { dt_ms: 0.0, ..flat(0.0) };
-            r.draw(&mut c, &t, &still);
-            let p = c.get(col_x(f, cols, pos), f.y + f.h / 2);
-            0.2126 * p.r as f32 + 0.7152 * p.g as f32 + 0.0722 * p.b as f32
-        };
-
-        let mid = beam_lum(cols as f32 * 0.5);
-        let just_wrapped = beam_lum(0.0);
-        let about_to_wrap = beam_lum(cols as f32 - 0.01);
-
-        assert!(mid > 40.0, "the beam is not visible mid-pass at all ({mid:.1})");
-        assert!(
-            just_wrapped < mid * 0.25,
-            "immediately after the flyback the beam is at {just_wrapped:.1} against {mid:.1}              mid-pass, so it reappears bright and the wrap is visible as a jump"
-        );
-        assert!(
-            about_to_wrap < mid * 0.25,
-            "just before the flyback the beam is at {about_to_wrap:.1} against {mid:.1} mid-pass,              so it vanishes while still bright"
-        );
-
-        // And the blanking is NARROW: it must hide the wrap without dimming the beam for a
-        // noticeable part of the pass. At 6% each end, 15% in is already full brightness.
-        let early = beam_lum(cols as f32 * 0.15);
-        assert!(
-            early > mid * 0.9,
-            "the beam is still dim at 15% of the pass ({early:.1} against {mid:.1}); the blanking              window has grown wide enough to be seen as a fade rather than a retrace"
-        );
-    }
-
-    #[test]
-        fn the_sweep_crosses_the_field_with_dt_and_flies_back_to_the_left() {
+        // Three properties, the last being the one a flyback fails: it reaches both ends, it reverses
+        // at them, and it never moves further in one frame than a frame's worth.
         let t = builtin::radar_p1();
         let mut r = Radar::default();
         let mut c = Canvas::new(190, 60);
         let d = flat(0.4);
-        r.draw(&mut c, &t, &d);
-        let a = r.pos;
-        for _ in 0..10 {
-            r.draw(&mut c, &t, &d);
-        }
-        assert!(r.pos > a, "the sweep must advance with dt: {a} -> {}", r.pos);
+        let cols = column_count(190) as f32;
 
-        // One full pass plus a bit, so the flyback has to have happened - and it must be a
-        // flyback, i.e. a jump back to near zero, not a reversal. The fan oscillated; this must
-        // not, because a raster that reverses swaps which end of the picture is the fresh one.
-        let mut jumped_back = false;
-        let mut min_after_jump = f32::MAX;
+        r.draw(&mut c, &t, &d);
+        let (mut min_pos, mut max_pos) = (r.pos, r.pos);
+        let mut reversals = 0;
+        let mut worst_step = 0.0f32;
         let mut last = r.pos;
-        for _ in 0..100 {
+        let mut last_dir = r.dir;
+        for _ in 0..420 {
             r.draw(&mut c, &t, &d);
-            if r.pos < last {
-                jumped_back = true;
-                min_after_jump = min_after_jump.min(r.pos);
-                // A wrap lands within one frame's travel of the left edge; a reversal would step
-                // back by that same amount from wherever it turned round.
-                assert!(
-                    last > CELLS as f32 - 1.5,
-                    "the sweep went backwards from {last}, which is not the right edge - it is \
-                     oscillating rather than wrapping"
-                );
+            min_pos = min_pos.min(r.pos);
+            max_pos = max_pos.max(r.pos);
+            worst_step = worst_step.max((r.pos - last).abs());
+            if r.dir != last_dir {
+                reversals += 1;
+                last_dir = r.dir;
             }
             last = r.pos;
         }
-        assert!(jumped_back, "the sweep never wrapped: it sat at {}", r.pos);
-        assert!(min_after_jump < 1.0, "the flyback must reach the left edge, got {min_after_jump}");
-        assert!(
-            r.pos >= 0.0 && r.pos < CELLS as f32,
-            "the sweep must stay inside the field, got {}",
-            r.pos
-        );
 
-        // A zero-dt frame must not advance it - the render loop can deliver one.
-        let held = r.pos;
-        let mut still = flat(0.4);
-        still.dt_ms = 0.0;
-        r.draw(&mut c, &t, &still);
-        assert_eq!(r.pos, held, "a zero-length frame must not move the sweep");
+        assert!(min_pos < 1.0, "never reached the left end, closest was {min_pos:.2}");
+        assert!(max_pos > cols - 1.5, "never reached the right end, furthest was {max_pos:.2}");
+        assert!(reversals >= 3, "only {reversals} reversals in two cycles - it is not going back and forth");
+        // A wrap appears here as one step the width of the field. At 16ms a frame moves it about 0.36
+        // of a column, so anything past a couple of columns is a jump rather than a sweep.
+        assert!(
+            worst_step < 3.0,
+            "the beam moved {worst_step:.1} columns in one frame, which is a jump"
+        );
     }
 
     #[test]

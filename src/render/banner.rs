@@ -39,6 +39,16 @@ const FALL_MS: f32 = 520.0;
 /// the meter almost invisible on the darker colourways; 0.66 keeps it reading as the same app.
 const DIM: f32 = 0.66;
 
+/// The banner's own bloom floor and strength.
+///
+/// The first version simply reused the theme's `bloom`, damped to 0.7 - so on any colourway with
+/// bloom at 0 the text had no glow at all, and on the rest it had less than the meter beside it.
+/// Reviewed as wanting "a little glow on it", which is also what makes the text look like it belongs
+/// to the same display rather than being pasted over it. A floor of 3 means every colourway gets
+/// some; a theme that blooms harder still blooms harder.
+const GLOW_RADIUS_MIN: i32 = 3;
+const GLOW_STRENGTH_MIN: f32 = 0.55;
+
 /// Text height as a fraction of the panel interior.
 ///
 /// Reviewed by eye twice, and the second pass corrected a mistake in the first: the sizes were being
@@ -168,11 +178,12 @@ impl Banner {
             }
         }
 
-        if theme.bloom > 0.0 {
-            let mut glow = lit.clone();
-            glow.bloom(theme.bloom as i32, theme.glow_strength.clamp(0.0, 1.0) * 0.7);
-            c.draw_over(&glow);
-        }
+        // Always bloomed, never conditional on the theme: see GLOW_RADIUS_MIN.
+        let radius = (theme.bloom as i32).max(GLOW_RADIUS_MIN);
+        let strength = theme.glow_strength.clamp(0.0, 1.0).max(GLOW_STRENGTH_MIN);
+        let mut glow = lit.clone();
+        glow.bloom(radius, strength);
+        c.draw_over(&glow);
         c.draw_over(&lit);
         // After compositing, exactly as every family does - a halo must not escape the rounded corner.
         c.clip_to_rounded_rect(1, 2, w - 2, h - 4, 4);
