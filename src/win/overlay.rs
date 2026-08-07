@@ -198,10 +198,16 @@ impl Overlay {
 
     /// Non-blocking pump. The overlay has no UI of its own yet, but a window
     /// that never pumps messages is considered hung by the shell.
+    /// Drains THIS window's messages only.
+    ///
+    /// Filtered by hwnd rather than peeking with a null one, which drains every message on the
+    /// thread. That is not tidiness: it swallowed the tray icon's WM_TRAY - dispatching it to a
+    /// wndproc that ignored it - and so made clicking the tray icon do nothing. Filtering here means
+    /// the tray's own messages can only be consumed by the tray's pump.
     pub fn pump_messages(&self) {
         unsafe {
             let mut msg = MSG::default();
-            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+            while PeekMessageW(&mut msg, Some(self.hwnd), 0, 0, PM_REMOVE).as_bool() {
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }

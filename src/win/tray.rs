@@ -10,7 +10,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     TranslateMessage, HMENU, IDI_APPLICATION, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR,
     MF_STRING, MSG,
     PM_REMOVE,
-    SetTimer, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTALIGN, WM_APP, WM_CONTEXTMENU, WM_HOTKEY,
+    PostMessageW, SetTimer, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTALIGN, WM_APP, WM_CONTEXTMENU, WM_HOTKEY,
     WM_LBUTTONUP, WM_RBUTTONUP, WM_TIMER,
     WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
 };
@@ -106,9 +106,6 @@ fn families_in_order(items: &[MenuItem]) -> Vec<&str> {
 pub struct Tray {
     hwnd: HWND,
     themes: Vec<MenuItem>,
-    // Set on WM_RBUTTONUP, consumed by `take_right_click`. NOT a TrayEvent
-    // queue - see the note on `poll` below for why.
-    right_clicked: bool,
 }
 
 impl Tray {
@@ -166,7 +163,6 @@ impl Tray {
             Ok(Tray {
                 hwnd,
                 themes: themes.to_vec(),
-                right_clicked: false,
             })
         }
     }
@@ -326,6 +322,9 @@ impl Tray {
 
             let mut pt = POINT::default();
             let _ = GetCursorPos(&mut pt);
+            // A tray menu needs its owner to be foreground or it dismisses itself on the first
+            // mouse move, and it needs the WM_NULL nudge afterwards or the first selection after it
+            // closes is swallowed. Both are long-standing shell requirements for this pattern.
             let _ = SetForegroundWindow(self.hwnd);
             let cmd = TrackPopupMenu(
                 menu,
@@ -337,6 +336,7 @@ impl Tray {
                 None,
             );
             let _ = DestroyMenu(menu);
+            let _ = PostMessageW(Some(self.hwnd), 0x0000, WPARAM(0), LPARAM(0));
 
             let id = cmd.0 as usize;
             if id == ID_KEYS_SUGGEST {
@@ -391,25 +391,6 @@ impl Tray {
         unsafe {
             let mut msg = MSG::default();
             while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
-                // EVERY way the shell can ask for this icon's menu, not just WM_RBUTTONUP.
-                //
-                // This is the likely reason the menu was reported as missing entirely. In the legacy
-                // notify-icon mode this app uses, a right-click arrives as WM_RBUTTONUP in lParam -
-                // but the Windows 11 shell also sends WM_CONTEXTMENU, which is what a keyboard
-                // context-menu press and some shell builds deliver, and the old check ignored it. If
-                // that is what a machine sends, right-clicking the tray icon did nothing at all, so
-                // "Start with Windows" and "Exit" were unreachable from the tray even though they
-                // have always been in the menu.
-                //
-                // WM_LBUTTONUP is accepted too. It is not the Windows convention for a menu, but
-                // this app has no window to show on a left click, and an icon that does nothing when
-                // clicked reads as broken.
-                if msg.message == WM_TRAY {
-                    let which = msg.lParam.0 as u32;
-                    if which == WM_RBUTTONUP || which == WM_CONTEXTMENU || which == WM_LBUTTONUP {
-                        self.right_clicked = true;
-                    }
-                }
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
@@ -421,9 +402,7 @@ impl Tray {
     /// is expected to follow a `true` result with `show_menu(..)`; `Quit` is
     /// produced only by the menu returning `ID_QUIT`, never by `poll` itself.
     pub fn take_right_click(&mut self) -> bool {
-        let hit = self.right_clicked;
-        self.right_clicked = false;
-        hit
+        TRAY_CLICKED.swap(false, std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -444,6 +423,21 @@ impl Drop for Tray {
 /// Timer id for the render-tick backstop. Scoped to the tray window, so it cannot collide with
 /// anything outside this module.
 const ID_TICK_TIMER: usize = 1;
+
+/// Set when the shell tells us the icon was clicked. Read and cleared by `take_right_click`.
+///
+/// A static because it is written from a bare `extern "system"` wndproc, and IN THE WNDPROC because
+/// that is the only place it can be seen reliably. It used to be detected by inspecting messages
+/// inside `poll`'s own `PeekMessageW` loop, and that broke the moment anything else on the thread
+/// pumped: `overlay::pump_messages` peeks with a null hwnd, so it drains EVERY message including
+/// WM_TRAY and hands it to `DispatchMessageW`, which routed it to a wndproc that ignored it. The
+/// click was consumed and the flag never set, so clicking the tray icon did nothing at all.
+///
+/// That became reachable when the render tick moved behind a WM_TIMER: the timer handler calls the
+/// tick, the tick pumps the overlay, and the timer is dispatched from inside `poll`'s own loop - so
+/// the overlay's pump now runs in the middle of the very loop that was looking for the click.
+/// Handling the message here instead makes it independent of who pumps.
+static TRAY_CLICKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// The render tick, installed by `main`.
 ///
@@ -483,6 +477,26 @@ unsafe extern "system" fn tray_wndproc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if msg == WM_TRAY {
+        // Every way the shell can ask for this icon's menu. WM_CONTEXTMENU is what a keyboard
+        // context-menu press sends and what some Windows 11 shell builds send for a right-click;
+        // WM_LBUTTONUP is accepted because this app has no window to show on a left click, and an
+        // icon that does nothing when clicked reads as broken.
+        let which = lparam.0 as u32;
+        let wanted = which == WM_RBUTTONUP || which == WM_CONTEXTMENU || which == WM_LBUTTONUP;
+        // Logged unconditionally, because "clicking the icon does nothing" has two completely
+        // different causes and they are indistinguishable without this: either the shell never sent
+        // us anything, or it sent a message this list does not accept. `log::write` collapses
+        // repeats, so a stream of mouse-move callbacks cannot flood the file.
+        crate::log::write(&format!(
+            "tray callback {which:#06X}{}",
+            if wanted { " -> opening the menu" } else { " (ignored)" }
+        ));
+        if wanted {
+            TRAY_CLICKED.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        return LRESULT(0);
+    }
     if msg == WM_HOTKEY {
         // Routed here because a null-hwnd registration would post a THREAD message that
         // DispatchMessageW cannot deliver anywhere - see the note in `win::hotkeys`.
