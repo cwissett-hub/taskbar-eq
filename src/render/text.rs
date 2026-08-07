@@ -128,6 +128,35 @@ pub fn render(text: &str, px: i32) -> Option<TextMask> {
 mod tests {
     use super::*;
 
+    /// How wide real titles are at each candidate size, against the room a 190px and a 380px panel
+    /// actually have. Run: cargo test --release probe_text_widths -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn probe_text_widths() {
+        // pad is 3 each side in the banner, interior is w-2.
+        let avail = |w: i32| w - 2 - 6;
+        println!("room: 190px panel = {}px, 380px panel = {}px", avail(190), avail(380));
+        let titles = [
+            "Hot Dog - Limp Bizkit",
+            "Encore Une Fois - Original Edit",
+            "Free - DJ Hirohito Hitmix",
+            "All I Ever Wanted - Basshunter",
+        ];
+        for px in [13, 15, 17, 19, 21, 24] {
+            let frac = px as f32 / 56.0;
+            let mut widths = Vec::new();
+            for t in titles {
+                widths.push(render(t, px).map(|m| m.w).unwrap_or(0));
+            }
+            let worst = *widths.iter().max().unwrap();
+            println!(
+                "  {px}px (fraction {frac:.2})  widths {widths:?}  worst {worst}px                   fits190={} fits380={}",
+                worst <= avail(190),
+                worst <= avail(380)
+            );
+        }
+    }
+
     #[test]
     fn text_rasterises_with_actual_ink_in_it() {
         let m = render("Hot Dog", 14).expect("GDI should rasterise on a desktop session");

@@ -41,11 +41,21 @@ const DIM: f32 = 0.66;
 
 /// Text height as a fraction of the panel interior.
 ///
-/// 0.30 was reviewed by eye and was too big: at 17px on a 190px panel roughly twenty characters fit,
-/// so "Hot Dog - Limp Bizkit" already overflowed and virtually every real title scrolled. A marquee is
-/// for the exceptions, not the norm - constant motion is fidgety and harder to read than static text.
-/// 0.23 gives ~13px and about thirty characters, which most titles fit inside.
-const TEXT_FRACTION: f32 = 0.23;
+/// Reviewed by eye twice, and the second pass corrected a mistake in the first: the sizes were being
+/// judged against a 190px panel when the actual display is configured to 380. Measured widths for real
+/// titles ("Encore Une Fois - Original Edit" is the worst of the current playlist) against the 372px a
+/// 380 panel leaves:
+///
+/// | size  | worst title | fits 182px | fits 372px |
+/// |-------|-------------|------------|------------|
+/// | 13px  | 212px       | no         | yes        |
+/// | 19px  | 291px       | no         | yes, 81px spare |
+/// | 24px  | 359px       | no         | only just |
+///
+/// 19px is as large as it can be while still leaving room for a title half again as long as anything
+/// in that sample. Nothing fits 182px at any readable size, which is fine - that is what the marquee
+/// is for, and a narrow panel is the case where scrolling is unavoidable rather than fidgety.
+const TEXT_FRACTION: f32 = 0.34;
 
 pub struct Banner {
     mask: TextMask,
@@ -193,8 +203,13 @@ mod tests {
         let mut n = 0;
         for id in picks {
             let Some(theme) = all.iter().find(|t| t.id == id) else { continue };
-            for (tag, age) in [("off", 0.0f32), ("mid", RISE_MS + 400.0), ("late", RISE_MS + HOLD_MS - 200.0)] {
-                let mut c = Canvas::new(190, 60);
+            for (tag, age, pw) in [
+                ("off", 0.0f32, 380),
+                ("mid", RISE_MS + 400.0, 380),
+                ("late", RISE_MS + HOLD_MS - 200.0, 380),
+                ("narrow", RISE_MS + 400.0, 190),
+            ] {
+                let mut c = Canvas::new(pw, 60);
                 let mut fam = crate::render::family_for(&theme.family);
                 // A few frames so the family has something on screen, not a cold first frame.
                 for k in 0..90 {
@@ -211,9 +226,9 @@ mod tests {
                     }
                     b.draw(&mut c, theme, 1.4);
                 }
-                let mut out = Vec::with_capacity(190 * 60 * 4);
+                let mut out = Vec::with_capacity((pw * 60 * 4) as usize);
                 for y in 0..60 {
-                    for x in 0..190 {
+                    for x in 0..pw {
                         let p = c.get(x, y);
                         let a = p.a as f32 / 255.0;
                         for ch in [p.r, p.g, p.b] {
