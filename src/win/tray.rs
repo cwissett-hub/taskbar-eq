@@ -29,6 +29,20 @@ use windows::Win32::UI::WindowsAndMessaging::{
 // when the menu returns `ID_QUIT`.
 
 const WM_TRAY: u32 = WM_APP + 1;
+/// A request to render one frame, POSTED rather than timed.
+///
+/// This is the fix for the meter stalling while a menu or the capture window is open, and the reason
+/// it works is a priority difference. `WM_TIMER` is a LOW-PRIORITY message: the system only
+/// synthesises one when the thread's queue is otherwise empty, so inside a modal loop that is busy it
+/// simply does not arrive. Measured over a 4s open menu, the timer alone left gaps of ~550ms, and the
+/// phase breakdown showed the tick itself taking 0ms - it was not slow, it was not being CALLED.
+///
+/// A posted message is ordinary priority and a modal loop's `GetMessage` returns it like any other, so
+/// it is delivered promptly whatever the loop is doing. The tick still runs on the main thread, inside
+/// the modal loop's own dispatch, which is why this needs no cross-thread window access at all - the
+/// alternative was moving the renderer to its own thread, a far larger change to a working app for the
+/// same result.
+const WM_TICK: u32 = WM_APP + 2;
 const ID_QUIT: usize = 1000;
 const ID_AUTOSTART: usize = 1001;
 const ID_THEME_BASE: usize = 2000;
@@ -495,6 +509,14 @@ static TRAY_CLICKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBo
 /// thread-local in `main`; this is only the doorbell.
 static TICK_HOOK: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
 
+/// True while a `WM_TICK` is already in the queue.
+///
+/// Without this the poster thread would push messages faster than a busy main thread could drain
+/// them, and the queue would grow without bound - a frame's worth of work per message, arriving
+/// whether or not the previous one has been done. One in flight at a time means the poster naturally
+/// runs at whatever rate the main thread can actually service.
+static TICK_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Registers the function `WM_TIMER` should call, and starts the timer.
 ///
 /// WHY THIS EXISTS: `TrackPopupMenu` runs its own modal message loop and does not return until the
@@ -507,7 +529,30 @@ static TICK_HOOK: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
 /// Safe to call more than once; only the first hook is kept.
 pub fn install_tick(hwnd: HWND, interval_ms: u32, tick: fn()) {
     let _ = TICK_HOOK.set(tick);
+
+    // The poster. Its only job is to put a WM_TICK in the queue when there is not one already; the
+    // work happens on the main thread when it dispatches. HWND is not Send, hence the isize.
+    let raw = hwnd.0 as isize;
+    std::thread::spawn(move || {
+        let hwnd = HWND(raw as *mut std::ffi::c_void);
+        loop {
+            if !TICK_PENDING.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                let posted =
+                    unsafe { PostMessageW(Some(hwnd), WM_TICK, WPARAM(0), LPARAM(0)) }.is_ok();
+                if !posted {
+                    // The window has gone, i.e. the app is closing.
+                    TICK_PENDING.store(false, std::sync::atomic::Ordering::Release);
+                    return;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(interval_ms.max(1) as u64));
+        }
+    });
+
     unsafe {
+        // The timer stays as a BACKSTOP. It costs nothing, and it means a poster thread that somehow
+        // dies leaves the app exactly as it behaved before this change - correct, but stalling while a
+        // menu is open - rather than with a frozen meter.
         if SetTimer(Some(hwnd), ID_TICK_TIMER, interval_ms, None) == 0 {
             // Not fatal, and deliberately so: without the timer the app behaves exactly as it did
             // before this backstop existed - correct, but frozen while a menu is open. That is a
@@ -526,6 +571,13 @@ unsafe extern "system" fn tray_wndproc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if msg == WM_TICK {
+        TICK_PENDING.store(false, std::sync::atomic::Ordering::Release);
+        if let Some(tick) = TICK_HOOK.get() {
+            tick();
+        }
+        return LRESULT(0);
+    }
     if msg == WM_TRAY {
         // Every way the shell can ask for this icon's menu. WM_CONTEXTMENU is what a keyboard
         // context-menu press sends and what some Windows 11 shell builds send for a right-click;
