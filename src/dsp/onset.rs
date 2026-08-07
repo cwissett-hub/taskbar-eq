@@ -98,8 +98,10 @@ impl Flux {
         }
     }
 
-    /// This frame's flux, for calibration probes.
-    #[cfg(test)]
+    /// This frame's flux.
+    ///
+    /// Read by `dsp::flourish`, which ranks a hit's MAGNITUDE against recent hits rather than only
+    /// asking whether an onset happened.
     pub fn flux(&self) -> f32 {
         self.last
     }

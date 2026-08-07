@@ -32,6 +32,31 @@ pub enum Texture {
 /// brightness, and no amount of value fixes it - only pulling it toward white does.
 pub const RAINBOW_SAT: f32 = 0.68;
 
+/// How often a family's flourish fires, by default.
+///
+/// A flourish is the rare whole-display event each family does on an exceptional hit - the vaporwave
+/// lightning generalised. 0 disables it; larger fires more often. See `dsp::flourish` for what
+/// "exceptional" means and how it is measured, and
+/// `dsp::flourish::tests::the_default_setting_is_rare_on_every_kind_of_music` for what this value
+/// actually produces on three recordings of real music.
+///
+/// Measured, not guessed. Swept over a 119-second capture of NINE varied tracks - the calibration
+/// that matters, because looping one 13-second recording makes the same exceptional moment recur once
+/// per loop and the count jumps in steps of the loop count instead of forming a curve:
+///
+/// ```text
+///   strength   0.10  0.20  0.30  0.35  0.45  0.50  0.60  0.70  0.85  1.00
+///   one per     60s   40s   40s   30s   30s   24s   20s   15s    9s    7s
+/// ```
+///
+/// 0.45 is one every thirty seconds, which is "fairly rare" for an event that takes over the whole
+/// display, and it errs on the rare side because raising it is trivial and because the failure this
+/// project keeps hitting is the opposite one - an event nobody ever sees.
+///
+/// A constant rather than a bare literal in `Theme::default` so the calibration test asserts against
+/// the shipped value rather than a copy of it that could drift.
+pub const DEFAULT_FLOURISH: f32 = 0.45;
+
 /// Human-readable name for a family, for the theme menu's submenu titles.
 ///
 /// Falls back to a title-cased version of the raw family id rather than skipping or
@@ -795,6 +820,11 @@ pub struct Theme {
     /// additionally requires the declared value to be TIGHT against what is measured - so a
     /// deliberate 2.3:1 passes and is recorded while an accidental 1.2:1 still fails.
     pub contrast_floor: f32,
+    /// How often this colourway's flourish fires. 0 is off. See `DEFAULT_FLOURISH`.
+    ///
+    /// A shared `[look]` field rather than a per-family one because every family has exactly one
+    /// flourish and the knob means the same thing for all of them: how rare the rare thing is.
+    pub flourish: f32,
     pub rainbow: f32,
     /// Hue turns spanned across the width of the display, so the rainbow is a WAVE and not one
     /// flat colour shifting.
@@ -857,6 +887,7 @@ inks: 0,
             ink_morph: 0.0,
             aberration: 0.0,
             contrast_floor: 3.0,
+            flourish: DEFAULT_FLOURISH,
             rainbow: 0.0,
             rainbow_spread: 0.8,
             vapor: VaporParams::default(),

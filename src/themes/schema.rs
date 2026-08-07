@@ -75,6 +75,7 @@ struct RawLook {
     ink_morph: Option<f32>,
     aberration: Option<f32>,
     contrast_floor: Option<f32>,
+    flourish: Option<f32>,
     rainbow: Option<f32>,
     rainbow_spread: Option<f32>,
 }
@@ -421,6 +422,7 @@ pub fn parse(src: &str) -> Result<Theme, ThemeError> {
         ink_morph: raw.look.ink_morph.unwrap_or(d.ink_morph),
         aberration: raw.look.aberration.unwrap_or(d.aberration),
         contrast_floor: raw.look.contrast_floor.unwrap_or(d.contrast_floor),
+        flourish: raw.look.flourish.unwrap_or(d.flourish),
         rainbow: raw.look.rainbow.unwrap_or(d.rainbow),
         rainbow_spread: raw.look.rainbow_spread.unwrap_or(d.rainbow_spread),
         fade: raw.look.fade.unwrap_or(d.fade),
