@@ -7,7 +7,7 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW,
     GetCursorPos, LoadIconW, PeekMessageW, RegisterClassW, SetForegroundWindow, TrackPopupMenu,
-    TranslateMessage, HMENU, IDI_APPLICATION, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR,
+    TranslateMessage, HMENU, IDI_APPLICATION, MF_CHECKED, MF_POPUP, MF_SEPARATOR,
     MF_STRING, MSG,
     PM_REMOVE,
     PostMessageW, SetTimer, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTALIGN, WM_APP, WM_CONTEXTMENU, WM_HOTKEY,
@@ -39,12 +39,16 @@ const ID_KEYS_CLEAR: usize = 1101;
 const ID_BACKEND_SESSION: usize = 1102;
 const ID_BACKEND_MEDIAKEYS: usize = 1103;
 const ID_KEYS_EDIT: usize = 1104;
+/// One id per action, so clicking a binding starts capturing for THAT action.
+const ID_BIND_BASE: usize = 1110;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TrayEvent {
     Quit,
     SelectTheme(String),
     ToggleAutostart,
+    /// Capture a new key for one action, by index: 0 play/pause, 1 next, 2 previous.
+    BindKey(usize),
     /// Bind the suggested transport keys and register them immediately.
     SuggestKeys,
     /// Release every transport key.
@@ -255,6 +259,9 @@ impl Tray {
             if let Ok(sub) = CreatePopupMenu() {
                 // The three bindings, shown as disabled labels. Informational: this is where the
                 // user looks to find out what is bound, and whether it is working.
+                // CLICKABLE, not informational. Selecting one opens the capture window for that
+                // action - which is the whole point, and was the gap: showing the bindings without
+                // any way to set them just tells the user what they cannot change.
                 for (i, label) in transport.keys.iter().enumerate() {
                     let text = format!(
                         "{}:  {}",
@@ -265,8 +272,8 @@ impl Tray {
                         text.encode_utf16().chain(std::iter::once(0)).collect();
                     let _ = AppendMenuW(
                         sub,
-                        MF_STRING | MF_GRAYED,
-                        0,
+                        MF_STRING,
+                        ID_BIND_BASE + i,
                         windows::core::PCWSTR(wide.as_mut_ptr()),
                     );
                 }
@@ -339,6 +346,9 @@ impl Tray {
             let _ = PostMessageW(Some(self.hwnd), 0x0000, WPARAM(0), LPARAM(0));
 
             let id = cmd.0 as usize;
+            if (ID_BIND_BASE..ID_BIND_BASE + 3).contains(&id) {
+                return Some(TrayEvent::BindKey(id - ID_BIND_BASE));
+            }
             if id == ID_KEYS_SUGGEST {
                 return Some(TrayEvent::SuggestKeys);
             }

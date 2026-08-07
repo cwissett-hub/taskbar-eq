@@ -965,6 +965,43 @@ fn main() -> Result<()> {
                         }
                     }
                 }
+                Some(TrayEvent::BindKey(i)) => {
+                    // EVERY binding is released first. A registered hotkey consumes the keystroke,
+                    // so the combinations most worth rebinding are exactly the ones that would fire
+                    // play/pause instead of reaching the capture window.
+                    hotkeys.release_all();
+                    let label = ["play / pause", "next track", "previous track"][i.min(2)];
+                    let dark = win::darkmode::windows_prefers_dark();
+                    match win::capture_key::capture(tray.hwnd(), label, dark) {
+                        Some(win::capture_key::Captured::Chord(c)) => {
+                            let text = c.to_string();
+                            log::write(&format!("captured {text} for {label}"));
+                            match i {
+                                0 => cfg.hotkeys.play_pause = text,
+                                1 => cfg.hotkeys.next_track = text,
+                                _ => cfg.hotkeys.prev_track = text,
+                            }
+                            if let Err(e) = cfg.save() {
+                                log::write(&format!("config save failed: {e}"));
+                            }
+                        }
+                        Some(win::capture_key::Captured::Clear) => {
+                            log::write(&format!("cleared the key for {label}"));
+                            match i {
+                                0 => cfg.hotkeys.play_pause.clear(),
+                                1 => cfg.hotkeys.next_track.clear(),
+                                _ => cfg.hotkeys.prev_track.clear(),
+                            }
+                            if let Err(e) = cfg.save() {
+                                log::write(&format!("config save failed: {e}"));
+                            }
+                        }
+                        None => log::write(&format!("key capture for {label} was cancelled")),
+                    }
+                    // Re-applied whatever happened, including on a cancel - otherwise a cancelled
+                    // capture would leave the machine with no transport keys at all.
+                    outcomes = rebind(&mut hotkeys, &cfg);
+                }
                 Some(TrayEvent::SuggestKeys) => {
                     // Registered IMMEDIATELY, so a combination another program already owns is
                     // reported now rather than silently failing at the next logon.

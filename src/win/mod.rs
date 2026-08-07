@@ -1,4 +1,5 @@
 pub mod autostart;
+pub mod capture_key;
 pub mod darkmode;
 pub mod capture;
 pub mod dpi;
