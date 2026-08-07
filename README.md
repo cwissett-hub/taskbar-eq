@@ -81,7 +81,7 @@ overlay does not exist, so the tray icon is all that is left to click.
 **Last updated: 2026-08-05.** Full test suite green (199 at the time of writing), release
 build warning-free. The colourway and family counts below are asserted by a test; the test
 count itself is a snapshot and can drift.
-**90 colourways across 13 families.**
+**91 colourways across 13 families.**
 
 | | Feature | State |
 |---|---|---|
@@ -419,7 +419,7 @@ Drop a `.toml` file (any filename — the `id` inside is what matters) into
 watched, so saving the file updates the live overlay without a restart — edit a colour, hit
 save, and watch the taskbar change.
 
-A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 90
+A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 91
 built-ins, which are always embedded in the exe regardless of whether that folder exists.
 
 Failure modes are all deliberately soft, because these files are hand-authored:

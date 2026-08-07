@@ -60,6 +60,7 @@ pub fn all() -> Vec<Theme> {
         radar_ice(),
         radar_alert(),
         radar_mono(),
+        radar_nato(),
         radar_ru(),
         radar_cn(),
         fluid_deep(),
@@ -1853,6 +1854,46 @@ pub fn radar_mono() -> Theme {
     }
 }
 
+
+/// NATO/US receiver, completing the set with RU and CN: whose hardware you are looking at decides
+/// what the scope can say.
+///
+/// The threat library here is the proper NATO one, and it is the mirror image of `radar_ru`'s. A
+/// Western receiver annotates Soviet and Russian systems, and those are known by their NATO REPORTING
+/// numbers - the SA-series - where a Russian receiver annotating Western hardware uses US designation
+/// numbers. So a `6` here is an SA-6 Gainful and a `10` an SA-10 Grumble, while a `104` on the RU scope
+/// is a MIM-104 Patriot. Same display, opposite libraries.
+///
+/// Deliberately weighted to threats rather than to friendly emitters: `M` for MiG-family airborne
+/// intercept radars, `A` for gun-laying radar, `U` for an emitter the library cannot identify - which
+/// is the entry a real receiver shows more often than anyone would like. `H` and `P` are absent, unlike
+/// the family default: HAWK and Patriot are own-side systems, and putting them on a NATO threat scope
+/// would be showing yourself to yourself.
+///
+/// The palette is the yellow-green of an ALR-67-era monochrome display rather than the pure phosphor
+/// green of `radar_p1`, so the three national variants read as three cockpits.
+pub fn radar_nato() -> Theme {
+    Theme {
+        id: "radar-nato".into(),
+        name: "NATO (US)".into(),
+        lit: "#a8e848".into(),
+        hot: "#eeffd0".into(),
+        panel: "#060a02".into(),
+        panel_alpha: 1.0,
+        edge: "#7f9a38".into(),
+        edge_alpha: 0.20,
+        radar: RadarParams {
+            codes: [
+                "6", "8", "10", "11", "13", "15", "17", "19", "20", "22", "2", "3", "M", "A", "U",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+            ..RadarParams::default()
+        },
+        ..radar_base()
+    }
+}
 
 /// Soviet/Russian cockpit, looking OUTWARD at Western hardware.
 ///
