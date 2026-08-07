@@ -496,4 +496,72 @@ mod newest_dump {
         }
         println!("wrote {n} dumps");
     }
+    /// Every family's flourish at its peak, beside the same frame with the flourish off.
+    ///
+    /// Run: cargo test --release dump_flourishes -- --ignored --nocapture
+    ///
+    /// Writes PAIRS deliberately. A flourish is only interesting as a difference, and judging one from
+    /// a single frame is how a subtle effect gets called broken and an overpowering one gets called
+    /// fine. The `-off` frame is the same audio, same colourway, same frame index, with
+    /// `flourish = 0`.
+    ///
+    /// The frame chosen is a few ticks AFTER the firing frame, not the firing frame: that frame is
+    /// full-scale across every band, so most displays are already saturated by the music there and the
+    /// flourish is invisible. See `dsp::flourish::firing_sequence`.
+    #[test]
+    #[ignore]
+    fn dump_flourishes() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
+        std::fs::create_dir_all(&dir).unwrap();
+        let seq = crate::dsp::flourish::firing_sequence(crate::dsp::bands::NUM_BANDS);
+        // One representative colourway per family, and a quiet frame to hold after the hit.
+        let picks = [
+            ("segmented", "vfd-ice"),
+            ("vu", "hifi-white"),
+            ("waterfall", "waterfall-heat"),
+        ];
+        let mut n = 0;
+        for (family, theme_id) in picks {
+            for (tag, strength) in [("on", crate::themes::DEFAULT_FLOURISH), ("off", 0.0)] {
+                let mut theme = crate::themes::builtin::all()
+                    .into_iter()
+                    .find(|t| t.id == theme_id)
+                    .unwrap_or_else(|| panic!("no colourway {theme_id}"));
+                theme.flourish = strength;
+                let mut f = family_for(family);
+                let mut c = Canvas::new(190, 60);
+                for row in &seq {
+                    let mut d = FrameData { dt_ms: 16.7, ..FrameData::default() };
+                    for (i, v) in d.levels.iter_mut().enumerate() {
+                        *v = row.get(i).copied().unwrap_or(0.0);
+                    }
+                    d.peaks = d.levels;
+                    // A plausible stereo reading for the dial families, which read rms not bands.
+                    d.rms_l = 0.06;
+                    d.rms_r = 0.05;
+                    f.draw(&mut c, &theme, &d);
+                }
+                // Four quiet frames: the envelope is still near full, the audio has dropped away.
+                for _ in 0..4 {
+                    let d = FrameData { dt_ms: 16.7, rms_l: 0.02, rms_r: 0.02, ..FrameData::default() };
+                    f.draw(&mut c, &theme, &d);
+                }
+                let mut out = Vec::new();
+                for y in 0..60 {
+                    for x in 0..190 {
+                        let px = c.get(x, y);
+                        let a = px.a as f32 / 255.0;
+                        for ch in [px.r, px.g, px.b] {
+                            out.push((ch as f32 + 22.0 * (1.0 - a)).min(255.0) as u8);
+                        }
+                        out.push(255);
+                    }
+                }
+                std::fs::write(dir.join(format!("flourish-{family}-{tag}.rgba")), &out).unwrap();
+                n += 1;
+            }
+        }
+        println!("wrote {n} flourish dumps (on/off pairs) to {}", dir.display());
+    }
+
 }

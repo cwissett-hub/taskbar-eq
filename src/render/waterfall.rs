@@ -52,6 +52,9 @@ const HIST_COLS: usize = 512;
 /// Real time one column represents. See the scroll note in the module docs.
 const COLUMN_MS: f32 = 16.7;
 
+/// Columns the flourish's tear spans. See `Waterfall::tear`.
+const TEAR_COLS: u8 = 3;
+
 /// Most columns a single frame may push.
 ///
 /// A stall - a device change, a theme reload, the machine swapping - hands us one enormous
@@ -231,6 +234,26 @@ pub struct Waterfall {
     /// theme's sensitivity rather than being frozen at push time.
     mark_lvl: Vec<f32>,
     head: usize,
+    /// The flourish: a broadband tear written into the history. See `dsp::flourish`.
+    ///
+    /// No envelope, unlike every other family's. A spectrogram already HAS persistence - the torn
+    /// column is written into the ring buffer once and then scrolls away on its own over the next few
+    /// seconds, which is a longer and more legible afterlife than any decay envelope could give it. It
+    /// is the one family whose flourish is a fact about the data rather than a filter over the drawing.
+    flourish: crate::dsp::flourish::Trigger,
+    /// Columns of tear still to be written, set when the flourish fires and consumed by
+    /// `push_column`.
+    ///
+    /// A COUNT rather than a flag, and `TEAR_COLS` wide rather than one. A single full-scale column
+    /// read as merely one brighter column among the audio's own - visible in the eyeball dump, but not
+    /// as a rip. Three columns is about 50ms of history and reads as a discontinuity in the recording,
+    /// which is what a dropout actually looks like on a spectrogram.
+    ///
+    /// Deferred rather than applied on the flourish frame because the history advances on its OWN clock
+    /// - `COLUMN_MS`, not the frame interval - so a flourish frame and a column push are different
+    /// events. Writing directly would have torn whichever column happened to be current, which on a
+    /// slow frame can be several pushes old.
+    tear: u8,
     filled: usize,
     /// Leftover real time not yet worth a column.
     acc: f32,
@@ -274,10 +297,18 @@ impl Waterfall {
         let base = self.head * NUM_BANDS;
         let mut best = 0.0f32;
         let mut best_i = NO_MARK;
+        // THE FLOURISH: a broadband tear. One column written at full scale across every band, which
+        // is what a spectrogram shows when the signal chain drops out for an instant - a hard vertical
+        // rip through the whole spectrum. Consumed here, so it lands on a real column boundary.
+        let tear = self.tear > 0;
+        self.tear = self.tear.saturating_sub(1);
         for i in 0..NUM_BANDS {
             // Sanitised on the way IN, so nothing non-finite can ever be held in the history and
             // every later frame that redraws these columns is safe by construction.
-            let v = if d.levels[i].is_finite() { d.levels[i].clamp(0.0, 1.0) } else { 0.0 };
+            let mut v = if d.levels[i].is_finite() { d.levels[i].clamp(0.0, 1.0) } else { 0.0 };
+            if tear {
+                v = 1.0;
+            }
             self.hist[base + i] = v;
             if v > best {
                 best = v;
@@ -303,6 +334,13 @@ impl Family for Waterfall {
     fn draw(&mut self, c: &mut Canvas, t: &Theme, d: &FrameData) {
         let (w, h) = (c.width(), c.height());
         c.clear();
+
+        // The flourish is armed before the size guard so a canvas too small to draw still keeps the
+        // trigger's history current, and `tear` is latched rather than acted on - see the field.
+        let dt = if d.dt_ms.is_finite() { d.dt_ms.clamp(0.0, 200.0) } else { 16.7 };
+        if self.flourish.update(&d.levels, dt, t.flourish) {
+            self.tear = TEAR_COLS;
+        }
         // `rounded_rect` guards non-positive dimensions itself, so the degenerate sizes (1x1,
         // 12x12) draw nothing here and return below rather than reaching any geometry.
         c.rounded_rect(1, 2, w - 2, h - 4, 3, Rgba::from_hex(&t.panel, t.panel_alpha));
@@ -990,4 +1028,75 @@ mod tests {
         }
         println!("wrote {n} waterfall dumps to {}", dir.display());
     }
+    #[test]
+    fn the_flourish_tears_one_full_height_column_and_it_then_scrolls_away() {
+        // A tear is a hard vertical rip through the whole spectrum: one column at full scale across
+        // every band. Two properties, and the second is what makes it this family's flourish rather
+        // than a generic flash - it is written into the HISTORY, so it survives as data and scrolls.
+        let seq = crate::dsp::flourish::firing_sequence(NUM_BANDS);
+        let run = |flourish: f32, after: usize| -> Canvas {
+            let mut t = builtin::waterfall_heat();
+            t.flourish = flourish;
+            let mut f = Waterfall::default();
+            let mut c = Canvas::new(190, 60);
+            for row in &seq {
+                let mut d = FrameData { dt_ms: 16.7, ..FrameData::default() };
+                for (i, v) in d.levels.iter_mut().enumerate() {
+                    *v = row.get(i).copied().unwrap_or(0.0);
+                }
+                d.peaks = d.levels;
+                f.draw(&mut c, &t, &d);
+            }
+            // Quiet afterwards, so a bright column can only be the tear.
+            for _ in 0..after {
+                f.draw(&mut c, &t, &FrameData { dt_ms: 16.7, ..FrameData::default() });
+            }
+            c
+        };
+        // The BRIGHTEST column in the plot, summed down its height.
+        //
+        // Counting lit ROWS was the first attempt and it cannot discriminate: the fixture's audio spans
+        // every band too, so it lights every row of its own column and the measurement read 54 against
+        // 54. A tear is written at FULL scale where the audio is two thirds of the way up the response
+        // curve, so what separates them is brightness per column, not extent.
+        let brightest = |c: &Canvas| -> u32 {
+            let mut best = 0u32;
+            for x in 0..190 {
+                let sum: u32 = (0..60)
+                    .map(|y| {
+                        let p = c.get(x, y);
+                        p.r as u32 + p.g as u32 + p.b as u32
+                    })
+                    .sum();
+                best = best.max(sum);
+            }
+            best
+        };
+        let on = run(crate::themes::DEFAULT_FLOURISH, 6);
+        let off = run(0.0, 6);
+        assert_ne!(on.bits(), off.bits(), "the tear changed nothing");
+        let (a, b) = (brightest(&on), brightest(&off));
+        assert!(
+            a > b + b / 4,
+            "the tear should be a much brighter column than the audio: {a} against {b}"
+        );
+
+        // AND IT SCROLLS. The column is in the ring buffer, so a second later it is still on screen -
+        // just further left. This is the property that distinguishes writing history from drawing a
+        // flash, and a flash would pass every assertion above.
+        let later = run(crate::themes::DEFAULT_FLOURISH, 90);
+        assert!(
+            brightest(&later) > b + b / 4,
+            "the tear vanished instead of scrolling: brightest column {} a second and a half later",
+            brightest(&later)
+        );
+        // Eventually it does leave, or it would be a permanent stripe.
+        let much_later = run(crate::themes::DEFAULT_FLOURISH, 1200);
+        assert!(
+            brightest(&much_later) <= b + b / 4,
+            "the tear never scrolled off: brightest column still {}",
+            brightest(&much_later)
+        );
+    }
+
 }

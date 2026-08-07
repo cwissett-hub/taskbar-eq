@@ -194,11 +194,24 @@ pub fn firing_sequence(bands: usize) -> Vec<Vec<f32>> {
     let mut out = Vec::new();
     // An ordinary groove first: enough candidate hits to fill the median window past MIN_SAMPLES, and
     // enough elapsed time to clear MIN_GAP_MS.
+    //
+    // Deliberately QUIET, and the exceptional hit deliberately NOT full scale. An onset is a big
+    // CHANGE, not a big level, so a moderate jump out of a quiet groove is just as exceptional as a
+    // jump to full scale - and it leaves headroom above the audio, which several families need to be
+    // testable at all. The spectrogram's tear writes a full-scale column; against a full-scale firing
+    // frame that is bit-identical to the audio, and its first test reported "the tear changed nothing"
+    // while the tear was working perfectly.
     for i in 0..300 {
-        out.push(vec![if i % 20 == 0 { 0.45 } else { 0.15 }; bands]);
+        out.push(vec![if i % 20 == 0 { 0.22 } else { 0.06 }; bands]);
     }
-    // Then one hit far above what this material has established as ordinary.
-    out.push(vec![1.0; bands]);
+    // The last groove frame is a quiet one (299 is not a multiple of 20), so this is a 0.39 jump - well
+    // clear of the trigger's threshold while leaving the level itself at 0.45.
+    //
+    // 0.45 rather than higher because several families map levels through a response curve that
+    // SATURATES around 0.6: at that point the audio is already at full brightness and a flourish drawn
+    // at full scale is indistinguishable from it. The spectrogram's tear test measured 54 lit rows
+    // against 54 for exactly that reason. 0.45 maps to about two thirds, leaving real headroom above.
+    out.push(vec![0.45; bands]);
     out
 }
 
