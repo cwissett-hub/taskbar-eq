@@ -1,5 +1,6 @@
 use crate::geom::Rect;
 use crate::render::canvas::Canvas;
+use std::os::windows::ffi::OsStrExt as _;
 use anyhow::{anyhow, Result};
 use windows::core::w;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, POINT, SIZE, WPARAM};
@@ -212,6 +213,29 @@ impl Overlay {
 /// button while audio plays, so without this a left-click would simply do nothing
 /// and the weather would be unreachable. Sending the hotkey is far more robust than
 /// trying to forward a click to a window we are deliberately covering.
+/// Opens `path` with whatever the shell associates with it.
+///
+/// Used for "Edit config file..." in the tray menu. `ShellExecuteW` returns a pseudo-HINSTANCE whose
+/// value is an error code at or below 32 - it does NOT set an HRESULT - so the check is a magnitude
+/// comparison rather than the usual `.ok()`.
+pub fn open_path(path: &std::path::Path) -> Result<()> {
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let r = unsafe {
+        windows::Win32::UI::Shell::ShellExecuteW(
+            None,
+            windows::core::w!("open"),
+            windows::core::PCWSTR(wide.as_ptr()),
+            None,
+            None,
+            windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+        )
+    };
+    if (r.0 as usize) <= 32 {
+        return Err(anyhow!("ShellExecuteW returned {}", r.0 as usize));
+    }
+    Ok(())
+}
+
 pub fn open_widgets_panel() -> Result<()> {
     let key = |vk: VIRTUAL_KEY, up: bool| INPUT {
         r#type: INPUT_KEYBOARD,

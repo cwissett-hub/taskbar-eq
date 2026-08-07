@@ -53,6 +53,46 @@ const WIDEN_MARGIN: i32 = 8;
 const WIDTH_HYSTERESIS: i32 = 12;
 
 
+/// The one-click transport bindings offered by the tray menu.
+///
+/// `Win+Ctrl` rather than `Ctrl+Alt`: on a UK layout - which this is developed and used on - AltGr is
+/// LeftCtrl+RightAlt in hardware, so a `Ctrl+Alt+<letter>` binding would stop the user typing whatever
+/// AltGr makes of that letter. Comma and period because `VK_OEM_COMMA` and `VK_OEM_PERIOD` are
+/// documented identical across every layout, unlike the `VK_OEM_1..8` range.
+const SUGGESTED: [&str; 3] = ["Win+Ctrl+Space", "Win+Ctrl+Period", "Win+Ctrl+Comma"];
+
+/// Re-applies every binding and logs the result. Used by the menu's bind and clear actions.
+fn rebind(
+    hotkeys: &mut win::hotkeys::Registry,
+    cfg: &Config,
+) -> [win::hotkeys::Outcome; 3] {
+    hotkeys.apply_all([&cfg.hotkeys.play_pause, &cfg.hotkeys.next_track, &cfg.hotkeys.prev_track])
+}
+
+/// What the tray menu should show, derived from the LIVE outcomes rather than from the config file.
+///
+/// The distinction matters: a chord that another program grabbed first is present in the config and
+/// absent from the machine, so a menu built from the config would claim it is set up while pressing
+/// it did nothing.
+fn transport_state(
+    outcomes: &[win::hotkeys::Outcome; 3],
+    cfg: &Config,
+) -> win::tray::TransportState {
+    let keys = std::array::from_fn(|i| match &outcomes[i] {
+        win::hotkeys::Outcome::Registered(c, _) => c.to_string(),
+        win::hotkeys::Outcome::Unbound => "not set".to_string(),
+        win::hotkeys::Outcome::Taken(c) => format!("{c}  (in use elsewhere)"),
+        win::hotkeys::Outcome::Refused(c, _) => format!("{c}  (not allowed)"),
+        win::hotkeys::Outcome::Unreadable(_) => "unreadable".to_string(),
+        win::hotkeys::Outcome::Failed(c, _) => format!("{c}  (failed)"),
+    });
+    win::tray::TransportState {
+        keys,
+        broken: outcomes.iter().any(|o| o.is_broken()),
+        media_keys_backend: cfg.media_backend == win::media::Backend::MediaKeys,
+    }
+}
+
 /// How often the backstop timer asks for a tick, in milliseconds.
 ///
 /// Requested 15 rather than 16 because `SetTimer` is quantised to the system timer granularity
@@ -815,7 +855,7 @@ fn main() -> Result<()> {
     // idle thread and it means the very first key press does not also pay for WinRT activation.
     win::hotkeys::install_media(win::media::start(), cfg.media_backend);
     let mut hotkeys = win::hotkeys::Registry::new(tray.hwnd());
-    let outcomes = hotkeys.apply_all([
+    let mut outcomes = hotkeys.apply_all([
         &cfg.hotkeys.play_pause,
         &cfg.hotkeys.next_track,
         &cfg.hotkeys.prev_track,
@@ -911,7 +951,8 @@ fn main() -> Result<()> {
             // the ticker itself. Holding this borrow across the call would turn the fix into a
             // no-op - the timer would fire, fail to borrow, and drop every tick.
             let current = with_ticker(|t| t.theme.id.clone()).unwrap_or_default();
-            let chosen = tray.show_menu(win::autostart::is_enabled(), &current);
+            let chosen =
+                tray.show_menu(win::autostart::is_enabled(), &current, &transport_state(&outcomes, &cfg));
             match chosen {
                 Some(TrayEvent::Quit) => break,
                 Some(TrayEvent::SelectTheme(id)) => {
@@ -922,6 +963,40 @@ fn main() -> Result<()> {
                         if let Err(e) = cfg.save() {
                             log::write(&format!("config save failed: {e}"));
                         }
+                    }
+                }
+                Some(TrayEvent::SuggestKeys) => {
+                    // Registered IMMEDIATELY, so a combination another program already owns is
+                    // reported now rather than silently failing at the next logon.
+                    cfg.hotkeys = config::Hotkeys {
+                        play_pause: SUGGESTED[0].into(),
+                        next_track: SUGGESTED[1].into(),
+                        prev_track: SUGGESTED[2].into(),
+                    };
+                    outcomes = rebind(&mut hotkeys, &cfg);
+                    if let Err(e) = cfg.save() {
+                        log::write(&format!("config save failed: {e}"));
+                    }
+                }
+                Some(TrayEvent::ClearKeys) => {
+                    cfg.hotkeys = config::Hotkeys::default();
+                    outcomes = rebind(&mut hotkeys, &cfg);
+                    if let Err(e) = cfg.save() {
+                        log::write(&format!("config save failed: {e}"));
+                    }
+                }
+                Some(TrayEvent::SetBackend(b)) => {
+                    cfg.media_backend = b;
+                    win::hotkeys::set_backend(b);
+                    log::write(&format!("transport backend set to {b:?}"));
+                    if let Err(e) = cfg.save() {
+                        log::write(&format!("config save failed: {e}"));
+                    }
+                }
+                Some(TrayEvent::EditConfig) => {
+                    // Whatever the user edits .toml with. Not fatal if there is no association.
+                    if let Err(e) = win::overlay::open_path(&Config::path()) {
+                        log::write(&format!("could not open the config file: {e}"));
                     }
                 }
                 Some(TrayEvent::ToggleAutostart) => {

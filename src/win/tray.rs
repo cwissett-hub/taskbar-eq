@@ -7,7 +7,8 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW,
     GetCursorPos, LoadIconW, PeekMessageW, RegisterClassW, SetForegroundWindow, TrackPopupMenu,
-    TranslateMessage, HMENU, IDI_APPLICATION, MF_CHECKED, MF_POPUP, MF_SEPARATOR, MF_STRING, MSG,
+    TranslateMessage, HMENU, IDI_APPLICATION, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR,
+    MF_STRING, MSG,
     PM_REMOVE,
     SetTimer, WM_HOTKEY, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTALIGN, WM_APP, WM_RBUTTONUP, WM_TIMER,
     WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
@@ -30,12 +31,41 @@ const WM_TRAY: u32 = WM_APP + 1;
 const ID_QUIT: usize = 1000;
 const ID_AUTOSTART: usize = 1001;
 const ID_THEME_BASE: usize = 2000;
+// Spotify controls. Kept below ID_THEME_BASE so the theme dispatch, which is an index offset from
+// that base, cannot collide with them however many colourways are added.
+const ID_KEYS_SUGGEST: usize = 1100;
+const ID_KEYS_CLEAR: usize = 1101;
+const ID_BACKEND_SESSION: usize = 1102;
+const ID_BACKEND_MEDIAKEYS: usize = 1103;
+const ID_KEYS_EDIT: usize = 1104;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TrayEvent {
     Quit,
     SelectTheme(String),
     ToggleAutostart,
+    /// Bind the suggested transport keys and register them immediately.
+    SuggestKeys,
+    /// Release every transport key.
+    ClearKeys,
+    /// Switch which mechanism sends transport commands.
+    SetBackend(crate::win::media::Backend),
+    /// Open config.toml in whatever the user edits text with.
+    EditConfig,
+}
+
+/// What the menu needs to know about the transport state in order to draw itself.
+///
+/// Passed in rather than read from a global, because the menu must report REALITY - what is actually
+/// registered right now - and not the intent recorded in the config file. A chord another program
+/// grabbed first is configured and not working, and a menu that reads the config cannot tell.
+#[derive(Debug, Clone, Default)]
+pub struct TransportState {
+    /// One label per action, already resolved to something a person can read.
+    pub keys: [String; 3],
+    /// True when at least one configured key failed to register.
+    pub broken: bool,
+    pub media_keys_backend: bool,
 }
 
 /// One selectable colourway in the theme menu.
@@ -114,7 +144,17 @@ impl Tray {
                 uID: 1,
                 uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
                 uCallbackMessage: WM_TRAY,
-                hIcon: LoadIconW(None, IDI_APPLICATION)?,
+                // Our own glyph, drawn at the system's small-icon size and following the
+                // light/dark setting. Falls back to the stock application icon rather than
+                // refusing to start - a generic icon is a cosmetic flaw, no tray icon at all
+                // means the user cannot quit the app.
+                hIcon: match crate::win::icon::tray() {
+                    Some(h) => h,
+                    None => {
+                        crate::log::write("tray icon could not be drawn; using the stock icon");
+                        LoadIconW(None, IDI_APPLICATION)?
+                    }
+                },
                 szTip: tip,
                 ..Default::default()
             };
@@ -133,8 +173,13 @@ impl Tray {
     /// Shows the context menu and returns the chosen event, if any. Builds the
     /// theme list from this `Tray`'s own stored snapshot - see `set_themes` for
     /// how that snapshot is kept live across a hot reload.
-    pub fn show_menu(&self, autostart: bool, current_theme: &str) -> Option<TrayEvent> {
-        self.show_menu_for(&self.themes, autostart, current_theme)
+    pub fn show_menu(
+        &self,
+        autostart: bool,
+        current_theme: &str,
+        transport: &TransportState,
+    ) -> Option<TrayEvent> {
+        self.show_menu_for(&self.themes, autostart, current_theme, transport)
     }
 
     /// Shows the context menu built from an explicit theme list. This is the
@@ -147,6 +192,7 @@ impl Tray {
         items: &[MenuItem],
         autostart: bool,
         current_theme: &str,
+        transport: &TransportState,
     ) -> Option<TrayEvent> {
         unsafe {
             // Before CreatePopupMenu: the theme is resolved when the menu is created, so
@@ -207,6 +253,61 @@ impl Tray {
                 );
             }
 
+            // ---- Spotify controls -------------------------------------------------------------
+            let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+            if let Ok(sub) = CreatePopupMenu() {
+                // The three bindings, shown as disabled labels. Informational: this is where the
+                // user looks to find out what is bound, and whether it is working.
+                for (i, label) in transport.keys.iter().enumerate() {
+                    let text = format!(
+                        "{}:  {}",
+                        ["Play / pause", "Next track", "Previous track"][i],
+                        label
+                    );
+                    let mut wide: Vec<u16> =
+                        text.encode_utf16().chain(std::iter::once(0)).collect();
+                    let _ = AppendMenuW(
+                        sub,
+                        MF_STRING | MF_GRAYED,
+                        0,
+                        windows::core::PCWSTR(wide.as_mut_ptr()),
+                    );
+                }
+                let _ = AppendMenuW(sub, MF_SEPARATOR, 0, None);
+                let _ = AppendMenuW(sub, MF_STRING, ID_KEYS_SUGGEST, w!("Use suggested keys"));
+                let _ = AppendMenuW(sub, MF_STRING, ID_KEYS_CLEAR, w!("Clear all keys"));
+                let _ = AppendMenuW(sub, MF_SEPARATOR, 0, None);
+                // The backend toggle the user asked for, as a checked pair so the current one is
+                // obvious without opening anything else.
+                let (a, b) = if transport.media_keys_backend {
+                    (MF_STRING, MF_STRING | MF_CHECKED)
+                } else {
+                    (MF_STRING | MF_CHECKED, MF_STRING)
+                };
+                let _ = AppendMenuW(sub, a, ID_BACKEND_SESSION, w!("Send via Spotify session"));
+                let _ = AppendMenuW(sub, b, ID_BACKEND_MEDIAKEYS, w!("Send via media keys"));
+                let _ = AppendMenuW(sub, MF_SEPARATOR, 0, None);
+                let _ = AppendMenuW(sub, MF_STRING, ID_KEYS_EDIT, w!("Edit config file..."));
+
+                // The parent label reports REALITY, not intent: a key that was configured but lost
+                // the race for the combination says so here rather than looking configured and
+                // silently doing nothing.
+                let head = if transport.broken {
+                    "Spotify controls: not working"
+                } else if transport.keys.iter().all(|k| k == "not set") {
+                    "Spotify controls: not set up"
+                } else {
+                    "Spotify controls"
+                };
+                let mut wide: Vec<u16> = head.encode_utf16().chain(std::iter::once(0)).collect();
+                let _ = AppendMenuW(
+                    menu,
+                    MF_POPUP,
+                    sub.0 as usize,
+                    windows::core::PCWSTR(wide.as_mut_ptr()),
+                );
+            }
+
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
             let _ = AppendMenuW(
                 menu,
@@ -235,6 +336,21 @@ impl Tray {
             let _ = DestroyMenu(menu);
 
             let id = cmd.0 as usize;
+            if id == ID_KEYS_SUGGEST {
+                return Some(TrayEvent::SuggestKeys);
+            }
+            if id == ID_KEYS_CLEAR {
+                return Some(TrayEvent::ClearKeys);
+            }
+            if id == ID_BACKEND_SESSION {
+                return Some(TrayEvent::SetBackend(crate::win::media::Backend::Session));
+            }
+            if id == ID_BACKEND_MEDIAKEYS {
+                return Some(TrayEvent::SetBackend(crate::win::media::Backend::MediaKeys));
+            }
+            if id == ID_KEYS_EDIT {
+                return Some(TrayEvent::EditConfig);
+            }
             if id == ID_QUIT {
                 Some(TrayEvent::Quit)
             } else if id == ID_AUTOSTART {
