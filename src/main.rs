@@ -994,7 +994,12 @@ fn main() -> Result<()> {
                     }
                 }
                 Some(TrayEvent::EditConfig) => {
-                    // Whatever the user edits .toml with. Not fatal if there is no association.
+                    // Written first. Until something is changed there may be no file on disk at all,
+                    // and opening a path that does not exist gets the user an empty buffer with none
+                    // of the keys they were sent there to edit.
+                    if let Err(e) = cfg.save() {
+                        log::write(&format!("config save failed before opening it: {e}"));
+                    }
                     if let Err(e) = win::overlay::open_path(&Config::path()) {
                         log::write(&format!("could not open the config file: {e}"));
                     }

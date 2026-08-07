@@ -213,11 +213,16 @@ impl Overlay {
 /// button while audio plays, so without this a left-click would simply do nothing
 /// and the weather would be unreachable. Sending the hotkey is far more robust than
 /// trying to forward a click to a window we are deliberately covering.
-/// Opens `path` with whatever the shell associates with it.
+/// Opens `path` in whatever the user edits text with, falling back to Notepad.
 ///
-/// Used for "Edit config file..." in the tray menu. `ShellExecuteW` returns a pseudo-HINSTANCE whose
-/// value is an error code at or below 32 - it does NOT set an HRESULT - so the check is a magnitude
-/// comparison rather than the usual `.ok()`.
+/// The fallback is not defensive padding - `.toml` COMMONLY HAS NO ASSOCIATION AT ALL. Checked on
+/// this machine: `assoc .toml` reports "File association not found", and it only opens because a
+/// per-user choice happens to point at an editor. On a machine without that, the shell call fails and
+/// a menu item called "Open config file" would do nothing at all, with the reason buried in the log.
+/// Notepad is on every Windows install, so the item always does something.
+///
+/// `ShellExecuteW` reports failure by returning a pseudo-HINSTANCE at or below 32 rather than by
+/// setting an HRESULT, so the check is a magnitude comparison and not the usual `.ok()`.
 pub fn open_path(path: &std::path::Path) -> Result<()> {
     let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
     let r = unsafe {
@@ -230,10 +235,20 @@ pub fn open_path(path: &std::path::Path) -> Result<()> {
             windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
         )
     };
-    if (r.0 as usize) <= 32 {
-        return Err(anyhow!("ShellExecuteW returned {}", r.0 as usize));
+    if (r.0 as usize) > 32 {
+        return Ok(());
     }
-    Ok(())
+    let code = r.0 as usize;
+    match std::process::Command::new("notepad.exe").arg(path).spawn() {
+        Ok(_) => {
+            crate::log::write(&format!(
+                "no editor is associated with {} (ShellExecuteW returned {code}), so it was opened                  in Notepad",
+                path.display()
+            ));
+            Ok(())
+        }
+        Err(e) => Err(anyhow!("ShellExecuteW returned {code}, and Notepad failed too: {e}")),
+    }
 }
 
 pub fn open_widgets_panel() -> Result<()> {

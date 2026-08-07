@@ -10,7 +10,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     TranslateMessage, HMENU, IDI_APPLICATION, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR,
     MF_STRING, MSG,
     PM_REMOVE,
-    SetTimer, WM_HOTKEY, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTALIGN, WM_APP, WM_RBUTTONUP, WM_TIMER,
+    SetTimer, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTALIGN, WM_APP, WM_CONTEXTMENU, WM_HOTKEY,
+    WM_LBUTTONUP, WM_RBUTTONUP, WM_TIMER,
     WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
@@ -286,9 +287,6 @@ impl Tray {
                 };
                 let _ = AppendMenuW(sub, a, ID_BACKEND_SESSION, w!("Send via Spotify session"));
                 let _ = AppendMenuW(sub, b, ID_BACKEND_MEDIAKEYS, w!("Send via media keys"));
-                let _ = AppendMenuW(sub, MF_SEPARATOR, 0, None);
-                let _ = AppendMenuW(sub, MF_STRING, ID_KEYS_EDIT, w!("Edit config file..."));
-
                 // The parent label reports REALITY, not intent: a key that was configured but lost
                 // the race for the combination says so here rather than looking configured and
                 // silently doing nothing.
@@ -309,6 +307,9 @@ impl Tray {
             }
 
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+            // Top level rather than inside the Spotify submenu: config.toml carries the theme, the
+            // width and every timing as well as the key bindings, so it is not a transport setting.
+            let _ = AppendMenuW(menu, MF_STRING, ID_KEYS_EDIT, w!("Open config file..."));
             let _ = AppendMenuW(
                 menu,
                 if autostart {
@@ -319,7 +320,9 @@ impl Tray {
                 ID_AUTOSTART,
                 w!("Start with Windows"),
             );
-            let _ = AppendMenuW(menu, MF_STRING, ID_QUIT, w!("Quit"));
+            // "Exit" rather than "Quit": it is the Windows convention for a tray application, and it
+            // is what it was asked for by name.
+            let _ = AppendMenuW(menu, MF_STRING, ID_QUIT, w!("Exit"));
 
             let mut pt = POINT::default();
             let _ = GetCursorPos(&mut pt);
@@ -388,8 +391,24 @@ impl Tray {
         unsafe {
             let mut msg = MSG::default();
             while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
-                if msg.message == WM_TRAY && msg.lParam.0 as u32 == WM_RBUTTONUP {
-                    self.right_clicked = true;
+                // EVERY way the shell can ask for this icon's menu, not just WM_RBUTTONUP.
+                //
+                // This is the likely reason the menu was reported as missing entirely. In the legacy
+                // notify-icon mode this app uses, a right-click arrives as WM_RBUTTONUP in lParam -
+                // but the Windows 11 shell also sends WM_CONTEXTMENU, which is what a keyboard
+                // context-menu press and some shell builds deliver, and the old check ignored it. If
+                // that is what a machine sends, right-clicking the tray icon did nothing at all, so
+                // "Start with Windows" and "Exit" were unreachable from the tray even though they
+                // have always been in the menu.
+                //
+                // WM_LBUTTONUP is accepted too. It is not the Windows convention for a menu, but
+                // this app has no window to show on a left click, and an icon that does nothing when
+                // clicked reads as broken.
+                if msg.message == WM_TRAY {
+                    let which = msg.lParam.0 as u32;
+                    if which == WM_RBUTTONUP || which == WM_CONTEXTMENU || which == WM_LBUTTONUP {
+                        self.right_clicked = true;
+                    }
                 }
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
