@@ -177,6 +177,22 @@ fn status_of(s: &Session) -> Result<Status, String> {
     })
 }
 
+/// "Title - Artist", or just the title when there is no artist. What the banner shows.
+fn title_and_artist(s: &Session) -> String {
+    match s.TryGetMediaPropertiesAsync().and_then(|op| op.join()) {
+        Ok(p) => {
+            let t = p.Title().map(|t| t.to_string()).unwrap_or_default();
+            let a = p.Artist().map(|a| a.to_string()).unwrap_or_default();
+            match (t.trim(), a.trim()) {
+                ("", _) => String::new(),
+                (t, "") => t.to_string(),
+                (t, a) => format!("{t} - {a}"),
+            }
+        }
+        Err(_) => String::new(),
+    }
+}
+
 /// The currently loaded track's title, used only to confirm that a skip actually skipped.
 fn title_of(s: &Session) -> String {
     match s.TryGetMediaPropertiesAsync().and_then(|op| op.join()) {
@@ -280,6 +296,31 @@ pub fn send(action: Action, backend: Backend) -> Result<(), String> {
     }
 }
 
+/// The track currently loaded, and a counter that changes whenever the track does.
+///
+/// A counter rather than a callback: the render loop reads this once per tick and compares, which
+/// needs no synchronisation beyond the mutex and cannot fire from the wrong thread.
+static NOW_PLAYING: std::sync::Mutex<(String, u64)> = std::sync::Mutex::new((String::new(), 0));
+
+/// The current track and its change counter.
+pub fn now_playing() -> (String, u64) {
+    NOW_PLAYING.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+fn publish(title: &str) {
+    let mut g = NOW_PLAYING.lock().unwrap_or_else(|e| e.into_inner());
+    if g.0 != title {
+        g.0 = title.to_string();
+        g.1 = g.1.wrapping_add(1);
+    }
+}
+
+/// How often the media thread looks for a track change while idle.
+///
+/// 400ms is well inside the time it takes to notice a new track starting, and the poll is one cheap
+/// cross-process read - measured at well under a millisecond once the session is resolved.
+const POLL_MS: u64 = 400;
+
 /// A handle for asking the media thread to do something. Cheap to clone.
 #[derive(Clone)]
 pub struct Handle {
@@ -331,15 +372,37 @@ pub fn start() -> Handle {
         {
             log::write(&format!("media: CoInitializeEx failed: {e}"));
         }
-        while let Ok((action, backend)) = rx.recv() {
-            let t0 = std::time::Instant::now();
-            match send(action, backend) {
-                Ok(()) => log::write(&format!(
-                    "{} confirmed in {}ms via {backend:?}",
-                    action.label(),
-                    t0.elapsed().as_millis()
-                )),
-                Err(e) => log::write(&format!("{}: {e}", action.label())),
+        loop {
+            // `recv_timeout`, not `recv`: the thread also has to NOTICE things, not only be told
+            // them. Without a timeout it slept until the next hotkey, so a track change was invisible
+            // until the user pressed something.
+            match rx.recv_timeout(std::time::Duration::from_millis(POLL_MS)) {
+                Ok((action, backend)) => {
+                    let t0 = std::time::Instant::now();
+                    match send(action, backend) {
+                        Ok(()) => log::write(&format!(
+                            "{} confirmed in {}ms via {backend:?}",
+                            action.label(),
+                            t0.elapsed().as_millis()
+                        )),
+                        Err(e) => log::write(&format!("{}: {e}", action.label())),
+                    }
+                    // Straight after a command the track has very likely just changed.
+                    if let Ok(Some((_, s))) = find_session() {
+                        publish(&title_and_artist(&s));
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    match find_session() {
+                        Ok(Some((_, s))) => publish(&title_and_artist(&s)),
+                        // Nothing playing: clear it, so a banner cannot be re-shown for a track that
+                        // stopped ages ago when playback resumes.
+                        Ok(None) => publish(""),
+                        Err(_) => {}
+                    }
+                }
+                // The sender is gone, i.e. the app is shutting down.
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
             }
         }
     });

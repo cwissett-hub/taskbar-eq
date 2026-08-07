@@ -141,6 +141,17 @@ struct Ticker {
     rect_tick: u32,
     rect_misses: u32,
     time_s: f32,
+    /// The track-change banner, while one is on screen.
+    banner: Option<render::banner::Banner>,
+    /// The media thread's change counter as of the last tick, so a NEW track can be told from the
+    /// same one still playing.
+    ///
+    /// Seeded from whatever the counter already is, deliberately: at startup there is usually a track
+    /// loaded, and announcing it would mean a banner every time the app launches rather than when
+    /// something actually changes.
+    track_seq: u64,
+    /// Whether the banner is wanted at all.
+    show_track_name: bool,
     /// How long the previous tick spent in each of its slow candidates, in milliseconds.
     ///
     /// A stall is reported by the tick that FOLLOWS the blockage, so what it needs to name is the
@@ -296,6 +307,31 @@ impl Ticker {
                 time_s: self.time_s,
             };
             self.family.draw(&mut canvas, &self.theme, &data);
+
+            // ---- track-change banner ----------------------------------------------------------
+            // After the family, so it sits over whatever was drawn, and BEFORE `scale_alpha`, so the
+            // reveal/hide fade applies to the banner too rather than leaving it at full strength
+            // while the meter fades away underneath it.
+            if self.show_track_name {
+                let (title, seq) = win::media::now_playing();
+                if seq != self.track_seq {
+                    self.track_seq = seq;
+                    // An empty title means nothing is loaded, which is not an announcement.
+                    self.banner = if title.trim().is_empty() {
+                        None
+                    } else {
+                        render::banner::Banner::new(&title, r.h - 4)
+                    };
+                }
+                if let Some(b) = self.banner.as_mut() {
+                    if !b.advance(dt_ms) {
+                        self.banner = None;
+                    }
+                }
+                if let Some(b) = self.banner.as_ref() {
+                    b.draw(&mut canvas, &self.theme, self.time_s);
+                }
+            }
             // Apply the reveal/hide fade. The gate has computed this opacity - with tests - since
             // it was written, but nothing ever consumed it, so the overlay popped in and out
             // instead of fading.
@@ -867,6 +903,9 @@ fn main() -> Result<()> {
             rect_misses: 0,
             time_s: 0.0,
             phases: Phases::default(),
+            banner: None,
+            track_seq: win::media::now_playing().1,
+            show_track_name: cfg.show_track_name,
         });
     });
     win::tray::install_tick(tray.hwnd(), TICK_TIMER_MS, tick_now);

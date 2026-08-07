@@ -47,6 +47,8 @@ pub struct Config {
     pub autostart: bool,
     /// Which mechanism sends transport commands. See `win::media::Backend`.
     pub media_backend: crate::win::media::Backend,
+    /// Show the track name for a couple of seconds when the track changes.
+    pub show_track_name: bool,
     /// Declared LAST because `toml` emits tables after root scalars; keeping struct order and file
     /// order the same is what lets the existing round-trip test keep proving serialisation works.
     pub hotkeys: Hotkeys,
@@ -69,6 +71,7 @@ impl Default for Config {
             width: 380,
             autostart: false,
             media_backend: crate::win::media::Backend::default(),
+            show_track_name: true,
             hotkeys: Hotkeys::default(),
         }
     }
