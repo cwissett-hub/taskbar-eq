@@ -91,6 +91,8 @@ pub enum Advisory {
     AltGrCollision,
     /// Claiming a bare media key takes it from every other app on the machine.
     MediaKeySeizure,
+    /// Any other bare key - a function key - is claimed system-wide too.
+    BareKeySeizure,
     /// F12 is the debugger's break key in most tooling.
     F12Debugger,
     /// Windows reserves a number of `Win+<key>` combinations and will refuse them.
@@ -108,25 +110,52 @@ impl Advisory {
             Advisory::MediaKeySeizure => {
                 "this takes the key from every other app until taskbar-eq is closed"
             }
+            Advisory::BareKeySeizure => {
+                "with no modifier this key is taken from every other app while taskbar-eq runs"
+            }
             Advisory::F12Debugger => "F12 is the break key in most developer tools",
             Advisory::WinKeyMayBeReserved => "Windows reserves some Win key combinations",
         }
     }
 }
 
-/// The dedicated transport keys, which are the only keys allowed with no modifier at all.
+/// The dedicated transport keys, allowed with no modifier at all.
 ///
-/// Deliberately narrow. An earlier draft also waved through the volume, browser and launch keys on
-/// the same reasoning, and that is a much worse trade: binding bare Volume Up takes volume control
-/// away from the entire machine including the Windows volume overlay, and the volume and media keys
-/// are adjacent on most keyboards and share the Fn row on laptops, so it is an easy mis-press in a
-/// capture field.
+/// The FUNCTION KEYS are allowed bare too - see `is_bare_allowed`. They are not in this list only
+/// because they are a range rather than a set.
+///
+/// Deliberately narrow beyond that. An earlier draft also waved through the volume, browser and
+/// launch keys on the same reasoning, and that is a much worse trade: binding bare Volume Up takes
+/// volume control away from the entire machine including the Windows volume overlay, and the volume
+/// and media keys are adjacent on most keyboards and share the Fn row on laptops, so it is an easy
+/// mis-press in a capture field.
 const BARE_ALLOWED: [u16; 4] = [
     0xB3, // VK_MEDIA_PLAY_PAUSE
     0xB0, // VK_MEDIA_NEXT_TRACK
     0xB1, // VK_MEDIA_PREV_TRACK
     0xB2, // VK_MEDIA_STOP
 ];
+
+/// Whether `vk` may be bound with no modifier at all.
+///
+/// THE RULE IS "DOES IT TYPE", NOT "IS IT UNUSUAL". The first version of this allowed only the media
+/// keys and F13-F24, and it refused a bare F9 - which was reported, correctly, as wrong: F9 does not
+/// produce a character, so the justification for demanding a modifier ("a key on its own would fire
+/// while you were typing") does not apply to it at all. F13-F24 had been allowed on the different and
+/// much weaker ground that most keyboards do not have them, which is a reason a binding is unlikely
+/// to be USED rather than a reason it is safe.
+///
+/// So: the whole function-key range, and the dedicated transport keys. Everything that produces text
+/// still needs a modifier, because those genuinely would fire mid-sentence - and that includes Space,
+/// Enter and Tab, which do not print a glyph but are pressed constantly while typing.
+///
+/// A bare binding still takes the key from every other application while this app runs, which is a
+/// real cost and not one to hide, so it carries `Advisory::BareKeySeizure` rather than being silently
+/// accepted.
+fn is_bare_allowed(vk: u16) -> bool {
+    // F1..F24.
+    (0x70..=0x87).contains(&vk) || BARE_ALLOWED.contains(&vk)
+}
 
 /// Virtual keys that are only ever modifiers, so they can never be a trigger.
 fn is_modifier_vk(vk: u16) -> bool {
@@ -322,8 +351,7 @@ impl Chord {
         if others.contains(self) {
             return Err(Reject::DuplicateOfOtherAction);
         }
-        let bare_ok = BARE_ALLOWED.contains(&self.vk) || (0x7C..=0x87).contains(&self.vk);
-        if self.mods.count() == 0 && !bare_ok {
+        if self.mods.count() == 0 && !is_bare_allowed(self.vk) {
             return Err(Reject::NeedsModifier);
         }
         if !self.mods.ctrl && !self.mods.alt && !self.mods.win && self.mods.shift {
@@ -333,8 +361,14 @@ impl Chord {
         if self.mods.ctrl && self.mods.alt && !self.mods.win {
             out.push(Advisory::AltGrCollision);
         }
-        if self.mods.count() == 0 && BARE_ALLOWED.contains(&self.vk) {
-            out.push(Advisory::MediaKeySeizure);
+        if self.mods.count() == 0 {
+            // Any bare key is claimed exclusively and system-wide. The media keys get their own
+            // wording because losing them is what a user notices first.
+            if BARE_ALLOWED.contains(&self.vk) {
+                out.push(Advisory::MediaKeySeizure);
+            } else {
+                out.push(Advisory::BareKeySeizure);
+            }
         }
         if self.vk == 0x7B {
             out.push(Advisory::F12Debugger);
@@ -434,7 +468,10 @@ mod tests {
     fn a_bare_printable_key_is_refused_however_it_arrives() {
         // The failure this prevents: `play_pause = "P"` hand-written into config.toml, registered at
         // every logon, and the letter P stops working across the whole machine.
-        for s in ["P", "1", "Space", "Enter", "F1"] {
+        // Space, Enter and Tab are in here even though they print no glyph: they are pressed
+        // constantly while typing, which is the actual test. Function keys are NOT - see the next
+        // test.
+        for s in ["P", "1", "Space", "Enter", "Tab", "Comma", "Period"] {
             let c = Chord::parse(s).expect(s);
             assert_eq!(
                 c.validate(&[]),
@@ -450,11 +487,23 @@ mod tests {
     }
 
     #[test]
-    fn the_bare_keys_that_are_allowed_are_exactly_the_transport_and_high_f_keys() {
-        // Allowed: they do nothing while typing.
-        for s in ["MediaPlayPause", "MediaNext", "MediaPrev", "MediaStop", "F13", "F24"] {
+    fn the_bare_keys_that_are_allowed_are_the_transport_keys_and_every_function_key() {
+        // THE REPORTED BUG: a bare F9 was refused. It was refused because the first version of this
+        // rule allowed only F13-F24, on the ground that most keyboards do not have them - which is a
+        // reason a binding is unlikely to be used, not a reason it is safe. F9 does not type a
+        // character, so the "it would fire while you were typing" justification never applied to it.
+        for s in [
+            "F1", "F2", "F5", "F9", "F12", "F13", "F24", "MediaPlayPause", "MediaNext", "MediaPrev",
+            "MediaStop",
+        ] {
             let c = Chord::parse(s).expect(s);
             assert!(c.validate(&[]).is_ok(), "{s:?} should be bindable bare");
+        }
+        // Every function key, not just the ones spot-checked above.
+        for n in 1..=24 {
+            let s = format!("F{n}");
+            let c = Chord::parse(&s).expect(&s);
+            assert!(c.validate(&[]).is_ok(), "bare {s} should be bindable");
         }
         // Refused: an earlier draft allowed these on the same reasoning, and binding bare Volume Up
         // takes volume off the whole machine including the Windows overlay. They sit next to the
@@ -477,6 +526,14 @@ mod tests {
 
         let media = Chord::parse("MediaPlayPause").unwrap().validate(&[]).unwrap();
         assert!(media.contains(&Advisory::MediaKeySeizure), "{media:?}");
+
+        // A bare function key is allowed, but it IS taken from the whole machine, and saying so is
+        // the difference between an informed choice and a surprise.
+        let bare = Chord::parse("F9").unwrap().validate(&[]).unwrap();
+        assert!(bare.contains(&Advisory::BareKeySeizure), "{bare:?}");
+        // With a modifier there is nothing to warn about.
+        let modded = Chord::parse("Ctrl+Shift+F9").unwrap().validate(&[]).unwrap();
+        assert!(!modded.contains(&Advisory::BareKeySeizure), "{modded:?}");
 
         let f12 = Chord::parse("Ctrl+F12").unwrap().validate(&[]).unwrap();
         assert!(f12.contains(&Advisory::F12Debugger), "{f12:?}");

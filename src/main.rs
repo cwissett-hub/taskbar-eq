@@ -972,7 +972,19 @@ fn main() -> Result<()> {
                     hotkeys.release_all();
                     let label = ["play / pause", "next track", "previous track"][i.min(2)];
                     let dark = win::darkmode::windows_prefers_dark();
-                    match win::capture_key::capture(tray.hwnd(), label, dark) {
+                    // The chords bound to the OTHER two actions, so the window can refuse a
+                    // duplicate on the spot instead of storing one that quietly never fires.
+                    let others: Vec<win::hotkey::Chord> = [
+                        &cfg.hotkeys.play_pause,
+                        &cfg.hotkeys.next_track,
+                        &cfg.hotkeys.prev_track,
+                    ]
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, _)| *j != i)
+                    .filter_map(|(_, t)| win::hotkey::Chord::parse(t).ok())
+                    .collect();
+                    match win::capture_key::capture(tray.hwnd(), label, dark, &others) {
                         Some(win::capture_key::Captured::Chord(c)) => {
                             let text = c.to_string();
                             log::write(&format!("captured {text} for {label}"));
