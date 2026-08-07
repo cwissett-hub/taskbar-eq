@@ -172,6 +172,13 @@ const BASS_FALL_MS: f32 = 300.0;
 /// among them.
 const HIT_RANGE: f32 = 0.14;
 
+/// Bands the low-band onset detector watches, and how fast its average follows.
+///
+/// 8 bands and 0.22 per frame, unchanged from when this family owned the detector itself - the code
+/// moved to `dsp::onset`, the tuning did not.
+const LOW_BANDS_WATCHED: usize = 8;
+const BASS_EASE: f32 = 0.22;
+
 /// Bands the low-energy centroid is measured over. See `low_centroid`.
 #[cfg(test)]
 const LOW_BANDS: usize = 12;
@@ -309,7 +316,9 @@ pub struct Radar {
     /// Per-column brightness, decaying with the phosphor.
     glow: Vec<f32>,
     /// Slew-limited low-band level, for the transient detector to measure a rise against.
-    bass_avg: f32,
+    /// The shared low-band onset detector - see `dsp::onset`. It reports the MAGNITUDE of the rise,
+    /// which the warning receiver needs to judge whether a hit is exceptional for the material.
+    bass: crate::dsp::onset::BassRise,
     /// Live transient contact: strength, and the column it was fired on. It stays where it was
     /// fired rather than following the sweep - a return does not move because the antenna did.
     hit: f32,
@@ -407,17 +416,6 @@ impl Radar {
         (num / den / (hi - 1) as f32).clamp(0.0, 1.0)
     }
 
-    /// Peak of the lowest bands, for the transient detector.
-    fn bass_of(d: &FrameData) -> f32 {
-        let hi = 8.min(d.levels.len());
-        let mut peak = 0.0f32;
-        for v in &d.levels[..hi] {
-            if v.is_finite() {
-                peak = peak.max(*v);
-            }
-        }
-        peak.clamp(0.0, 1.0)
-    }
 }
 
 impl Family for Radar {
@@ -568,16 +566,12 @@ impl Family for Radar {
 
         // Transient detector. The slew-limited average is what the rise is measured against, so a
         // sustained bass line settles and stops firing while a kick still spikes above it.
-        let bass = Self::bass_of(d);
         self.hit = (self.hit - dt / BASS_FALL_MS).max(0.0);
-        if !self.bass_avg.is_finite() {
-            self.bass_avg = 0.0;
-        }
         // Captured BEFORE the average moves, and shared with the warning receiver. One detector
         // feeding both displays is the whole reason the scope has no threshold of its own: this
         // project already carries two independently-written onset detectors, and a third would have
         // been a third chance to ship a threshold that never fires.
-        let excess = bass - self.bass_avg;
+        let excess = self.bass.update(&d.levels, LOW_BANDS_WATCHED, BASS_EASE);
         #[cfg(test)]
         {
             self.last_excess = excess;
@@ -594,7 +588,7 @@ impl Family for Radar {
             self.hit = 1.0;
             self.hit_pos = self.pos;
         }
-        self.bass_avg += (bass - self.bass_avg) * 0.22;
+
         if scope.is_some() {
             self.rwr.update(dt, excess, BASS_RISE, t.radar.launch);
         }
@@ -902,7 +896,7 @@ mod tests {
                 r.draw(&mut c, &t, &d);
             }
             assert!(r.pos.is_finite(), "spoil {spoil} left the sweep position at {}", r.pos);
-            assert!(r.bass_avg.is_finite(), "spoil {spoil} poisoned the bass average");
+            assert!(r.last_excess.is_finite(), "spoil {spoil} poisoned the bass detector");
             assert!(
                 r.glow.iter().all(|g| g.is_finite()) && r.echo.iter().all(|e| e.is_finite()),
                 "spoil {spoil} poisoned the stored picture"

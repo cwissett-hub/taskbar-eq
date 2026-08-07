@@ -44,13 +44,15 @@ use crate::themes::Theme;
 /// old absolute threshold unreachable on this material.
 const FLUX_RATIO: f32 = 2.8;
 
-/// How fast the flux average follows, per frame. Slow enough to represent "this track", fast enough
-/// to follow an arrangement change within a couple of seconds.
-const FLUX_AVG_RATE: f32 = 0.02;
+// The flux average's follow rate lives in `dsp::onset` now, expressed per millisecond. It was 0.02
+// per frame here, which is the same thing at the nominal interval.
 
-/// Minimum frames between strikes. At ~99 capture frames/s this is ~120ms, shorter than any musical
-/// gap worth marking but long enough to stop one hit registering as two as the flux peak decays.
-const FLUX_REFRACTORY: u32 = 12;
+/// Minimum gap between strikes, in milliseconds. Shorter than any musical gap worth marking, long
+/// enough to stop one hit registering as two as the flux peak decays.
+///
+/// This was 12 FRAMES, which is 200ms only at the nominal frame interval - under load the gap
+/// stretched with it. See `dsp::onset::Flux::update`.
+const FLUX_REFRACTORY_MS: f32 = 200.0;
 
 
 
@@ -101,13 +103,9 @@ const TERRAIN_GAMMA: f32 = 0.6;
 pub struct Vapor {
     /// Grid scroll phase, wrapping 0->1.
     scroll: f32,
-    /// Previous frame's band levels, for the spectral-flux onset detector.
-    prev_levels: Vec<f32>,
-    /// Slow-following average of the flux, which the threshold is relative to.
-    flux_avg: f32,
-    /// Frames since the last strike, for the refractory period.
-    since_bolt: u32,
-    /// Decaying brightness of the current lightning strike, 0 when none.
+    /// The shared spectral-flux onset detector - see `dsp::onset`. The fluid tank uses the same
+    /// one; this family and that had independently written it twice.
+    onset: crate::dsp::onset::Flux,
     bolt: f32,
     /// Advanced on each strike so successive bolts take different paths.
     bolt_seed: u32,
@@ -191,35 +189,16 @@ impl Vapor {
     /// copy. Onset detection wants the least smoothed signal available, and the fixture calibration
     /// above was done on exactly this one.
     fn update_bolt(&mut self, d: &FrameData, t: &crate::themes::VaporParams, dt: f32) -> f32 {
-        let n = d.levels.len();
-        if self.prev_levels.len() != n {
-            self.prev_levels = d.levels.to_vec();
-        }
-        // Spectral flux: the sum of POSITIVE change across every band. Positive only - a note
-        // ending is not an onset, and counting decays doubles the event rate.
-        let mut flux = 0.0f32;
-        for (i, &v) in d.levels.iter().enumerate() {
-            if v.is_finite() {
-                flux += (v - self.prev_levels[i]).max(0.0);
-                self.prev_levels[i] = v;
-            }
-        }
-        if !flux.is_finite() {
-            flux = 0.0;
-        }
-        self.flux_avg += (flux - self.flux_avg) * (FLUX_AVG_RATE * dt).clamp(0.0, 1.0);
-        if !self.flux_avg.is_finite() {
-            self.flux_avg = 0.0;
-        }
-
-        self.since_bolt = self.since_bolt.saturating_add(1);
-        // `bolt_sens` still scales it, so a colourway can be calmer or busier and it stays
-        // TOML-tunable. 0.55 is the shipped value and maps to the calibrated ratio exactly.
+        // `bolt_sens` still scales the threshold, so a colourway can be calmer or busier and it
+        // stays TOML-tunable. 0.55 is the shipped value and maps to the calibrated ratio exactly.
         let ratio = FLUX_RATIO * (1.0 + (0.55 - t.bolt_sens.clamp(0.0, 1.0)));
-        if flux > self.flux_avg * ratio && self.since_bolt > FLUX_REFRACTORY {
+        // The detector is shared with the fluid tank now - see `dsp::onset`. Its refractory is in
+        // MILLISECONDS where this family's own copy counted 12 frames, so the gap no longer stretches
+        // with load: at a 33ms frame the old count was a 400ms gap rather than the 200 it was
+        // calibrated as. `dt` here is in nominal frames, so it is converted back.
+        if self.onset.update(&d.levels, dt * NOMINAL_DT_MS, ratio, FLUX_REFRACTORY_MS) {
             self.bolt = t.bolt_bright.clamp(0.0, 1.0);
             self.bolt_seed = self.bolt_seed.wrapping_add(1);
-            self.since_bolt = 0;
         }
         self.bolt = (self.bolt - t.bolt_decay.clamp(0.0, 1.0) * 0.09 * dt).max(0.0);
         self.bolt

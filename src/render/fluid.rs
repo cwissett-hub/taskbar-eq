@@ -138,7 +138,7 @@ const RELEASE_PER_MS: f32 = 0.012;
 /// used and lands near 1.6/s.
 const FLUX_RATIO: f32 = 3.0;
 /// Follow rate of the flux average, per millisecond (0.02 per nominal frame).
-const FLUX_AVG_PER_MS: f32 = 0.02 / NOMINAL_DT_MS;
+// The flux average's follow rate lives in `dsp::onset` now, expressed per millisecond.
 /// Minimum gap between transients. Shorter than any musical gap worth marking, long enough that
 /// one hit's decaying flux peak does not register as a second hit.
 const FLUX_REFRACTORY_MS: f32 = 200.0;
@@ -199,9 +199,9 @@ pub struct Fluid {
     debt: f32,
     /// Smoothed cone excursion, 0..1, left then right.
     exc: [f32; 2],
-    prev_levels: Vec<f32>,
-    flux_avg: f32,
-    since_drop_ms: f32,
+    /// The shared spectral-flux onset detector - see `dsp::onset`. This family and the vaporwave
+    /// grid had independently written the same one; one copy is one threshold to get wrong.
+    onset: crate::dsp::onset::Flux,
     seed: u32,
     /// Underglow envelope, 0..1. Set to 1 on a transient, released slowly.
     glow: f32,
@@ -215,11 +215,10 @@ impl Default for Fluid {
             prev: Vec::new(),
             debt: 0.0,
             exc: [0.0; 2],
-            prev_levels: Vec::new(),
-            flux_avg: 0.0,
+
             // Starts past the refractory, so the first transient of a run is not swallowed. A
             // zero here would mean no droplet for the first 200ms after every theme switch.
-            since_drop_ms: 1.0e4,
+            onset: crate::dsp::onset::Flux::default(),
             seed: 0x9e37_79b9,
             glow: 0.0,
             drops: Vec::new(),
@@ -303,33 +302,10 @@ impl Fluid {
     }
 
     /// Advances the onset detector and reports whether this frame is a transient.
+    ///
+    /// The detector itself lives in `dsp::onset`; this keeps only the tuning and the droplet seed.
     fn update_flux(&mut self, d: &FrameData, dt_ms: f32) -> bool {
-        let n = d.levels.len();
-        if self.prev_levels.len() != n {
-            self.prev_levels = d.levels.to_vec();
-        }
-        let mut flux = 0.0f32;
-        for (i, &v) in d.levels.iter().enumerate() {
-            // Positive change only: a note ENDING is not an onset, and counting decays doubles
-            // the event rate.
-            if v.is_finite() {
-                flux += (v - self.prev_levels[i]).max(0.0);
-                self.prev_levels[i] = v;
-            }
-        }
-        if !flux.is_finite() {
-            flux = 0.0;
-        }
-        self.flux_avg += (flux - self.flux_avg) * (FLUX_AVG_PER_MS * dt_ms).clamp(0.0, 1.0);
-        if !self.flux_avg.is_finite() {
-            self.flux_avg = 0.0;
-        }
-        self.since_drop_ms += dt_ms;
-        if !self.since_drop_ms.is_finite() {
-            self.since_drop_ms = FLUX_REFRACTORY_MS;
-        }
-        if flux > self.flux_avg * FLUX_RATIO && self.since_drop_ms > FLUX_REFRACTORY_MS {
-            self.since_drop_ms = 0.0;
+        if self.onset.update(&d.levels, dt_ms, FLUX_RATIO, FLUX_REFRACTORY_MS) {
             self.seed = self.seed.wrapping_add(1);
             true
         } else {
