@@ -85,12 +85,14 @@ fn transport_state(
     cfg: &Config,
 ) -> win::tray::TransportState {
     let keys = std::array::from_fn(|i| match &outcomes[i] {
-        win::hotkeys::Outcome::Registered(c, _) => c.to_string(),
+        // `label`, not `to_string`: the menu shows the key as this keyboard prints it, while the
+        // config file keeps the canonical layout-independent spelling.
+        win::hotkeys::Outcome::Registered(c, _) => c.label(),
         win::hotkeys::Outcome::Unbound => "not set".to_string(),
-        win::hotkeys::Outcome::Taken(c) => format!("{c}  (in use elsewhere)"),
-        win::hotkeys::Outcome::Refused(c, _) => format!("{c}  (not allowed)"),
+        win::hotkeys::Outcome::Taken(c) => format!("{}  (in use elsewhere)", c.label()),
+        win::hotkeys::Outcome::Refused(c, _) => format!("{}  (not allowed)", c.label()),
         win::hotkeys::Outcome::Unreadable(_) => "unreadable".to_string(),
-        win::hotkeys::Outcome::Failed(c, _) => format!("{c}  (failed)"),
+        win::hotkeys::Outcome::Failed(c, _) => format!("{}  (failed)", c.label()),
     });
     win::tray::TransportState {
         keys,

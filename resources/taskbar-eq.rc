@@ -1,0 +1,44 @@
+// Windows resources: the application icon and the version metadata.
+//
+// WHY THIS EXISTS AT ALL. The exe had no version resource whatsoever - CompanyName, FileDescription,
+// ProductName and ProductVersion were all empty - and Defender flagged a downloaded copy as
+// Trojan:Win32/Wacatac.B!ml. That is Defender's generic machine-learning bucket (the `!ml` suffix),
+// which fires on new, unsigned, low-reputation binaries rather than on any particular behaviour; an
+// unsigned executable with no metadata at all is exactly the shape of thing a dropper writes to disk.
+// Metadata is not a fix on its own - a false-positive submission or a code signature is - but it is
+// the one legitimacy signal that can be added without a certificate or a network round trip.
+//
+// It also gives the file a real icon in Explorer, Alt-Tab and a pinned taskbar button, which the
+// runtime-drawn tray icon does not cover.
+
+1 ICON "..\\assets\\taskbar-eq.ico"
+
+1 VERSIONINFO
+FILEVERSION 0, 1, 0, 0
+PRODUCTVERSION 0, 1, 0, 0
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0x0L
+FILEOS 0x40004L
+FILETYPE 0x1L
+FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        // 0809 = English (United Kingdom), 04b0 = Unicode.
+        BLOCK "080904b0"
+        BEGIN
+            VALUE "CompanyName", "taskbar-eq"
+            VALUE "FileDescription", "Taskbar EQ - audio visualiser for the Windows taskbar"
+            VALUE "FileVersion", "0.1.0.0"
+            VALUE "InternalName", "taskbar-eq"
+            VALUE "LegalCopyright", "Copyright (C) 2026"
+            VALUE "OriginalFilename", "taskbar-eq.exe"
+            VALUE "ProductName", "Taskbar EQ"
+            VALUE "ProductVersion", "0.1.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x809, 1200
+    END
+END

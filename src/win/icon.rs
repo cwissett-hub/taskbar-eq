@@ -71,6 +71,28 @@ pub fn glyph(size: i32, dark_taskbar: bool) -> Canvas {
     c
 }
 
+/// The glyph on its own dark rounded badge, for the EXE's file icon.
+///
+/// `cfg(test)` because it is an ASSET GENERATOR, not runtime code: `dump_icon` writes its output, and
+/// `assets/taskbar-eq.ico` is built from that and committed, then embedded by `build.rs`. Nothing in
+/// the running app calls it, and pretending otherwise with an `allow(dead_code)` would hide that.
+///
+/// The tray glyph is transparent and inverts with the taskbar theme, which is right for the tray and
+/// wrong for a file icon: Explorer, Alt-Tab and a pinned taskbar button all draw it against
+/// backgrounds this app does not choose and cannot query at build time. A self-contained badge reads
+/// on any of them.
+#[cfg(test)]
+pub fn badge(size: i32) -> Canvas {
+    let s = size.max(16);
+    let mut c = Canvas::new(s, s);
+    // Rounded dark plate, then the bars on top in the light colour.
+    let r = (s / 6).max(2);
+    c.rounded_rect(0, 0, s, s, r, Rgba::from_hex("#12181f", 1.0));
+    let inner = glyph(s, true);
+    c.draw_over(&inner);
+    c
+}
+
 /// Builds an `HICON` from the glyph. `None` if any GDI call fails, which the caller treats as
 /// "fall back to the stock icon" rather than as a reason not to start.
 pub fn create(size: i32, dark_taskbar: bool) -> Option<HICON> {
@@ -238,9 +260,9 @@ mod tests {
     fn dump_icon() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
         std::fs::create_dir_all(&dir).unwrap();
-        for s in [16, 20, 24, 32] {
+        for s in [16, 20, 24, 32, 48, 64, 128, 256] {
             for dark in [true, false] {
-                let c = glyph(s, dark);
+                let c = if dark { glyph(s, dark) } else { glyph(s, dark) };
                 let mut out = Vec::with_capacity((s * s * 4) as usize);
                 for y in 0..s {
                     for x in 0..s {
@@ -250,6 +272,17 @@ mod tests {
                 }
                 let tag = if dark { "dark" } else { "light" };
                 std::fs::write(dir.join(format!("icon-{s}-{tag}.rgba")), &out).unwrap();
+            }
+            {
+                let c = badge(s);
+                let mut out = Vec::with_capacity((s * s * 4) as usize);
+                for y in 0..s {
+                    for x in 0..s {
+                        let p = c.get(x, y);
+                        out.extend_from_slice(&[p.r, p.g, p.b, p.a]);
+                    }
+                }
+                std::fs::write(dir.join(format!("badge-{s}.rgba")), &out).unwrap();
             }
         }
         println!("wrote icon dumps to {}", dir.display());

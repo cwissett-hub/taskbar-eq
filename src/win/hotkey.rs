@@ -204,13 +204,29 @@ const NAMES: &[(u16, &str)] = &[
     (0xB1, "MediaPrev"),
     (0xB2, "MediaStop"),
     (0xB3, "MediaPlayPause"),
-    // OEM punctuation. `VK_OEM_COMMA`, `VK_OEM_PERIOD`, `VK_OEM_MINUS` and `VK_OEM_PLUS` are the
-    // only OEM keys documented as identical "for any country/region", which is why the suggested
-    // bindings use them and the VK_OEM_1..8 range is left unnamed.
+    // OEM punctuation. `VK_OEM_COMMA`, `VK_OEM_PERIOD`, `VK_OEM_MINUS` and `VK_OEM_PLUS` are the only
+    // OEM keys documented as identical "for any country/region", which is why the SUGGESTED bindings
+    // use them.
     (0xBC, "Comma"),
     (0xBE, "Period"),
     (0xBD, "Minus"),
     (0xBB, "Plus"),
+    // The rest of the OEM range. These ARE layout-dependent, and leaving them out on that basis was
+    // a mistake: it meant binding Ctrl+] displayed as "Ctrl+VK(0xDD)", which tells the user nothing.
+    // Layout-dependence is a reason not to SUGGEST them, not a reason to refuse to name them.
+    //
+    // The names are the US/UK positions, and they are the CANONICAL stored spelling - deliberately
+    // fixed, so a config file written on one layout means the same key on another. What the user is
+    // SHOWN comes from `key_label`, which asks the keyboard layout.
+    (0xBA, "Semicolon"),
+    (0xBF, "Slash"),
+    (0xC0, "Backtick"),
+    (0xDB, "LeftBracket"),
+    (0xDC, "Backslash"),
+    (0xDD, "RightBracket"),
+    (0xDE, "Quote"),
+    (0xDF, "OEM8"),
+    (0xE2, "OEM102"),
 ];
 
 /// The canonical name of a virtual key.
@@ -228,6 +244,49 @@ pub fn key_name(vk: u16) -> String {
     // Anything else keeps its number, so a chord captured on hardware this table does not know
     // still round-trips exactly instead of being silently dropped.
     format!("VK({vk:#04X})")
+}
+
+/// What to SHOW the user for a virtual key, asking the current keyboard layout.
+///
+/// THE ONE WIN32 CALL IN THIS MODULE, and the split it creates is the point. `key_name` above is fixed
+/// and layout-independent because it is what gets WRITTEN TO THE CONFIG FILE - a binding must mean the
+/// same key when the same exe runs on a machine with a different layout, and it must round-trip byte
+/// for byte. But a fixed table is the wrong thing to put in front of a person: on a UK layout the key
+/// this app calls `RightBracket` is physically the one printed `]`, and on other layouts it is
+/// something else entirely.
+///
+/// So the stored form stays canonical and the displayed form asks the OS. Falls back to the canonical
+/// name if the layout has nothing to say, which is what happens for the function and media keys.
+pub fn key_label(vk: u16) -> String {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        GetKeyNameTextW, MapVirtualKeyW, MAPVK_VK_TO_VSC,
+    };
+    // ONLY THE LAYOUT-DEPENDENT KEYS ARE ASKED ABOUT, which is a correction. Asking about every key
+    // produced two wrong answers immediately: `MediaPlayPause` came back as "G", because its scan
+    // code collides with a letter's unless the extended bit is set, and Space came back as the shouty
+    // "SPACE". For every key whose identity is fixed - letters, digits, F-keys, the named editing and
+    // media keys - this module's own table is already both correct and better written, so the OS is
+    // consulted only where the table genuinely cannot know: the OEM range, whose engraving moves with
+    // the layout.
+    let layout_dependent = matches!(vk, 0xBA..=0xC0 | 0xDB..=0xDF | 0xE2);
+    if !layout_dependent {
+        return key_name(vk);
+    }
+    unsafe {
+        let sc = MapVirtualKeyW(vk as u32, MAPVK_VK_TO_VSC);
+        if sc != 0 {
+            // The scan code goes in bits 16-23.
+            let mut buf = [0u16; 64];
+            let len = GetKeyNameTextW((sc as i32) << 16, &mut buf);
+            if len > 0 {
+                let t = String::from_utf16_lossy(&buf[..len as usize]).trim().to_string();
+                if !t.is_empty() {
+                    return t;
+                }
+            }
+        }
+    }
+    key_name(vk)
 }
 
 /// Parses a canonical name back to a virtual key.
@@ -380,6 +439,29 @@ impl Chord {
     }
 }
 
+impl Chord {
+    /// The chord as the user should SEE it, using the current keyboard layout for the trigger key.
+    ///
+    /// Distinct from `Display`, which is the canonical stored spelling. The menu and the capture
+    /// window use this; `config.toml` uses `Display`.
+    pub fn label(&self) -> String {
+        let mut s = String::new();
+        for (on, name) in [
+            (self.mods.ctrl, "Ctrl"),
+            (self.mods.alt, "Alt"),
+            (self.mods.shift, "Shift"),
+            (self.mods.win, "Win"),
+        ] {
+            if on {
+                s.push_str(name);
+                s.push('+');
+            }
+        }
+        s.push_str(&key_label(self.vk));
+        s
+    }
+}
+
 impl std::fmt::Display for Chord {
     /// Canonical form. The modifier order is fixed so a chord round-trips byte for byte; the parser
     /// accepts any order.
@@ -402,7 +484,21 @@ impl std::fmt::Display for Chord {
 mod tests {
     use super::*;
 
+/// Prints what the menu will show for the keys actually in use, using the live keyboard layout.
+    /// Run: cargo test --release probe_key_labels -- --ignored --nocapture
     #[test]
+    #[ignore]
+    fn probe_key_labels() {
+        for text in [
+            "Ctrl+RightBracket", "Ctrl+LeftBracket", "F9", "Ctrl+Period", "Ctrl+Comma",
+            "Win+Ctrl+Space", "MediaPlayPause", "Ctrl+Semicolon", "Ctrl+Quote", "Ctrl+Backtick",
+        ] {
+            let c = Chord::parse(text).expect(text);
+            println!("  stored {:<22} shown as  {}", c.to_string(), c.label());
+        }
+    }
+
+        #[test]
     fn every_chord_the_type_can_hold_round_trips_through_its_own_text() {
         // EXHAUSTIVE, not a handful of examples. The space is 256 keys x 16 modifier subsets = 4096,
         // which is small enough to walk, and walking it is the only way to be sure no key formats to
