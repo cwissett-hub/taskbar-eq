@@ -3,16 +3,16 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** after `a8a9f75` (random-button bias fix).
+**Last updated:** after the valve-ionisation flourish.
 
 ---
 
 ## In progress
 
-- [ ] **Per-family flourishes, six remaining.** The shared trigger, the envelope and three flourishes
-      are done; these six still need their own effect, a pixel-level test and a render:
-      valve blue ionisation, nixie ghosting, scope trigger loss, tape wow/flutter, Pantone plate
-      misregister, patchbay. One commit per family, each pushed once verified.
+- [ ] **Per-family flourishes, five remaining.** Four are done (VFD self-test, VU needle slam,
+      waterfall tear, valve ionisation). Still to do, each needing its own effect, a pixel-level test
+      and a render: **nixie ghosting, scope trigger loss, tape wow/flutter, Pantone plate misregister,
+      patchbay**. One commit per family, pushed once verified.
 
 ## Waiting on you
 
@@ -69,6 +69,12 @@ history. Newest first within each section. Commit hashes link the claim to the e
   unbound. Found three latent bugs while wiring: a slot-index catch-all that would have overwritten the
   shuffle key, a menu array that **panics at the sixth slot**, and test interference from the
   process-global switch.
+- **Valve flourish: gas ionisation.** A cold blue haze through every envelope - the wrong colour for the
+  display, which is the entire point, so it is a fixed blue rather than a tint of the theme. Drawn
+  BENEATH the cathode glow, which is both easier and more truthful: the gas fills the tube while the
+  cathode is a bright source at the plate. Tested as a hue shift (blue/red ratio), not a brightness
+  change - a brightness test would pass on any stray glow and miss the only property that makes it read
+  as a fault. 1100ms, the longest decay of any family's.
 - `38ea1c5` **Waterfall flourish: a broadband tear** written into the history, so it scrolls away as data
   rather than fading as a filter. Three columns wide - one read as merely a brighter column.
 - `4839f53` **VFD self-test** (every segment lights, then drains) and **VU needle slam** (needles to the

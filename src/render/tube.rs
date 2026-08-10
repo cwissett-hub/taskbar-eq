@@ -105,8 +105,31 @@ fn tube_count(w: i32) -> usize {
     ((w / TUBE_PITCH).max(4) as usize).min(40)
 }
 
+/// The blue of an ionising valve, and how long it lingers.
+///
+/// A gassy valve fluoresces a cold violet-blue inside the envelope, and the whole reason it reads as an
+/// event is that it is the WRONG COLOUR for the display - every other light in this family is the
+/// colourway's own warm `lit`/`hot`. So this is a fixed blue rather than a tint of the theme: making it
+/// theme-coloured would turn a fault into a brightness change, which is what the flourish must not be.
+///
+/// 1100ms, the longest decay of any family's flourish. Ionisation is gas relaxing, not a filament
+/// cooling - it fades slowly and unevenly, and a fast one reads as a flash of the wrong colour rather
+/// than as a valve in trouble.
+const ION_BLUE: &str = "#6a7cff";
+const ION_MS: f32 = 1100.0;
+
+/// Peak alpha of the ionisation haze.
+///
+/// 0.42 rather than more: it has to be unmistakably present and still let the plate silhouette and the
+/// heater filaments read through it. At full opacity the envelope becomes a blue blob and the valve
+/// stops being a valve, which loses the thing the flourish is decorating.
+const ION_ALPHA: f32 = 0.42;
+
 #[derive(Default)]
 pub struct Tube {
+    /// The flourish: the valves ionise blue on a rare, exceptional hit. See `dsp::flourish`.
+    flourish: crate::dsp::flourish::Trigger,
+    ion: crate::dsp::flourish::Envelope,
     /// Fast-falling peak hold per valve, in displayed-response units.
     ///
     /// A `Vec` rather than an array because `tube_count` scales to 40 and `#[derive(Default)]`
@@ -161,6 +184,14 @@ impl Family for Tube {
 
     fn draw(&mut self, c: &mut Canvas, t: &Theme, d: &FrameData) {
         let (w, h) = (c.width(), c.height());
+
+        // The flourish, advanced before the size guard so a canvas too small to draw still keeps the
+        // trigger's window current - otherwise a resize would leave stale history and fire a spurious
+        // ionisation on the first frame back.
+        let dt = if d.dt_ms.is_finite() { d.dt_ms.clamp(0.0, 200.0) } else { 16.7 };
+        let fired = self.flourish.update(&d.levels, dt, t.flourish);
+        let ion = self.ion.update(fired, dt, ION_MS);
+
         if w < 24 || h < 20 {
             // Too small to hold an envelope with an interior; fill the chassis and stop
             // rather than drawing a row of unrecognisable smudges.
@@ -234,6 +265,31 @@ impl Family for Tube {
             }
             self.marker[i] = (self.marker[i] - MARKER_FALL).max(resp);
             let peak = self.marker[i];
+
+            // THE FLOURISH: gas ionisation. A cold blue haze through the envelope.
+            //
+            // Drawn BENEATH the cathode glow rather than over it, which is both the easier layering and
+            // the more truthful one: the gas fills the whole tube while the cathode is a bright source
+            // at the plate, so the warm light should still win where it is strongest and the blue should
+            // show in the upper envelope where there is nothing else. Over the top it would have washed
+            // the filaments and the plate silhouette.
+            //
+            // Confined to the envelopes by the single clip pass after this loop, like every other light
+            // in this family.
+            if ion > 0.01 {
+                let env_mid = top + dome + (glass_h - dome) / 2;
+                lit.elliptical_gradient(
+                    cx,
+                    env_mid,
+                    (glass_w as f32 * 0.72).max(2.0),
+                    ((glass_h - dome) as f32 * 0.60).max(2.0),
+                    &[
+                        (0.0, Rgba::from_hex(ION_BLUE, (ion * ION_ALPHA).clamp(0.0, 1.0))),
+                        (0.55, Rgba::from_hex(ION_BLUE, (ion * ION_ALPHA * 0.6).clamp(0.0, 1.0))),
+                        (1.0, Rgba::from_hex(ION_BLUE, 0.0)),
+                    ],
+                );
+            }
 
             // Cathode glow, centred on the plate. The radius is tied to the ENVELOPE, not to
             // the larger of width/height - at `glass_w.max(glass_h/2)` it exceeded the glass
@@ -724,6 +780,63 @@ mod tests {
         }
         println!("wrote {} tube dumps to {}", n, dir.display());
     }
+
+    #[test]
+    fn the_flourish_turns_the_valves_blue_and_then_lets_them_go() {
+        // A gassy valve fluoresces a COLD colour, and being the wrong colour for the display is the
+        // whole point - every other light in this family is the colourway's warm lit/hot. So this is
+        // measured as a shift in hue, not as a change in brightness: a brightness test would pass on any
+        // stray glow and would have missed the one property that makes it read as a fault.
+        let seq = crate::dsp::flourish::firing_sequence(64);
+        let quiet = frame(0.10);
+        let run = |flourish: f32, after: usize| -> Canvas {
+            let mut t = builtin::tube_soviet();
+            t.flourish = flourish;
+            let mut f = Tube::default();
+            let mut c = Canvas::new(190, 60);
+            for row in &seq {
+                let mut d = FrameData { dt_ms: 16.7, ..FrameData::default() };
+                for (i, v) in d.levels.iter_mut().enumerate() {
+                    *v = row.get(i).copied().unwrap_or(0.0);
+                }
+                d.peaks = d.levels;
+                f.draw(&mut c, &t, &d);
+            }
+            for _ in 0..after {
+                f.draw(&mut c, &t, &quiet);
+            }
+            c
+        };
+        // Total blue against total red across the panel. A warm valve row is red-dominant; ionisation
+        // has to move that ratio decisively.
+        let blueness = |c: &Canvas| -> f64 {
+            let (mut r, mut b) = (1.0f64, 1.0f64);
+            for y in 0..60 {
+                for x in 0..190 {
+                    let p = c.get(x, y);
+                    r += p.r as f64;
+                    b += p.b as f64;
+                }
+            }
+            b / r
+        };
+        let on = run(crate::themes::DEFAULT_FLOURISH, 3);
+        let off = run(0.0, 3);
+        assert_ne!(on.bits(), off.bits(), "the flourish changed nothing");
+        let (a, b) = (blueness(&on), blueness(&off));
+        assert!(
+            a > b * 1.15,
+            "ionisation must shift the row toward blue: blue/red {a:.3} against {b:.3} without it"
+        );
+        // And it RELEASES. ION_MS is the longest decay of any family's flourish, so this waits well
+        // past it - a flourish that latched would leave every valve permanently blue.
+        let settled = blueness(&run(crate::themes::DEFAULT_FLOURISH, 120));
+        assert!(
+            (settled - b).abs() < (a - b) * 0.35,
+            "the ionisation never cleared: blue/red still {settled:.3} against a baseline {b:.3}"
+        );
+    }
+
 }
 
 #[cfg(test)]

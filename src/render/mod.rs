@@ -532,6 +532,7 @@ mod newest_dump {
             ("segmented", "vfd-ice"),
             ("vu", "hifi-white"),
             ("waterfall", "waterfall-heat"),
+            ("tube", "tube-soviet"),
         ];
         let mut n = 0;
         for (family, theme_id) in picks {
