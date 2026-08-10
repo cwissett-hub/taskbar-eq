@@ -1,0 +1,91 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>taskbar-eq &mdash; review sheet</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#101014; color:#e7e7ea; font:15px/1.55 "Segoe UI",system-ui,sans-serif;
+         margin:0 auto; max-width:900px; padding:40px 24px 96px; }
+  h1 { font-size:26px; margin:0 0 6px; letter-spacing:-.2px; }
+  .lede { color:#a2a2ac; margin:0 0 8px; }
+  .lede code { color:#d8d8e0; }
+  section { border-top:1px solid #26262e; padding:28px 0 4px; }
+  h2 { font-size:18px; margin:0 0 8px; font-weight:600; }
+  .n { display:inline-block; width:26px; color:#6f6f7d; font-variant-numeric:tabular-nums; }
+  .what { margin:0 0 14px; color:#b8b8c2; }
+  figure { margin:0 0 12px; }
+  img { display:block; max-width:100%; image-rendering:pixelated; border-radius:6px;
+        border:1px solid #2c2c36; background:#16161c; }
+  figcaption { color:#7c7c8a; font-size:12.5px; margin-top:7px; }
+  .judge { background:#171720; border-left:3px solid #4f7fd8; margin:0; padding:10px 14px;
+           border-radius:0 6px 6px 0; }
+  .judge strong { color:#8fb0ea; font-weight:600; }
+  footer { border-top:1px solid #26262e; margin-top:36px; padding-top:20px; color:#7c7c8a;
+           font-size:13.5px; }
+  footer code { color:#c8c8d2; }
+</style>
+<h1>taskbar-eq &mdash; what needs your eyes</h1>
+<p class="lede">Nine flourishes, one per family. Each fires on a rare, exceptional hit &mdash; about
+one every 30 seconds on real music, measured on a 119-second capture of nine varied tracks &mdash;
+and each is the fault or the ritual that belongs to its own instrument.</p>
+<p class="lede">Every one has a pixel-level test and was checked against deliberate mutations, so what
+is below is not "does it work" but "is it right". <strong>Item 7 is the one I would change first.</strong>
+Regenerate any of these with <code>cargo test --release dump_flourishes -- --ignored</code>.</p>
+<section>
+  <h2><span class="n">1</span>VFD self-test</h2>
+  <p class="what">Every segment lights, then drains back to the reading.</p>
+  <figure><img src="flourish-segmented.png" alt="VFD self-test"><figcaption>top: without &middot; bottom: with</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> Whether the drain reads as a self-test sequence or just as a bright flash.</p>
+</section>
+<section>
+  <h2><span class="n">2</span>VU needle slam</h2>
+  <p class="what">Both needles driven to the end stop over 900ms with the OVER lamps lit.</p>
+  <figure><img src="flourish-vu.png" alt="VU needle slam"><figcaption>top: without &middot; bottom: with</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> Whether 900ms is too slow - a real slam is faster, but faster was hard to see.</p>
+</section>
+<section>
+  <h2><span class="n">3</span>Broadband tear</h2>
+  <p class="what">Three columns of full-height energy written into the history, so it scrolls away as data.</p>
+  <figure><img src="flourish-waterfall.png" alt="Broadband tear"><figcaption>top: without &middot; bottom: with</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> Whether three columns is the right width. One read as merely a brighter column.</p>
+</section>
+<section>
+  <h2><span class="n">4</span>Gas ionisation</h2>
+  <p class="what">A cold blue haze fills every envelope - the wrong colour for the display, which is the point.</p>
+  <figure><img src="flourish-tube.png" alt="Gas ionisation"><figcaption>top: without &middot; bottom: with</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> Whether the blue is cold enough to read as a fault rather than as a colourway change.</p>
+</section>
+<section>
+  <h2><span class="n">5</span>Every cathode fires</h2>
+  <p class="what">The unused digits all glow, as a badly-driven tube's do. 520ms, the shortest of the nine.</p>
+  <figure><img src="flourish-nixie.png" alt="Every cathode fires"><figcaption>top: without &middot; bottom: with</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> Whether the live digit still clearly reads as the value. Measured at a 32% share of its legibility headroom, but that is a number, not an opinion.</p>
+</section>
+<section>
+  <h2><span class="n">6</span>Trigger loss</h2>
+  <p class="what">The sweep free-runs, so the trace slides a screen-width of phase and the phosphor smears every phase it passes through.</p>
+  <figure><img src="flourish-scope.png" alt="Trigger loss"><figcaption>top: without &middot; bottom: with</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> Whether the smear is too heavy. It is what a real scope does, but it does fill the screen.</p>
+</section>
+<section>
+  <h2><span class="n">7</span>Plate misregister</h2>
+  <p class="what">A plate slips 3px vertically, so every element splits into red/green/blue ghosts.</p>
+  <figure><img src="flourish-pantone.png" alt="Plate misregister"><figcaption>top: without &middot; bottom: with</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> THE ONE I MOST WANT JUDGED. It is the strongest of the nine by a distance. MISREG_Y comes down from 3px on one word.</p>
+</section>
+<section>
+  <h2><span class="n">8</span>Tape wow and flutter</h2>
+  <p class="what">Speed instability on the transport: 1.1Hz wow with 8.5Hz flutter riding on it, and the wow reaching the tape slack.</p>
+  <figure><img src="review-reel-warble-rate.png" alt="Tape wow and flutter"><figcaption>grey: the rate with no flourish (flat) &middot; orange: the rate warbling and settling back &middot; teal: the tape sag, carrying wow only</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> Nothing to judge in a still - this one only exists in motion. The plot is here as evidence that the mechanism is right; judge the look in the running app.</p>
+</section>
+<section>
+  <h2><span class="n">9</span>Patchbay re-patch</h2>
+  <p class="what">Every cable slides to the other jack of its pair and back, so the chevron mirrors itself.</p>
+  <figure><img src="patchbay-repatch.png" alt="Patchbay re-patch"><figcaption>rows are frames 0, 19, 39, 58, 77 of the 78-frame swing</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> Whether the plugs sitting mid-air between sockets (rows 2 and 4) read as a cable in transit or as a mistake.</p>
+</section>
+<footer>
+Generated from the renderers themselves, not drawn by hand. Progress log:
+<code>TODO.md</code>. Source of these images: <code>cargo test --release dump_flourishes</code>,
+<code>dump_reel_warble</code>, <code>dump_patchbay_repatch</code> (all <code>--ignored</code>).
+</footer>

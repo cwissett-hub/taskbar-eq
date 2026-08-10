@@ -3,19 +3,22 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** after the patchbay re-patch flourish - all nine families now have one.
+**Last updated:** review sheet written; all nine flourishes done.
 
 ---
 
 ## In progress
 
-- [ ] **Next up: the README/docs**, then the single review sheet. All nine flourishes are DONE - see
-      the Done section. Nothing is half-finished in the tree.
+- [ ] **The README/docs.** Last substantial thing on the list: transport, hotkeys, tray menu, capture
+      window, banner, RWR, chroma parameters, flourishes, suspend and health. All nine flourishes are
+      DONE - see the Done section. Nothing is half-finished in the tree.
 
 ## Waiting on you
 
-- [ ] **Look at the review sheet** (not written yet - it will collect every render that needs an eye in
-      one place, so Monday is a single pass rather than thirteen).
+- [ ] **THE REVIEW SHEET IS WRITTEN: open `docs/review/index.html`.** Nine items, one per family, each
+      with the render, what it is meant to be, and what specifically I want judged. It is one pass
+      rather than thirteen. **Item 7, the Pantone plate slip, is the one I would change first** - it is
+      the strongest of the nine by a distance and comes down on one word.
 - [ ] **The `flourish` and `flourish_toggle` hotkeys are deliberately unbound** - the keys are yours to
       choose. Tray menu -> Flourishes -> the two "key" entries. `Ctrl+Semicolon` and `Ctrl+Quote` both
       registered cleanly when tested; `Ctrl+Win+F` and `Ctrl+Alt+G` are already taken on this machine.
@@ -24,10 +27,6 @@ history. Newest first within each section. Commit hashes link the claim to the e
 - [ ] **"Any theme" is now uniform per FAMILY, not per colourway** - my judgement call, not a bug fix.
       A colourway in a small family is now individually likelier than one in a large family. Three-line
       revert if you would rather have the old behaviour.
-- [ ] **Judge the Pantone slip for intensity.** `target/eyeball/review-pantone-flourish.png`. It is
-      the strongest of the nine by a distance - every element splits into red/green/blue ghosts and the
-      bottom rules become three separate coloured lines. That is what misregistration IS, and it clears
-      in 900ms, but say if it is too much and `MISREG_Y` comes down from 3px.
 - [ ] **Windows 10 verification** - blocked on a `--diagnose` log from the other machine.
 
 ## Open, unresolved
