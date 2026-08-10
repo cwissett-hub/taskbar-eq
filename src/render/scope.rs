@@ -8,6 +8,13 @@ pub struct Scope {
     trail: Option<Canvas>,
     /// Slow-following peak of |waveform|, for auto-ranging. See `update_peak`.
     peak: f32,
+    /// The flourish: the sweep loses trigger lock. See `dsp::flourish` and `UNLOCK_MS`.
+    flourish: crate::dsp::flourish::Trigger,
+    unlock: crate::dsp::flourish::Envelope,
+    /// Sample offset added to the triggered start while lock is lost, accumulated across frames so
+    /// the trace slides continuously rather than jumping to a fresh random phase each frame. A jump
+    /// would read as noise; a slide reads as a sweep running at the wrong rate, which is the fault.
+    drift: f32,
 }
 
 /// Deflection the auto-ranger aims for, as a fraction of the available amplitude.
@@ -59,6 +66,29 @@ const TRIGGER_SEARCH: usize = 128;
 
 /// Samples actually drawn, after the trigger offset is taken off the front.
 const DRAW_WINDOW: usize = 256 - TRIGGER_SEARCH;
+
+/// How long the sweep free-runs during the flourish, and how fast it slides while it does.
+///
+/// THE FLOURISH IS THIS FAMILY'S OWN WORST BUG, ON PURPOSE. `TRIGGER_SEARCH` above records what an
+/// untriggered sweep looks like: the window starts at an arbitrary phase every frame, the trace
+/// slides sideways, and the persistence smears several different shapes over each other instead of
+/// reinforcing one. That was measured at 0.0860 frame-to-frame difference against 0.0012 locked - a
+/// 72x change - which makes it both unmistakable on screen and cheap to assert on.
+///
+/// So the effect is not a new drawing routine at all; it is the trigger being switched off for
+/// 1400ms. Nothing else in the family needs to know.
+///
+/// 1400ms because the slide has to be legible as a slide: shorter and it reads as one frame of
+/// glitch rather than a sweep out of sync.
+///
+/// The drift rate is scaled by the envelope, and `Envelope` decays LINEARLY, so the slide decelerates
+/// as lock is recovered rather than stopping dead. That makes the total travel the integral, not the
+/// product: 0.18 samples/ms over the area under a 1400ms linear ramp is 0.18 x 700 = ~126 samples,
+/// which is one full sweep window - the trace crosses the screen about once and settles. At the top of
+/// the envelope that is 0.18 x 16.7 = 3.0 samples a frame, which at this width is ~4px, and 4px a
+/// frame is what the test measures. Faster read as tearing; slower did not read as movement at all.
+const UNLOCK_MS: f32 = 1400.0;
+const DRIFT_PER_MS: f32 = 0.18;
 
 /// Half-width of the smoothing kernel applied before stroking.
 ///
@@ -265,6 +295,30 @@ impl Family for Scope {
         let (wave, start) = Self::prepare(d);
         let gain = self.update_peak(&wave) * t.sensitivity.max(0.0);
 
+        // THE FLOURISH: trigger loss. The sweep free-runs, so the trace slides and the phosphor
+        // smears every phase it passes through. See `UNLOCK_MS`.
+        let dt = if d.dt_ms.is_finite() { d.dt_ms.clamp(0.0, 200.0) } else { 16.7 };
+        let fired = self.flourish.update(&d.levels, dt, t.flourish);
+        let unlock = self.unlock.update(fired, dt, UNLOCK_MS);
+        let start = if unlock > 0.01 {
+            self.drift += DRIFT_PER_MS * dt * unlock;
+            // Bounded to the sweep window, because `stroke_into` reads up to
+            // `wave[start + DRAW_WINDOW - 1]` behind a `.min(255)`: an unbounded offset does not
+            // panic, it silently pins every column at sample 255 and draws the trace as a flat
+            // horizontal line. Repeated triggers are what get it there - `drift` only resets once the
+            // envelope expires, so a hit arriving mid-slide keeps accumulating onto it.
+            //
+            // Wrapping rather than clamping is a modelling choice, not a safety one. Checked: with
+            // start <= 127 and the window 127 wide, even a clamp at TRIGGER_SEARCH tops out at index
+            // 254, comfortably in bounds. Wrap because a free-running sweep keeps running - it does
+            // not stop at the edge of the buffer.
+            self.drift %= (TRIGGER_SEARCH + 1) as f32;
+            (start + self.drift as usize) % (TRIGGER_SEARCH + 1)
+        } else {
+            self.drift = 0.0;
+            start
+        };
+
         // Slow trail first (drawn underneath), then the fast trace.
         if let (Some((trail_hex, trail_fade)), Some(trail)) = (t.dual.clone(), self.trail.as_mut()) {
             let c = Rgba::from_hex(&trail_hex, 1.0);
@@ -362,6 +416,206 @@ mod tests {
         }
         d.levels = [0.0; NUM_BANDS];
         d
+    }
+
+    /// Music-like content whose phase WALKS between frames, which is what makes the trigger do any
+    /// work at all. A fixed-phase tone stands still on screen with or without a trigger, so a test
+    /// built on one cannot tell a locked sweep from a free-running one. Shared with
+    /// `dump_scope_frames`, which is where it started life.
+    ///
+    /// `noise` is off for the trigger tests and on for the visual dump, and the difference is not
+    /// cosmetic. The trigger takes the FIRST rising zero crossing in its search window, and the noise
+    /// term manufactures extra crossings whose ordering shifts as the phase walks - so which crossing
+    /// wins jumps between frames and the sweep does not lock at all. Measured: with noise, the trace
+    /// slid a median 60px a frame with the flourish OFF, which left the test unable to tell a locked
+    /// sweep from a free-running one. It is the right content for judging a smear by eye and the wrong
+    /// content for asserting lock.
+    fn music(t: f32, amp: f32, noise: bool) -> f32 {
+        let mut acc = (t * std::f32::consts::TAU * 2.0).sin();
+        acc += 0.45 * (t * std::f32::consts::TAU * 5.0).sin();
+        acc += 0.22 * (t * std::f32::consts::TAU * 11.0).sin();
+        let n = if noise {
+            // deterministic pseudo-noise; a random number generator has no place in a test
+            ((t * 7919.0).sin() * 43758.55) % 1.0
+        } else {
+            0.0
+        };
+        (acc / 1.67 + n * 0.12) * amp
+    }
+
+    /// The y of the brightest pixel in each column: where the live trace sits.
+    ///
+    /// Brightest rather than any-lit because the persistence leaves several older traces on screen at
+    /// lower alpha, and a threshold scan would pick up whichever of them happened to be highest.
+    fn trace_profile(c: &Canvas) -> Vec<i32> {
+        (5..(c.width() - 5))
+            .map(|x| {
+                (0..c.height())
+                    .max_by(|a, b| lum(c.get(x, *a)).partial_cmp(&lum(c.get(x, *b))).unwrap())
+                    .unwrap_or(0)
+            })
+            .collect()
+    }
+
+    /// How far the trace slid horizontally between two frames, in pixels.
+    ///
+    /// The lag that best aligns the two profiles. A locked sweep holds a periodic wave still, so the
+    /// best alignment is zero; a free-running one slides a few pixels a frame.
+    ///
+    /// Whole-frame luminance difference was tried first and is nearly useless here - it measured
+    /// 0.0299 unlocked against 0.0239 locked, a factor of 1.24, because most of it is the phosphor
+    /// decaying and the non-periodic part of the content changing, neither of which the flourish
+    /// touches. The search is wide (+/-80px) because the raw audio's own phase walk is ~7.9 samples a
+    /// frame, about 11px, ON TOP of the drift - it is precisely that walk the trigger normally cancels.
+    fn slide_px(a: &Canvas, b: &Canvas) -> i32 {
+        let (pa, pb) = (trace_profile(a), trace_profile(b));
+        let n = pa.len() as i32;
+        let mut best = (f32::MAX, 0i32);
+        for lag in -80..=80 {
+            let (mut acc, mut count) = (0.0f32, 0.0f32);
+            for x in 0..n {
+                let j = x + lag;
+                if j < 0 || j >= n {
+                    continue;
+                }
+                acc += (pa[x as usize] - pb[j as usize]).abs() as f32;
+                count += 1.0;
+            }
+            // Require most of the width to overlap, or a large lag wins on a handful of columns.
+            if count < n as f32 * 0.6 {
+                continue;
+            }
+            let mean = acc / count;
+            if mean < best.0 {
+                best = (mean, lag);
+            }
+        }
+        best.1
+    }
+
+    /// A theme for the flourish tests, at a chosen strength.
+    fn scope_theme(strength: f32) -> Theme {
+        let mut t = builtin::all()
+            .into_iter()
+            .find(|t| t.family == "scope" && t.dual.is_none())
+            .expect("no single-layer scope colourway");
+        t.flourish = strength;
+        t
+    }
+
+    /// One frame of phase-walking tone (no noise - see `music`) at the given band levels.
+    fn scope_frame(frame: usize, levels: [f32; NUM_BANDS]) -> FrameData {
+        let mut d = FrameData {
+            dt_ms: 16.7,
+            levels,
+            ..FrameData::default()
+        };
+        d.peaks = levels;
+        for i in 0..256 {
+            d.waveform[i] = music(i as f32 / 256.0 + frame as f32 * 0.031, 0.35, false);
+        }
+        d
+    }
+
+    #[test]
+    fn the_flourish_loses_trigger_lock() {
+        // The effect IS this family's documented worst bug, deliberately re-entered for 1400ms, so it
+        // is asserted with that bug's own metric rather than a new one: frame-to-frame difference on
+        // phase-walking content. Locked, consecutive frames barely differ. Free-running, the trace
+        // slides several pixels a frame and they differ a great deal.
+        let seq = crate::dsp::flourish::firing_sequence(NUM_BANDS);
+        let run = |strength: f32| -> i32 {
+            let t = scope_theme(strength);
+            let mut sc = Scope::default();
+            let mut c = Canvas::new(190, 60);
+            let mut frame = 0usize;
+            // Settle the peak follower and fill the trigger's own history window before the hit.
+            for _ in 0..40 {
+                sc.draw(&mut c, &t, &scope_frame(frame, [0.10; NUM_BANDS]));
+                frame += 1;
+            }
+            for row in &seq {
+                let mut levels = [0.0f32; NUM_BANDS];
+                for (i, v) in levels.iter_mut().enumerate() {
+                    *v = row.get(i).copied().unwrap_or(0.0);
+                }
+                sc.draw(&mut c, &t, &scope_frame(frame, levels));
+                frame += 1;
+            }
+            // Measure over the frames just after the hit, where the envelope is near full. Both arms
+            // see byte-identical audio; only `flourish` differs. Median of the per-frame slides, so
+            // one frame in which the argmax profile latched onto a decaying older trace cannot decide
+            // the result.
+            let mut slides = Vec::new();
+            for _ in 0..6 {
+                let before = c.clone();
+                sc.draw(&mut c, &t, &scope_frame(frame, [0.10; NUM_BANDS]));
+                frame += 1;
+                slides.push(slide_px(&before, &c).abs());
+            }
+            slides.sort_unstable();
+            slides[slides.len() / 2]
+        };
+
+        let locked = run(0.0);
+        let unlocked = run(crate::themes::DEFAULT_FLOURISH);
+        assert!(
+            locked <= 1,
+            "the sweep was not locked with the flourish off: it slid {locked}px a frame, so this test \
+             cannot tell lock from loss of it"
+        );
+        assert!(
+            unlocked >= 4,
+            "the sweep never came unstuck: it slid {unlocked}px a frame against {locked}px locked"
+        );
+    }
+
+    #[test]
+    fn losing_lock_never_flattens_the_trace() {
+        // Guards the bound on the drift offset. Unbounded, it walks past sample 255, `stroke_into`
+        // pins every column there, and the trace becomes a flat horizontal line - no panic, just a
+        // dead display for as long as the flourish lasts. Re-triggered repeatedly, which is how the
+        // offset gets that far: `drift` only resets once the envelope expires.
+        //
+        // `fade = 1.0` kills the persistence, and that is what makes this test able to fail at all.
+        // The first version left persistence on and scanned for any pixel above a luminance
+        // threshold, so it was reading the older traces still decaying in the buffer - it passed with
+        // the bound REMOVED ENTIRELY, which is precisely the failure it was written to catch. With no
+        // persistence the profile is the live trace and nothing else.
+        let mut t = scope_theme(crate::themes::DEFAULT_FLOURISH);
+        t.fade = 1.0;
+        t.dual = None;
+        let seq = crate::dsp::flourish::firing_sequence(NUM_BANDS);
+        let quiet = vec![0.10f32; NUM_BANDS];
+        let mut sc = Scope::default();
+        let mut c = Canvas::new(190, 60);
+        let mut worst = i32::MAX;
+        let mut frame = 0usize;
+        for pass in 0..6 {
+            for row in seq.iter().chain(std::iter::repeat(&quiet).take(20)) {
+                let mut levels = [0.0f32; NUM_BANDS];
+                for (i, v) in levels.iter_mut().enumerate() {
+                    *v = row.get(i).copied().unwrap_or(0.0);
+                }
+                sc.draw(&mut c, &t, &scope_frame(frame, levels));
+                frame += 1;
+                if pass == 0 {
+                    continue; // let the peak follower settle and the persistence fill in first
+                }
+                // Vertical spread of the live trace across the whole width. A trace pinned to one
+                // sample is flat, so its spread collapses; a sliding one keeps the wave's shape.
+                let prof = trace_profile(&c);
+                let (lo, hi) = prof.iter().fold((i32::MAX, i32::MIN), |(l, h), y| (l.min(*y), h.max(*y)));
+                if lo <= hi {
+                    worst = worst.min(hi - lo);
+                }
+            }
+        }
+        assert!(
+            worst >= 8,
+            "the trace flattened while lock was lost: {worst}px of vertical spread, which is what an \
+             unbounded drift offset looks like once it walks past the end of the sample buffer"
+        );
     }
 
     /// The panel is fully opaque (`panel_alpha: 1.0`), so `.a` is 255 at every
@@ -571,18 +825,6 @@ mod tests {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
         std::fs::create_dir_all(&dir).unwrap();
 
-        // Something with the character of music rather than a pure tone: a fundamental,
-        // two harmonics, and a little noise, so the trace has fine structure that a
-        // smear would visibly destroy.
-        let music = |t: f32, amp: f32| -> f32 {
-            let mut acc = (t * std::f32::consts::TAU * 2.0).sin();
-            acc += 0.45 * (t * std::f32::consts::TAU * 5.0).sin();
-            acc += 0.22 * (t * std::f32::consts::TAU * 11.0).sin();
-            // deterministic pseudo-noise; Math.random has no place in a test
-            let n = ((t * 7919.0).sin() * 43758.55) % 1.0;
-            (acc / 1.67 + n * 0.12) * amp
-        };
-
         let mut n = 0usize;
         for (label, amp) in [("quiet", 0.05f32), ("normal", 0.35), ("loud", 0.85)] {
             for t in builtin::all().into_iter().filter(|t| t.family == "scope") {
@@ -594,7 +836,7 @@ mod tests {
                     let mut d = FrameData::default();
                     for i in 0..256 {
                         let phase = i as f32 / 256.0 + f as f32 * 0.031;
-                        d.waveform[i] = music(phase, amp);
+                        d.waveform[i] = music(phase, amp, true);
                     }
                     sc.draw(&mut c, &t, &d);
                 }

@@ -534,7 +534,23 @@ mod newest_dump {
             ("waterfall", "waterfall-heat"),
             ("tube", "tube-soviet"),
             ("nixie", "nixie-orange"),
+            ("scope", "scope-amber"),
         ];
+
+        // A waveform, for the families that read one. The phase WALKS between frames, which the scope
+        // family's trigger normally cancels - without that walk its flourish (a sweep that comes
+        // unstuck and slides) has nothing to slide against and the pair renders identical.
+        let tone = |frame: usize, amp: f32| -> [f32; 256] {
+            let mut w = [0.0f32; 256];
+            for (i, v) in w.iter_mut().enumerate() {
+                let t = i as f32 / 256.0 + frame as f32 * 0.031;
+                let mut acc = (t * std::f32::consts::TAU * 2.0).sin();
+                acc += 0.45 * (t * std::f32::consts::TAU * 5.0).sin();
+                acc += 0.22 * (t * std::f32::consts::TAU * 11.0).sin();
+                *v = acc / 1.67 * amp;
+            }
+            w
+        };
         let mut n = 0;
         for (family, theme_id) in picks {
             for (tag, strength) in [("on", crate::themes::DEFAULT_FLOURISH), ("off", 0.0)] {
@@ -545,6 +561,16 @@ mod newest_dump {
                 theme.flourish = strength;
                 let mut f = family_for(family);
                 let mut c = Canvas::new(190, 60);
+                let mut frame = 0usize;
+                // Settle anything with a follower or a history window before the hit arrives.
+                for _ in 0..40 {
+                    let mut d = FrameData { dt_ms: 16.7, rms_l: 0.03, rms_r: 0.03, ..FrameData::default() };
+                    d.levels = [0.10; crate::dsp::bands::NUM_BANDS];
+                    d.peaks = d.levels;
+                    d.waveform = tone(frame, 0.30);
+                    f.draw(&mut c, &theme, &d);
+                    frame += 1;
+                }
                 for row in &seq {
                     let mut d = FrameData { dt_ms: 16.7, ..FrameData::default() };
                     for (i, v) in d.levels.iter_mut().enumerate() {
@@ -554,12 +580,18 @@ mod newest_dump {
                     // A plausible stereo reading for the dial families, which read rms not bands.
                     d.rms_l = 0.06;
                     d.rms_r = 0.05;
+                    d.waveform = tone(frame, 0.45);
                     f.draw(&mut c, &theme, &d);
+                    frame += 1;
                 }
-                // Four quiet frames: the envelope is still near full, the audio has dropped away.
-                for _ in 0..4 {
-                    let d = FrameData { dt_ms: 16.7, rms_l: 0.02, rms_r: 0.02, ..FrameData::default() };
+                // Frames after the hit: the envelope is still high and the band levels have dropped
+                // away. The waveform does NOT drop to silence, because music does not - and a scope
+                // with no signal draws a flat line, which would hide its flourish entirely.
+                for _ in 0..8 {
+                    let mut d = FrameData { dt_ms: 16.7, rms_l: 0.02, rms_r: 0.02, ..FrameData::default() };
+                    d.waveform = tone(frame, 0.30);
                     f.draw(&mut c, &theme, &d);
+                    frame += 1;
                 }
                 let mut out = Vec::new();
                 for y in 0..60 {

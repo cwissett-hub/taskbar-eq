@@ -3,16 +3,16 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** after the nixie-ghosting flourish.
+**Last updated:** after the scope trigger-loss flourish.
 
 ---
 
 ## In progress
 
-- [ ] **Per-family flourishes, four remaining.** Five are done (VFD self-test, VU needle slam,
-      waterfall tear, valve ionisation, nixie ghosting). Still to do, each needing its own effect, a
-      pixel-level test and a render: **scope trigger loss, tape wow/flutter, Pantone plate
-      misregister, patchbay**. One commit per family, pushed once verified.
+- [ ] **Per-family flourishes, three remaining.** Six are done (VFD self-test, VU needle slam,
+      waterfall tear, valve ionisation, nixie ghosting, scope trigger loss). Still to do, each needing
+      its own effect, a pixel-level test and a render: **tape wow/flutter, Pantone plate misregister,
+      patchbay**. One commit per family, pushed once verified.
 
 ## Waiting on you
 
@@ -69,6 +69,16 @@ history. Newest first within each section. Commit hashes link the claim to the e
   unbound. Found three latent bugs while wiring: a slot-index catch-all that would have overwritten the
   shuffle key, a menu array that **panics at the sixth slot**, and test interference from the
   process-global switch.
+- **Scope flourish: the sweep loses trigger lock.** Not a new drawing routine - the trigger is simply
+  switched off for 1400ms, so the trace slides about one screen-width of phase and the phosphor smears
+  every phase it passes through. It is the family's own documented worst bug, re-entered on purpose.
+  Three metrics were tried before one measured the effect: whole-frame luminance difference gave 1.24x
+  (mostly phosphor decay, which the flourish does not touch), and the shared `music()` fixture turned
+  out not to lock AT ALL because its pseudo-noise manufactures extra zero crossings - 60px of slide
+  with the flourish off. On a clean phase-walking tone it is 0px locked against 4px unlocked. A second
+  test guards the drift bound and initially passed with the bound REMOVED, because persistence left
+  older traces on screen for it to measure; with `fade = 1.0` it now fails at 3px of spread.
+
 - **Nixie flourish: every cathode fires.** The unused digits all glow at once, which is what a
   badly-driven tube does. 520ms - the shortest of any family's, because this display's whole cue is
   WHICH digit is lit, so an effect that lights all ten has to get out of the way fast. The test took
