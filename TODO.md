@@ -3,15 +3,14 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** after the Pantone plate-misregister flourish.
+**Last updated:** after the patchbay re-patch flourish - all nine families now have one.
 
 ---
 
 ## In progress
 
-- [ ] **Per-family flourishes, ONE remaining.** Eight are done (VFD self-test, VU needle slam,
-      waterfall tear, valve ionisation, nixie ghosting, scope trigger loss, tape wow/flutter, Pantone
-      plate misregister). Still to do: **patchbay**.
+- [ ] **Next up: the README/docs**, then the single review sheet. All nine flourishes are DONE - see
+      the Done section. Nothing is half-finished in the tree.
 
 ## Waiting on you
 
@@ -82,6 +81,17 @@ history. Newest first within each section. Commit hashes link the claim to the e
   unbound. Found three latent bugs while wiring: a slot-index catch-all that would have overwritten the
   shuffle key, a menu array that **panics at the sixth slot**, and test interference from the
   process-global switch.
+- **Patchbay flourish: the panel re-patches itself and comes back.** Every cable slides to the other
+  jack of its own pair, so the chevron of leans mirrors and returns - using geometry that was already
+  there, since each pair's second jack sits unpatched next to it. It ANIMATES: a hard swap reads as a
+  dropped frame, because a single-frame change of shape at 60fps is not perceived as motion at all.
+  The envelope is used as a PHASE (`sin(pi * (1 - level))`), not an amplitude, which is what brings the
+  cable back into its own socket instead of leaving it fading out stranded between two.
+  One measurement bug, found by the assertion failing on working code: the sample row sat within the
+  jack radius, so the brightest pixel in it was a static socket collar and the measurement snapped to a
+  jack column every frame - reporting that the cable teleported while it was sliding smoothly.
+  Verified against two mutants: a dead envelope, and a hard swap instead of a slide.
+
 - **Pantone flourish: a plate slips out of register.** The family ALREADY fringes horizontally and
   widens that fringe with energy, so pushing the horizontal shift further would have read as louder
   music. The slip is therefore mostly vertical - an axis nothing else here uses - which meant

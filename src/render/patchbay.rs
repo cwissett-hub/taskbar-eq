@@ -134,6 +134,25 @@ const LED_FLOOR: f32 = 0.08;
 const LED_FALL: f32 = 0.115;
 const LED_TAIL_FALL: f32 = 0.045;
 
+/// The flourish: the panel is re-patched and put back.
+///
+/// Every cable swaps to the OTHER jack of its own pair, so the chevron of leans mirrors itself, and
+/// then swaps back. That is the one thing a patchbay does that nothing else in this project does, and
+/// it uses the geometry already here: `cable_ends` gives each cable two jacks, and the unpatched jack
+/// of each pair is sitting right there waiting to be plugged into.
+///
+/// It ANIMATES rather than switching. Each endpoint slides along the row to the other jack, so the
+/// cables straighten to vertical, cross, lean the other way, and come back. A hard swap was tried
+/// first and reads as a dropped frame - at 60fps a single-frame change of shape is not perceived as
+/// motion at all, which is the same reason the tape flourish decays rather than snapping.
+///
+/// 1300ms for the whole out-and-back, so each direction gets ~650ms. The swing is
+/// `sin(pi * (1 - level))`, which is zero at the firing frame, one at half the envelope, and zero
+/// again as it expires - the envelope's linear decay is thereby used as a phase rather than as an
+/// amplitude, which is what makes the cable arrive back in its own socket instead of fading out
+/// halfway between two.
+const REPATCH_MS: f32 = 1300.0;
+
 /// The render loop's nominal period, for dt scaling. Matches `FrameData::default`.
 const NOMINAL_DT_MS: f32 = 16.7;
 
@@ -281,6 +300,9 @@ fn cable_path(p0: (f32, f32), p1: (f32, f32), sag: f32, out: &mut Vec<(i32, i32)
 
 #[derive(Default)]
 pub struct Patchbay {
+    /// The flourish: the panel re-patches itself and comes back. See `REPATCH_MS`.
+    flourish: crate::dsp::flourish::Trigger,
+    repatch: crate::dsp::flourish::Envelope,
     /// Slewed drive per cable, in response units. A `Vec` because `cable_count` scales with
     /// width and the std array `Default` impls stop at 32 anyway.
     disp: Vec<f32>,
@@ -446,6 +468,16 @@ impl Family for Patchbay {
         };
         self.update_leds(d, t.sensitivity, dt);
 
+        // THE FLOURISH: a re-patch. See `REPATCH_MS`. `swing` is how far each cable has slid toward
+        // the other jack of its pair, 0..1..0 across the envelope.
+        let fired = self.flourish.update(&d.levels, d.dt_ms, t.flourish);
+        let repatch = self.repatch.update(fired, d.dt_ms, REPATCH_MS);
+        let swing = if repatch > 0.0 {
+            (std::f32::consts::PI * (1.0 - repatch)).sin().clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+
         if self.disp.len() != cables {
             // Seeded from the live spectrum, not from zero. Zero means "idle" in the sag
             // mapping, so a fresh panel - or one that has just been resized, or had its theme
@@ -479,9 +511,14 @@ impl Family for Patchbay {
             }
             let drive = self.disp[i].clamp(0.0, 1.0);
 
+            // Endpoints, slid toward the other jack of this cable's pair by `swing`. At 0.5 both
+            // ends sit on the pair's midpoint and the cable is vertical; at 1.0 the lean is fully
+            // inverted and the plugs are in the two sockets that are normally empty.
             let (a, b) = cable_ends(i);
-            let p0 = (jack_x(w, jacks, a) as f32, jy_top as f32);
-            let p1 = (jack_x(w, jacks, b) as f32, jy_bot as f32);
+            let xa = jack_x(w, jacks, a) as f32;
+            let xb = jack_x(w, jacks, b) as f32;
+            let p0 = (xa + (xb - xa) * swing, jy_top as f32);
+            let p1 = (xb + (xa - xb) * swing, jy_bot as f32);
             let sag = span * (SAG_IDLE + (SAG_DRIVEN - SAG_IDLE) * drive);
             cable_path(p0, p1, sag, &mut path);
 
@@ -560,6 +597,203 @@ impl Family for Patchbay {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Where cable 0 crosses a row near its top end, as the brightest column within its pair's span.
+    ///
+    /// Measured off the pixels rather than recomputed from `swing`, because recomputing it would
+    /// assert that the arithmetic equals itself. The claim under test is that the cable MOVES.
+    ///
+    /// The row is 5 below the jack centres, and the offset matters: a jack is a filled well plus a
+    /// collar ring of radius 3, so any row within 3 of `jy_top` contains bright static socket pixels at
+    /// every jack column. Sampled there, the measurement snapped to a jack column on every frame and
+    /// reported that the cable teleported when it was in fact sliding smoothly.
+    fn top_end_x(c: &Canvas) -> i32 {
+        let (w, h) = (c.width(), c.height());
+        let jacks = cable_count(w) * 2;
+        let (jy_top, _) = jack_rows(h);
+        let (x0, x1) = (jack_x(w, jacks, 0), jack_x(w, jacks, 1));
+        let y = jy_top + 5;
+        ((x0 - 3)..=(x1 + 3))
+            .max_by(|a, b| lum(c.get(*a, y)).partial_cmp(&lum(c.get(*b, y))).unwrap())
+            .unwrap_or(x0)
+    }
+
+    /// Light in the socket of jack `k` on the top row - a plug tip is drawn there when a cable
+    /// terminates in it, so this is how "it is plugged into the OTHER jack" gets asserted directly
+    /// rather than inferred from a column measurement.
+    fn socket_light(c: &Canvas, k: usize) -> f64 {
+        let (w, h) = (c.width(), c.height());
+        let jacks = cable_count(w) * 2;
+        let (jy_top, _) = jack_rows(h);
+        let x = jack_x(w, jacks, k);
+        let mut acc = 0.0;
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                acc += lum(c.get(x + dx, jy_top + dy));
+            }
+        }
+        acc
+    }
+
+    /// Draws `frames` frames of steady audio, forcing the flourish on the first if asked.
+    ///
+    /// Returns every frame's measured top-end position, the FINAL canvas, and the canvas of the frame
+    /// where jack 1's socket was brightest - two different frames answering two different questions,
+    /// and returning only one of them silently broke the recovery test when it was reading the peak.
+    ///
+    /// Forced on the trigger instance rather than posted through `flourish::request()`: that is one
+    /// process-global atomic and every family's `draw` consumes it, so in a parallel suite an
+    /// unrelated drawing test eats it. See the note in `Trigger::update`.
+    fn repatch_trace(fire: bool, frames: usize) -> (Vec<i32>, Canvas, Canvas) {
+        let mut t = builtin::all()
+            .into_iter()
+            .find(|t| t.family == "patchbay")
+            .expect("no patchbay colourway");
+        // Zero, so the audio path cannot fire a second time and the arms differ only in the force.
+        t.flourish = 0.0;
+        let mut p = Patchbay::default();
+        let mut c = Canvas::new(190, 60);
+        let d = flat(0.35);
+        for _ in 0..20 {
+            p.draw(&mut c, &t, &d);
+        }
+        if fire {
+            p.flourish.force_next();
+        }
+        let mut xs = Vec::new();
+        let mut peak = (f64::MIN, Canvas::new(190, 60));
+        for _ in 0..frames {
+            p.draw(&mut c, &t, &d);
+            xs.push(top_end_x(&c));
+            // Keep the frame where jack 1's socket is brightest - the moment the plug is furthest into
+            // the socket that is normally empty.
+            let l = socket_light(&c, 1);
+            if l > peak.0 {
+                peak = (l, c.clone());
+            }
+        }
+        (xs, c, peak.1)
+    }
+
+    #[test]
+    fn the_flourish_repatches_every_cable_to_the_other_jack_of_its_pair() {
+        let jacks = cable_count(190) * 2;
+        let (x0, x1) = (jack_x(190, jacks, 0), jack_x(190, jacks, 1));
+        assert!(x1 - x0 >= 8, "the pair is too close together to measure: {x0} to {x1}");
+
+        // 78 frames is 1.3s, the whole envelope.
+        let (steady, _, steady_peak) = repatch_trace(false, 78);
+        let (moved, _, peak_frame) = repatch_trace(true, 78);
+
+        // The fixture has to hold still, or "it moved" means nothing. The sag follows the music, but
+        // the ENDPOINTS never move without the flourish.
+        assert!(
+            steady.iter().all(|x| (x - steady[0]).abs() <= 1),
+            "the cable wandered without the flourish: {steady:?}"
+        );
+
+        // It travels most of the way across its pair. Measured against the pair's own width rather
+        // than against an absolute jack column, because the sample row is 5px down the curve and so is
+        // already a little way along it - an absolute test there would be measuring the sag as well.
+        let travel = (x1 - x0) as f64;
+        let far = *moved.iter().max().unwrap();
+        assert!(
+            (far - steady[0]) as f64 >= travel * 0.7,
+            "the cable barely moved: {}px of a {travel}px pair",
+            far - steady[0]
+        );
+
+        // And it SLID rather than jumping. A hard swap reads as a dropped frame at 60fps, so the
+        // intermediate positions are the effect and not a detail of it.
+        let mid = moved
+            .iter()
+            .filter(|x| {
+                let f = (**x - steady[0]) as f64 / travel;
+                f > 0.2 && f < 0.7
+            })
+            .count();
+        assert!(
+            mid >= 8,
+            "the cable teleported: only {mid} of {} frames were partway across",
+            moved.len()
+        );
+
+        // The plug really does end up in the socket that is normally empty - asserted on that
+        // socket's own pixels, not inferred from the column measurement above.
+        let (lit_now, lit_before) = (socket_light(&peak_frame, 1), socket_light(&steady_peak, 1));
+        assert!(
+            lit_now > lit_before * 1.25,
+            "jack 1 never got a plug in it: {lit_now:.0} against {lit_before:.0} unpatched"
+        );
+    }
+
+    /// Run: cargo test --release dump_patchbay_repatch -- --ignored --nocapture
+    ///
+    /// Five frames through the swing - at rest, halfway, fully crossed, halfway back, at rest - because
+    /// the effect is the TRAVEL and a single frame of it only shows one lean. Written as one stacked
+    /// image so the chevron can be compared row to row.
+    #[test]
+    #[ignore]
+    fn dump_patchbay_repatch() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
+        std::fs::create_dir_all(&dir).unwrap();
+        // 1300ms at 16.7ms is 78 frames; the swing peaks at half the envelope.
+        let picks = [0usize, 19, 39, 58, 77];
+        let mut t = builtin::all()
+            .into_iter()
+            .find(|t| t.family == "patchbay")
+            .expect("no patchbay colourway");
+        t.flourish = 0.0;
+        let mut p = Patchbay::default();
+        let mut c = Canvas::new(190, 60);
+        let d = flat(0.35);
+        for _ in 0..20 {
+            p.draw(&mut c, &t, &d);
+        }
+        p.flourish.force_next();
+        let mut shots = Vec::new();
+        for f in 0..=*picks.last().unwrap() {
+            p.draw(&mut c, &t, &d);
+            if picks.contains(&f) {
+                shots.push(c.clone());
+            }
+        }
+        let (ow, oh) = (190, 60 * shots.len() as i32 + 4 * (shots.len() as i32 - 1));
+        let mut out = vec![22u8; (ow * oh * 4) as usize];
+        for (ri, shot) in shots.iter().enumerate() {
+            for y in 0..60 {
+                for x in 0..190 {
+                    let px = shot.get(x, y);
+                    let a = px.a as f32 / 255.0;
+                    let oy = ri as i32 * 64 + y;
+                    let o = ((oy * ow + x) * 4) as usize;
+                    for (k, ch) in [px.r, px.g, px.b].iter().enumerate() {
+                        out[o + k] = (*ch as f32 + 22.0 * (1.0 - a)).min(255.0) as u8;
+                    }
+                    out[o + 3] = 255;
+                }
+            }
+        }
+        let path = dir.join(format!("patchbay-repatch-{ow}x{oh}.rgba"));
+        std::fs::write(&path, &out).unwrap();
+        println!("wrote {} ({ow}x{oh}) - rows are frames {picks:?} of the swing", path.display());
+    }
+
+    #[test]
+    fn the_cables_come_back_to_their_own_sockets() {
+        // The envelope is used as a PHASE, not an amplitude - `sin(pi * (1 - level))` returns to zero
+        // as the level expires. If it were used as an amplitude the cable would fade out stranded
+        // halfway between two sockets, which is why this is asserted on the canvas and not just on the
+        // measured x: byte-identical also proves no residue is left anywhere else.
+        let (_, moved, _) = repatch_trace(true, 90);
+        let (_, steady, _) = repatch_trace(false, 90);
+        assert_eq!(
+            moved.bits(),
+            steady.bits(),
+            "the panel did not return to its own patching"
+        );
+    }
+
     use crate::themes::builtin;
 
     fn flat(level: f32) -> FrameData {
