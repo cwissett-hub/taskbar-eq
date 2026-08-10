@@ -136,6 +136,33 @@ pub enum Status {
 
 type Session = windows::Media::Control::GlobalSystemMediaTransportControlsSession;
 
+// The session MANAGER, activated once and reused.
+//
+// **It used to be activated on every poll - 2.5 times a second, 216,000 WinRT activations a day.**
+// Together with the per-call UI Automation client that is around 300,000 COM object lifecycles daily,
+// and it is the leading suspect for a resource leak measured on a days-old instance: 18,962 threads
+// and 131,454 handles against a healthy 14 and 320, which took a fullscreen app from 160fps to 30 with
+// input loss. The handle-to-thread ratio of about seven to one is the signature of apartment or
+// thread-pool machinery, which is exactly what a WinRT activation brings up.
+//
+// **The SESSION is still re-resolved every poll, and that part must not change.** A cached session
+// handle returns stale playback state on an MTA thread with no message pumping - every transport
+// command logged as failed while actually succeeding - which is a bug that has already been fixed once
+// here. The manager is the long-lived broker connection; the session is the thing that goes stale.
+//
+// Dropped on any failure from it, so a manager invalidated by a sleep/resume or a broker restart is
+// re-requested on the next poll rather than failing for the life of the process.
+thread_local! {
+    static MANAGER: std::cell::RefCell<Option<MgrType>> = const { std::cell::RefCell::new(None) };
+}
+
+type MgrType = windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
+
+/// Forgets the cached manager, so the next call re-requests it.
+fn drop_manager() {
+    MANAGER.with(|c| *c.borrow_mut() = None);
+}
+
 /// Finds Spotify's media session, or `None` if it has none right now.
 ///
 /// Deliberately NOT `GetCurrentSession()`. That returns whichever session the system currently
@@ -144,14 +171,33 @@ type Session = windows::Media::Control::GlobalSystemMediaTransportControlsSessio
 /// and matching by app id is the only way to be sure which app is being commanded.
 fn find_session() -> Result<Option<(String, Session)>, String> {
     use windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager as Mgr;
-    let mgr = Mgr::RequestAsync()
-        .map_err(|e| format!("RequestAsync: {e}"))?
-        // `join()`, not `get()`: windows-future 0.3.2 blocks with `join`. It waits with no timeout,
-        // which is safe HERE because this only ever runs on the media thread, never the render
-        // thread - a wedged broker can cost this one expendable thread, never a frame.
-        .join()
-        .map_err(|e| format!("RequestAsync.join: {e}"))?;
-    let sessions = mgr.GetSessions().map_err(|e| format!("GetSessions: {e}"))?;
+    let sessions = MANAGER.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if slot.is_none() {
+            let mgr = Mgr::RequestAsync()
+                .map_err(|e| format!("RequestAsync: {e}"))?
+                // `join()`, not `get()`: windows-future 0.3.2 blocks with `join`. It waits with no
+                // timeout, which is safe HERE because this only ever runs on the media thread, never
+                // the render thread - a wedged broker can cost this one expendable thread, never a
+                // frame. Now that the manager is cached, it is also only reached once per session
+                // rather than 216,000 times a day.
+                .join()
+                .map_err(|e| format!("RequestAsync.join: {e}"))?;
+            *slot = Some(mgr);
+        }
+        match slot.as_ref() {
+            Some(mgr) => mgr.GetSessions().map_err(|e| format!("GetSessions: {e}")),
+            None => Err("no session manager".to_string()),
+        }
+    });
+    // A manager that cannot list sessions is not worth keeping - see the note above.
+    let sessions = match sessions {
+        Ok(s) => s,
+        Err(e) => {
+            drop_manager();
+            return Err(e);
+        }
+    };
     for s in sessions {
         let id = s
             .SourceAppUserModelId()
@@ -408,6 +454,25 @@ pub fn start() -> Handle {
     });
     Handle { tx }
 }
+
+// RETIRED: a synthetic handle-leak probe that hammered `find_session` in a loop.
+//
+// It never produced a number. Two things defeated it, and both are worth keeping:
+//
+// 1. **`join()` on a WinRT async operation deadlocks from an STA with no message pump.** The probe
+//    called `CoInitializeEx(MTA)` on the test-harness thread, which already had an apartment, so the
+//    request returned RPC_E_CHANGED_MODE and left the thread in an STA. The probe then hung for four
+//    hundred seconds on its first call. The app never hits this because its media thread is spawned
+//    fresh and initialises its own MTA - which is precisely why `start` does that rather than relying
+//    on whatever `main` did.
+// 2. **Hammering the session manager wedges the broker.** Even before the apartment problem was
+//    understood, calling `RequestAsync().join()` several hundred times in a row stopped returning.
+//    That is its own argument for caching the manager rather than activating it 216,000 times a day.
+//
+// The evidence that mattered came from measuring the real process instead: a fresh instance is flat
+// over ten minutes with music playing (13 threads, 313 handles, 29MB), while a days-old one had
+// reached 18,962 threads and 131,454 handles. `win::health` now watches for the latter in the field,
+// which is the only place the multi-day condition actually occurs.
 
 #[cfg(test)]
 mod tests {

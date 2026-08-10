@@ -240,9 +240,23 @@ pub fn start() -> FrameReceiver {
         if let Err(e) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok() {
             eprintln!("capture: CoInitializeEx failed: {e}");
         }
+        let mut fails: u64 = 0;
         loop {
             if let Err(e) = capture_loop(&tx) {
-                eprintln!("capture: {e}; reopening in 1s");
+                // The LOG, not stderr. This is a windows-subsystem binary, so `eprintln!` goes
+                // nowhere at all - which means a retry storm after a sleep/resume or a device change
+                // was completely invisible, and "the meter stopped reacting" would have arrived with
+                // an empty log. Rate-limited, because the retry is once a second and an unbounded
+                // error line per attempt would itself fill the disk over days.
+                if fails == 0 || fails.is_multiple_of(60) {
+                    crate::log::write(&format!(
+                        "capture: {e}; reopening in 1s (attempt {})",
+                        fails + 1
+                    ));
+                }
+                fails += 1;
+            } else {
+                fails = 0;
             }
             std::thread::sleep(std::time::Duration::from_secs(1));
             // send_freshest never blocks waiting for the consumer to drain

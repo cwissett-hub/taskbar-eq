@@ -161,6 +161,9 @@ struct Ticker {
     phases: Phases,
     /// Recent UIA rediscovery timings in microseconds, summarised into the log once a minute.
     rect_us: Vec<u32>,
+    /// When the current batch of those timings started, so the blocking share is measured against the
+    /// real elapsed time rather than an assumed call rate.
+    rect_window: std::time::Instant,
 }
 
 /// Per-tick timings for the calls that can realistically block, all in milliseconds.
@@ -314,7 +317,18 @@ impl Ticker {
             return;
         }
 
-        // Re-discover the rect once a second - it moves with the weather text.
+        // Re-discover the rect every two seconds - it moves with the weather text.
+        //
+        // TWO seconds, not one, and the reason is measured. This is a UIA descendant enumeration of the
+        // taskbar and it blocks the render thread for a median of 52ms, so at once a second it costs
+        // 5.2% of every second in blocking plus 86,400 COM client lifecycles a day. The weather text
+        // changes width every few minutes at most, and the taskbar only reflows when something is
+        // pinned or unpinned, so halving the rate costs nothing anyone can see and halves both numbers.
+        //
+        // Caching the `IUIAutomation` client instead was tried and REVERTED: measured cleanly on an
+        // idle machine over three 60-call windows each, a cached client runs at a 68ms median against
+        // 52ms for a fresh one per call. It is a pessimisation, not an optimisation - a long-lived UIA
+        // client evidently does more work per enumeration than a throwaway one.
         if self.rect_tick == 0 {
             let t0 = std::time::Instant::now();
             self.rediscover_rect();
@@ -339,15 +353,24 @@ impl Ticker {
                 // taking two seconds would be a different and much louder problem.
                 let real: Vec<u32> = v.iter().copied().filter(|us| *us < 2_000_000).collect();
                 let dropped = v.len() - real.len();
+                let blocked_us: u64 = real.iter().map(|x| *x as u64).sum();
+                let window_s = self.rect_window.elapsed().as_secs_f32().max(0.001);
+                self.rect_window = std::time::Instant::now();
                 if !real.is_empty() {
                     let med = real[real.len() / 2];
                     log::write(&format!(
-                        "placement (UIA) over {} calls: min {:.1}ms median {:.1}ms max {:.1}ms;                          median blocks the render thread for {:.1}% of every second{}",
+                        "placement (UIA) over {} calls in {:.0}s: min {:.1}ms median {:.1}ms max                          {:.1}ms; blocks the render thread {:.1}% of the time{}",
                         real.len(),
+                        window_s,
                         real[0] as f32 / 1000.0,
                         med as f32 / 1000.0,
                         real[real.len() - 1] as f32 / 1000.0,
-                        med as f32 / 1000.0 / 10.0,
+                        // Measured against the WALL CLOCK of the window, not against an assumed one
+                        // call per second. The rediscovery interval has already changed once, and the
+                        // first version of this line hardcoded the old rate - so after the change it
+                        // reported 5.4% where the truth was 2.7%, and would have gone on being wrong
+                        // silently.
+                        blocked_us as f32 / (window_s * 1_000_000.0) * 100.0,
                         if dropped > 0 {
                             format!(" ({dropped} sample(s) discarded as clock artefacts)")
                         } else {
@@ -357,7 +380,7 @@ impl Ticker {
                 }
             }
         }
-        self.rect_tick = (self.rect_tick + 1) % 60;
+        self.rect_tick = (self.rect_tick + 1) % 120;
 
         // Clamped: a debugger pause or a suspend/resume can hand back an enormous interval, which
         // would otherwise jump the gate straight through its hide delay and snap the scroll phase
@@ -996,6 +1019,7 @@ fn main() -> Result<()> {
             time_s: 0.0,
             phases: Phases::default(),
             rect_us: Vec::new(),
+            rect_window: std::time::Instant::now(),
             banner: None,
             track_seq: win::media::now_playing().1,
             show_track_name: cfg.show_track_name,
