@@ -65,22 +65,169 @@ want it gone completely. Nothing is written anywhere else and nothing is registe
 
 ## Using it
 
+### The meter itself
+
 | Action | What it does |
 |---|---|
-| **Right-click the equaliser** | Theme menu — colourways grouped into a submenu per family, following your Windows light/dark setting |
-| **Left-click the equaliser** | Opens the Widgets panel (sends `Win+W`), so the weather stays reachable while covered |
-| **Right-click the tray icon** | Same theme menu, plus Start-with-Windows and Quit |
+| **Left-click** | Opens the Widgets panel (synthesises `Win+W`). The overlay sits *on top of* the Widgets button, so without this the weather would be unreachable while music plays |
+| **Right-click** | Opens the tray menu — the same menu, one implementation with two entry points |
 
-**Quit from the tray icon.** That is the only quit path by design: when nothing is playing the
-overlay does not exist, so the tray icon is all that is left to click.
+Nothing else is handled: no wheel, no drag, no hover. The overlay takes `WS_EX_NOACTIVATE` so it
+never steals focus, but deliberately **not** `WS_EX_TRANSPARENT`, which is what lets it receive those
+two clicks at all. Because it is opaque and clickable it is clamped to leave 8 px of clearance, so it
+can never end up covering a pinned taskbar button.
+
+### The tray menu
+
+Right-click, left-click or the context-menu key — all three open it.
+
+| Item | What it does |
+|---|---|
+| **One submenu per family** | Every colourway in that family. The active one is ticked, and so is its family. Families appear in the order the theme registry first mentions them, not alphabetically |
+| **Spotify controls** | Bind the three transport keys, and choose how they are sent. The parent label tells you the state: `Spotify controls`, `…: not set up` when no key is bound, or `…: not working` when a bound key failed to register |
+| **Random** | `Any theme now`, `Another colourway of this theme now`, and the two keys for those |
+| **Flourishes** | `Flourish now`, `Turn flourishes off`/`on`, and the two keys |
+| **Open config file…** | Saves first so the file exists, then opens it — falling back to Notepad, because `.toml` often has no association |
+| **Start with Windows** | Ticked state is read from the registry (`HKCU\…\Run`, value `TaskbarEQ`), not from the config, so it tells the truth even if something else changed it |
+| **Exit** | The only quit path, by design: when nothing is playing the overlay does not exist, so the tray icon is all that is left to click |
+
+Every key label shows the *live* registration result, not what the config says — so you see
+`Ctrl+Period`, or `not set`, or `Ctrl+Period  (in use elsewhere)`.
+
+### Keys
+
+Seven bindable actions. **All of them ship unbound**, and that is a deliberate choice rather than an
+omission: `RegisterHotKey` is first-come and exclusive, and this app can start at logon, so a default
+binding would quietly seize a chord machine-wide for every other program on the machine.
+
+| Action | What it does |
+|---|---|
+| `play_pause`, `next_track`, `prev_track` | Spotify transport |
+| `random_theme` | Any colourway in any family |
+| `random_colourway` | Another colourway of the family already showing |
+| `flourish` | Fire the current family's flourish now |
+| `flourish_toggle` | Flourishes on/off, persisted |
+
+**Binding one:** tray menu → the submenu → click the `…key:` line. A small **Set key** dialog opens,
+echoes the modifiers as you hold them, and commits on the first non-modifier key. `Esc` cancels,
+`Backspace` or `Delete` unbinds, and it times out after 30 seconds so the app can never be left with
+its keys released. It releases every one of its own hotkeys while open — otherwise the chords most
+worth rebinding would fire instead of being captured — and it keeps pumping messages, so the meter
+carries on running behind it.
+
+It **refuses** a chord and tells you why rather than silently taking it: modifiers alone, a duplicate
+of another action, or a bare printable key (which would eat that key everywhere). Bare `F1`–`F24` and
+the four media keys are allowed. It also warns without blocking about `Ctrl+Alt+…` colliding with
+AltGr, about seizing a media key from every other player, and about `F12` being the debugger key.
+
+In the config file the notation is `Ctrl+Alt+Shift+Win+Key`, in that order, case- and
+order-insensitive on the way in. Key names are layout-independent (`Comma`, `Semicolon`,
+`LeftBracket`, `MediaPlayPause`, `Numpad4`, `F9`) but the *menu* asks your keyboard layout how to
+draw them, so a stored `RightBracket` shows as `]` on a UK layout. `MOD_NOREPEAT` is always set, so
+holding Next Track cannot skip a whole playlist.
+
+### Spotify transport, and why it is Spotify-only
+
+Two backends, switchable in the menu:
+
+| Backend | How | Trade-off |
+|---|---|---|
+| **Spotify session** (default) | WinRT `Windows.Media.Control`, addressed by Spotify's app id | 2–10 ms, works minimised and unfocused, and goes to Spotify even when Chrome also has media keys. Success is **observed**, not assumed: it watches for the playback status to flip or the title to change, for 750 ms |
+| **Media keys** | `SendInput` of the real `VK_MEDIA_*` keys | ~76 ms, and whoever owns the key wins — commonly Chrome |
+
+A failed command is **never retried**, in either backend. A double-skip is worse than a missed press.
+The backends never silently fall back to each other either, because a control that sometimes goes to
+the wrong application is harder to live with than one that reliably does nothing.
+
+### The track banner
+
+When the track changes, its `Title - Artist` slides over whatever the family is drawing: 140 ms rise,
+2.2 s hold, 520 ms fall. A name too long to fit marquees, but only during the hold, and eases with a
+pause at each end. It takes the theme's own lit colour, so it inherits rainbow and ink colourways
+rather than sitting outside them.
+
+The meter behind it dims to 66% **toward the panel colour** and never by alpha — alpha is what the
+Windows weather widget shows through, so dimming that way would make the forecast appear inside the
+meter. Turn the whole thing off with `show_track_name = false`.
+
+### Flourishes
+
+Once in a while — about every 30 seconds on real music — the display does something that has nothing
+to do with the audio, and everything to do with what it is pretending to be. Each of the nine
+instrument families has its own, and each one is that instrument's characteristic fault or ritual:
+
+| Family | Flourish |
+|---|---|
+| Segmented VFD | A self-test: every segment lights, then drains |
+| VU dials | The needles slam to the end stop and the OVER lamps light |
+| Spectrogram | A broadband tear, written into the history so it scrolls away as data |
+| Valve row | Gas ionisation — a cold blue haze, the wrong colour for the display on purpose |
+| Nixie tubes | Every cathode fires at once, as a badly-driven tube's do |
+| Oscilloscope | Loss of trigger lock: the sweep free-runs and the phosphor smears every phase |
+| Reel-to-reel | Wow and flutter — 1.1 Hz and 8.5 Hz speed error, reaching the tape slack |
+| Pantone | A printing plate slips out of register |
+| Patchbay | The panel re-patches itself, every cable to the other jack of its pair, and back |
+
+**When one fires is judged by rarity, never by a threshold.** Each hit is compared against the median
+of recent hits, so it fires on a moment that is exceptional *for this track* — which is what makes the
+same setting work on sparse acoustic music and on a wall of compressed loudness. The default was
+measured against a 119-second capture of nine varied tracks.
+
+Each colourway sets its own rate, so a restrained one can be rarer than a loud one. `flourishes =
+false` (or the menu, or the key) turns the lot off without discarding that per-colourway tuning.
+
+There is a picture of all nine, with what to look at, in [docs/review/index.html](docs/review/index.html).
+
+### It gets out of the way
+
+The tool **suspends itself** whenever a fullscreen Direct3D app or presentation mode is running, or
+the taskbar is hidden. Suspended, the overlay window is genuinely hidden rather than merely left
+undrawn — a topmost layered window can keep a game out of exclusive fullscreen just by existing — and
+the tick drops from 16 ms to 250 ms, roughly fifteen times fewer wakeups. No drawing, and no UI
+Automation calls, which are the expensive part: each one blocks inside `explorer.exe` for about 52 ms.
+
+Silence deliberately does **not** suspend it, or the first beat after a quiet passage would take a
+quarter-second to appear.
+
+A watchdog checks the process handle count every 30 seconds, warns in the log at 3,000, and exits at
+30,000. That is not theoretical: an instance left running for days was measured at 18,962 threads and
+131,454 handles, and took a fullscreen game from 160 fps to 30 with dropped input. The cause is not
+yet found — **[TODO.md](TODO.md) tracks it** — so until it is, the tool bounds its own damage and
+lets autostart bring it back clean.
+
+---
+
+## Configuration
+
+`%APPDATA%\taskbar-eq\config.toml`, written whenever a setting changes and openable from the tray
+menu. Every field is optional and a missing **or corrupt** file falls back to defaults rather than
+refusing to start, so a partial file keeps working and a bad one cannot lock you out.
+
+| Field | Default | What it does |
+|---|---|---|
+| `theme` | `"vfd-ice"` | The colourway id. An unknown id falls back to VFD Ice rather than failing |
+| `width` | `380` | Requested width in **physical** pixels, measured leftward from the Widgets button. A request only — it is clamped to the real clearance, with 12 px of hysteresis so unrelated taskbar churn does not wipe the phosphor trails |
+| `threshold_dbfs` | `-55.0` | The reveal gate, in dBFS of capture RMS |
+| `reveal_ms` | `400` | How long audio must stay above the threshold before the meter appears |
+| `hide_ms` | `4500` | How long silence must last before it goes away. 2000 was tried and album track gaps popped it out |
+| `fade_ms` | `450` | Reveal/hide crossfade |
+| `media_backend` | `"session"` | `"session"` or `"media-keys"` — see Spotify transport above |
+| `show_track_name` | `true` | The track-change banner |
+| `flourishes` | `true` | Global on/off for flourishes, separate from each colourway's own rate |
+| `[hotkeys]` | all empty | `play_pause`, `next_track`, `prev_track`, `random_theme`, `random_colourway`, `flourish`, `flourish_toggle` |
+| `autostart` | `false` | **A record, not the truth.** The live state is the registry `Run` value, which is what the menu reads |
+| `brightness`, `saturation` | `1.0` | **Currently inert** — they are parsed and saved but nothing reads them. Listed because a field that looks like a setting and does nothing is worse undocumented than documented |
+
+The same folder holds `taskbar-eq.log` (truncated per run) and a `themes\` directory for your own
+colourway files, which hot-reload on save and can replace a built-in by reusing its `id`.
 
 ---
 
 ## Status
 
-**Last updated: 2026-08-05.** Full test suite green (199 at the time of writing), release
-build warning-free. The colourway and family counts below are asserted by a test; the test
-count itself is a snapshot and can drift.
+**Last updated: 2026-08-10.** Full test suite green (520 at the time of writing), release build
+warning-free. The colourway and family counts below are asserted by a test; the test count itself is
+a snapshot and can drift.
 **93 colourways across 13 families.**
 
 | | Feature | State |
@@ -98,6 +245,13 @@ count itself is a snapshot and can drift.
 | ✅ | **Fluid — 6 colourways**, two submerged subwoofers driving a 1-D wave simulation | **unseen** |
 | ✅ | Theme menu: per-family submenus, follows the Windows light/dark setting | **unseen** |
 | ✅ | Tray icon, start-with-Windows, clean quit | working |
+| ✅ | **Spotify transport** — play/pause, next, previous, via the media session or real media keys | working |
+| ✅ | **Seven bindable hotkeys**, all unbound by default, with a capture dialog that refuses bad chords and says why | working |
+| ✅ | **Track-name banner** on every change, marqueeing when too long | working |
+| ✅ | **A flourish per family** — nine of them, fired by rarity rather than by a threshold | **needs your eyes** |
+| ✅ | **Random colourway / random theme**, from the menu or a key | working |
+| ✅ | **Suspends under a fullscreen app**, hiding the window and dropping to a 250 ms tick | working |
+| ✅ | **Handle watchdog** — warns at 3,000, exits at 30,000 | working |
 | ✅ | Right-click equaliser → theme menu; left-click → `Win+W` | working |
 | ✅ | External TOML colourways, versioned schema, override-by-id, `[vaporwave]` + `[tube]` + `[fluid]` tables | working |
 | ✅ | **Hot reload** — save a theme file and the taskbar updates, no restart | working |
@@ -246,10 +400,12 @@ The subsystem is fixed at link time, so there is no runtime switch — but you c
 |---|---|
 | `taskbar-eq.exe` | silent, no window |
 | `taskbar-eq.exe --console` | allocates a console so you can watch it run |
+| `taskbar-eq.exe --diagnose` | prints the whole "would the overlay draw?" decision chain and exits. See below |
+| `taskbar-eq.exe --levels` | captures 8 seconds of real audio and reports what the DSP actually produces - per-band percentiles, frame peaks, onset rates - then exits. It also writes the band frames to `tests/fixtures/`, so it is a source-checkout tool: it is how the tuning constants were calibrated against real music rather than against assumptions |
 | run from an existing terminal | inherits that terminal, so `--diagnose` prints where you ran it |
 
 Diagnostics never depend on a console either way: the log at
-`%APPDATA%	askbar-eq	askbar-eq.log` is written and flushed per line regardless.
+`%APPDATA%\taskbar-eq\taskbar-eq.log` is written and flushed per line regardless.
 
 ### If it does not appear
 
@@ -260,7 +416,7 @@ taskbar-eq.exe --diagnose
 ```
 
 It checks every gate in the same order the render loop does, prints the result, and writes the same
-report to `%APPDATA%	askbar-eq	askbar-eq.log`. **The first `NO` in the output is the reason.** It
+report to `%APPDATA%\taskbar-eq\taskbar-eq.log`. **The first `NO` in the output is the reason.** It
 covers the Windows build, which DPI awareness actually took effect, the taskbar rect, how many UI
 Automation elements were found, whether the Widgets button or the overflow chevron was located, the
 rect it chose, whether that rect passes the plausibility check, fullscreen/presentation state, and
@@ -295,11 +451,12 @@ The app also writes that log on every normal launch, so a failure can be reporte
   and two are still open: the **Patchbay**'s cables fold 12.8 of the 64 bands each (only 5 cables fit
   at 190 px), so its sag cue flattens on real music; and the **Spectrogram**'s max-fold of 64 bands
   into ~56 rows is implemented correctly but its only test is vacuous — it passes with `max` replaced
-  by `mean`. Fixed already: the Reel's peak lamp needed rms ≥ 0.508 against a real ceiling of 0.12,
+  by `mean`. Fixed already: the Reel's peak lamp needed an RMS of 0.508 to light, against a real
+  ceiling of about 0.12, so it was dead code that could never fire on music.
 - **Every family leaks a few bezel pixels outside the rounded panel.** The bezel is drawn after
   `clip_to_rounded_rect`, and it is square while the panel's corners are not, so ~4 pixels per corner
-  land on the bare taskbar. Measured, pre-existing, and cosmetically invisible against a dark
-  through both rounded corners.
+  land on the bare taskbar. Measured and pre-existing, and invisible in practice against a dark
+  taskbar - but it is a real leak, and it is the panel's own rounded corners that it escapes through.
 - The width is **clamped by what UI Automation reports**, so an element it cannot see is an
   element the overlay may cover. Every named taskbar element on the test machine was accounted
   for, but this has not been tried on a taskbar with third-party shell extensions.
@@ -312,7 +469,7 @@ The app also writes that log on every normal launch, so a failure can be reporte
 
 ## Themes
 
-**87 colourways across 13 families.** A *family* is a renderer with fixed geometry — code. A
+**93 colourways across 13 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
 **Segmented VFD** — a smoked-glass panel with discrete stacked segments, a faint dormant grid,

@@ -5,7 +5,7 @@
 //! a real typeface.
 //!
 //! WHY A MASK RATHER THAN COLOURED PIXELS. The whole point of the banner is that it costs no per-theme
-//! tuning: it takes its colour from whichever of the 88 colourways is active. So GDI renders white on
+//! tuning: it takes its colour from whichever colourway is active. So GDI renders white on
 //! black, the luminance of the result IS the coverage, and the caller multiplies that by the theme's
 //! own `lit`/`hot`. One render, any palette.
 //!

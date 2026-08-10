@@ -52,7 +52,7 @@ fn mix(seed: u64) -> u64 {
 /// Picks an index into `themes`, or `None` when there is nothing eligible to switch to.
 ///
 /// EXCLUDES WHAT IS ALREADY SHOWING. That is the whole difference between a feature and an apparent
-/// no-op: with 88 colourways a shuffle that can return the current one looks broken roughly one press
+/// no-op: with over ninety colourways a shuffle that can return the current one looks broken roughly one press
 /// in 88, and inside a family of five it looks broken one press in five.
 ///
 /// The one exception is a family with a single colourway, where there is no other choice. `None` is

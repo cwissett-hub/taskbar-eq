@@ -3,15 +3,14 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** review sheet written; all nine flourishes done.
+**Last updated:** README brought up to date. All nine flourishes done, review sheet written.
 
 ---
 
 ## In progress
 
-- [ ] **The README/docs.** Last substantial thing on the list: transport, hotkeys, tray menu, capture
-      window, banner, RWR, chroma parameters, flourishes, suspend and health. All nine flourishes are
-      DONE - see the Done section. Nothing is half-finished in the tree.
+- [ ] **Nothing.** The list below is what is left, and all of it needs either your eyes or a
+      recurrence of a bug. Nothing is half-finished in the tree.
 
 ## Waiting on you
 
@@ -80,6 +79,16 @@ history. Newest first within each section. Commit hashes link the claim to the e
   unbound. Found three latent bugs while wiring: a slot-index catch-all that would have overwritten the
   shuffle key, a menu array that **panics at the sixth slot**, and test interference from the
   process-global switch.
+- **README rewritten for everything added since 2026-08-05.** A full "Using it" chapter (mouse, tray
+  menu, the seven keys and the capture dialog, Spotify transport and both backends, the banner, all
+  nine flourishes, suspend and the watchdog), a configuration reference for every config field, and the
+  two missing CLI flags. Also repaired real damage found while reading it: two `%APPDATA%` paths had
+  their `	` eaten into literal TAB characters, two bullets in Known gaps were truncated mid-sentence,
+  the colourway count was stale at 87, and two source comments still said 88.
+  Honest note in the config table: **`brightness` and `saturation` are inert.** They are parsed and
+  saved and nothing reads them. Left in and documented as such rather than quietly listed as settings -
+  say the word and they come out.
+
 - **Patchbay flourish: the panel re-patches itself and comes back.** Every cable slides to the other
   jack of its own pair, so the chevron of leans mirrors and returns - using geometry that was already
   there, since each pair's second jack sits unpatched next to it. It ANIMATES: a hard swap reads as a
