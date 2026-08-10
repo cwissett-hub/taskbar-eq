@@ -107,6 +107,44 @@ const SPOKES: usize = 3;
 const OMEGA_K: f32 = 0.10;
 const SAG_K: f32 = 0.28;
 
+/// Wow and flutter: the flourish. How long the speed instability lasts, its two rates, and its depth.
+///
+/// A tape machine's characteristic fault is that the tape does not move at a constant speed. Slow
+/// variation is WOW - a worn capstan, a dragging pinch roller, a reel that is not running true - and
+/// fast variation is FLUTTER, from the scrape of tape across the heads. Both are speed errors, so both
+/// belong on the same quantity the reels already read: the angular rate.
+///
+/// The rates are the real ones. Wow lives around 0.5-6Hz and flutter above that, so 1.1Hz and 8.5Hz
+/// are one of each, deliberately not harmonically related - an integer ratio would beat into a single
+/// repeating pattern instead of the wandering one a real deck has.
+///
+/// 8.5Hz against a 60fps display is 7.1 frames a cycle, which is the fastest useful figure here: the
+/// display samples the oscillator, so anything approaching 30Hz aliases into a slow wobble that reads
+/// as more wow rather than as flutter.
+///
+/// The depths are theatrical, not authentic. A studio deck holds wow and flutter under 0.1%, which no
+/// display could show; these are 0.30 and 0.10, so the rate swings between about 0.6x and 1.4x. That
+/// stays inside the family's aliasing budget - `the_fastest_reel_stays_far_below_the_spoke_aliasing_bound`
+/// includes the peak multiplier for exactly this reason.
+///
+/// 2200ms, the longest of any family's flourish. Wow at 1.1Hz needs two full cycles before it reads as
+/// periodic rather than as one lurch, and a mechanical fault that clears instantly does not read as
+/// mechanical.
+const WARBLE_MS: f32 = 2200.0;
+const WOW_HZ: f32 = 1.1;
+const FLUTTER_HZ: f32 = 8.5;
+const WOW_DEPTH: f32 = 0.30;
+const FLUTTER_DEPTH: f32 = 0.10;
+
+/// How much of the wow reaches the tape slack, as a fraction of the rate error.
+///
+/// Not 1.0, and not 0. On a real deck the free span between the reels is where a speed error SHOWS -
+/// the supply reel lags, the span goes slack, the take-up pulls it taut again - so a rate wobble with a
+/// perfectly steady tape span reads as the reels being wrong rather than the transport being wrong.
+/// Well under 1.0 because the sag is also the family's bass cue, and a flourish that swamped it would
+/// be overwriting a reading rather than decorating it.
+const WARBLE_SAG: f32 = 0.35;
+
 /// Deepest sag, as a multiple of the reel radius, and the shallowest.
 ///
 /// 1.0 x radius is ~20 rows of travel at 190x60. Deeper was tried and the tape reached the head
@@ -200,6 +238,16 @@ pub struct Reel {
     /// Fast-falling peak hold per strip bar. A `Vec` because the bar count follows the panel
     /// width, and `#[derive(Default)]` has no impl for arrays past 32 anyway.
     marker: Vec<f32>,
+    /// The flourish: wow and flutter. See `WARBLE_MS`.
+    flourish: crate::dsp::flourish::Trigger,
+    warble: crate::dsp::flourish::Envelope,
+    /// Seconds since the warble started, driving its two oscillators.
+    ///
+    /// Its own clock rather than `FrameData::time_s` so the wobble always STARTS at zero phase, which
+    /// is where both oscillators cross zero going up. Seeded from a shared wall clock instead, a hit
+    /// could land at the bottom of the wow cycle and the transport would appear to lurch before it
+    /// wavered.
+    warble_t: f32,
 }
 
 impl Reel {
@@ -287,10 +335,39 @@ impl Family for Reel {
             self.omega = SPIN_IDLE_DPS;
         }
 
+        // THE FLOURISH: wow and flutter. See `WARBLE_MS`.
+        //
+        // Applied to the phase step rather than to `omega` itself, and that is not a detail: `omega`
+        // is a smoothed state that feeds back into itself every frame, so injecting a wobble there
+        // would be low-pass filtered by its own OMEGA_K ballistics - the flutter would vanish almost
+        // entirely and the wow would arrive late and shallow. The flywheel has inertia; a slipping
+        // capstan does not go through it.
+        let fired = self.flourish.update(&d.levels, d.dt_ms, t.flourish);
+        let warble = self.warble.update(fired, d.dt_ms, WARBLE_MS);
+        let wow = if warble > 0.001 {
+            self.warble_t += NOMINAL_DT_MS * dt / 1000.0;
+            if !self.warble_t.is_finite() {
+                self.warble_t = 0.0;
+            }
+            let tau = std::f32::consts::TAU;
+            warble * WOW_DEPTH * (tau * WOW_HZ * self.warble_t).sin()
+        } else {
+            self.warble_t = 0.0;
+            0.0
+        };
+        let flutter = if warble > 0.001 {
+            warble * FLUTTER_DEPTH * (std::f32::consts::TAU * FLUTTER_HZ * self.warble_t).sin()
+        } else {
+            0.0
+        };
+        // Floored above zero: a transport that momentarily STOPS or reverses is a different fault
+        // (a snapped belt), and this family's identity is a deck that is running.
+        let speed = (1.0 + wow + flutter).max(0.15);
+
         // Integrate with the SANITISED dt, not `d.dt_ms` - see `vapor.rs`, where a NaN dt
         // permanently corrupted the scroll phase.
         let secs = NOMINAL_DT_MS * dt / 1000.0;
-        let step = self.omega * secs / 360.0;
+        let step = self.omega * speed * secs / 360.0;
         self.phase_l = (self.phase_l + step).rem_euclid(1.0);
         self.phase_r = (self.phase_r + step * TAKEUP_RATIO).rem_euclid(1.0);
         if !self.phase_l.is_finite() || !self.phase_r.is_finite() {
@@ -325,7 +402,10 @@ impl Family for Reel {
         let yt = cy - shoulder;
         let sag_min = (r as f32 / 8.0).max(2.0);
         let sag_max = ((r as f32 * SAG_SPAN).min((deck_bot - 3 - yt) as f32)).max(sag_min + 1.0);
-        let sag_target = sag_min + (sag_max - sag_min) * bass;
+        // The wow reaches the tape slack too - see `WARBLE_SAG`. Only the wow: flutter is faster
+        // than a span of tape carrying any tension can follow, so putting it here would be drawing a
+        // vibration the physical object would damp out.
+        let sag_target = (sag_min + (sag_max - sag_min) * bass) * (1.0 - wow * WARBLE_SAG);
         self.sag += (sag_target - self.sag) * (SAG_K * dt).min(1.0);
         if !self.sag.is_finite() {
             self.sag = sag_min;
@@ -705,6 +785,211 @@ mod tests {
         );
     }
 
+    /// Per-frame rotation steps and tape sag, over `frames` frames of CONSTANT audio starting the
+    /// moment a flourish fires.
+    ///
+    /// Constant audio is the whole design of this fixture: `omega` and `sag` both follow the music, so
+    /// against varying input any wobble measured here could just as easily be the music. Held steady,
+    /// the transport settles to one rate and one sag, and everything left moving is the flourish.
+    fn warble_trace(fire: bool, frames: usize) -> (Vec<f32>, Vec<f32>) {
+        let t = builtin::reel_studio_grey();
+        let mut r = Reel::default();
+        let mut c = Canvas::new(190, 60);
+        let mut d = frame(0.5);
+        d.dt_ms = NOMINAL_DT_MS;
+        // Settle the flywheel. 400 frames is what `rotation_is_paced_by_dt_not_by_the_frame_count`
+        // uses to call `omega` settled.
+        for _ in 0..400 {
+            r.draw(&mut c, &t, &d);
+        }
+        // Fired by REQUEST rather than by the audio firing sequence, which is not a shortcut - it is
+        // the only way to hold the audio constant. The firing sequence is a loud transient, so it
+        // drives `omega` and `sag` hard in BOTH arms and they then decay back over ~300ms; measured,
+        // that transient alone gave the no-flourish arm 0.29 of rate spread and 0.46 of sag spread,
+        // swamping the effect under test. A request fires past the rarity check and past a strength of
+        // zero, so both arms see byte-identical, unchanging input.
+        if fire {
+            crate::dsp::flourish::request();
+            r.draw(&mut c, &t, &d);
+        }
+        let (mut steps, mut sags) = (Vec::new(), Vec::new());
+        let mut prev = r.phase_l;
+        for _ in 0..frames {
+            r.draw(&mut c, &t, &d);
+            steps.push((r.phase_l - prev).rem_euclid(1.0));
+            sags.push(r.sag);
+            prev = r.phase_l;
+        }
+        (steps, sags)
+    }
+
+    /// Peak-to-peak of a series as a fraction of its mean. Catches slow variation - the wow.
+    fn spread(v: &[f32]) -> f32 {
+        let mean = v.iter().sum::<f32>() / v.len() as f32;
+        let (lo, hi) = v.iter().fold((f32::MAX, f32::MIN), |(l, h), x| (l.min(*x), h.max(*x)));
+        (hi - lo) / mean.abs().max(1e-9)
+    }
+
+    /// Mean absolute change BETWEEN consecutive samples, as a fraction of the mean.
+    ///
+    /// Deliberately a different statistic from `spread`, because wow and flutter are not
+    /// distinguishable by amplitude alone. A 1.1Hz wow of depth 0.30 moves slowly - about 0.035 of the
+    /// rate per frame at 60fps - while an 8.5Hz flutter of depth 0.10 moves nearly three times faster
+    /// despite being a third of the depth. So `spread` sees mostly wow and this sees mostly flutter,
+    /// and a test using only the first would pass with flutter deleted.
+    fn jitter(v: &[f32]) -> f32 {
+        let mean = v.iter().sum::<f32>() / v.len() as f32;
+        let acc: f32 = v.windows(2).map(|w| (w[1] - w[0]).abs()).sum();
+        acc / (v.len() - 1) as f32 / mean.abs().max(1e-9)
+    }
+
+    #[test]
+    fn the_flourish_puts_wow_and_flutter_into_the_transport() {
+        // 160 frames is 2.67s against a 2200ms envelope, so the window covers the wobble AND a clear
+        // 470ms of recovery past the end of it. 132 frames - exactly the envelope - was tried first and
+        // is subtly wrong: the last frames still carry ~9% of the envelope, which left 0.0315 of
+        // peak-to-peak in a "recovered" tail that was never actually past the effect.
+        let _g = crate::dsp::flourish::test_guard();
+        let (steady, steady_sag) = warble_trace(false, 160);
+        let (warbled, warbled_sag) = warble_trace(true, 160);
+
+        // The fixture has to be genuinely steady or nothing below means anything.
+        assert!(
+            spread(&steady) < 0.02 && spread(&steady_sag) < 0.02,
+            "the transport was not settled before the hit: rate spread {:.4}, sag spread {:.4}",
+            spread(&steady),
+            spread(&steady_sag)
+        );
+
+        // Wow: the rate wanders over a large fraction of itself.
+        assert!(
+            spread(&warbled) > 0.30,
+            "the rate barely moved: peak-to-peak {:.3} of the mean against {:.3} steady",
+            spread(&warbled),
+            spread(&steady)
+        );
+
+        // Flutter: it also moves FAST, which is a separate property from moving far. Measured over the
+        // first third of the window only - the envelope decays linearly across the whole 2.2s, so
+        // averaging over all of it halves the figure and buys nothing.
+        //
+        // 0.028 sits between two measured values, not around a predicted one: 0.0439 with flutter and
+        // 0.0161 with `FLUTTER_DEPTH` set to zero, so roughly 1.6x of margin either way. Worth
+        // recording that the first-principles estimate was 0.089 and wrong by 2x, because it forgot
+        // that the envelope decays across the measurement window.
+        assert!(
+            jitter(&warbled[..44]) > 0.028,
+            "the wobble is all wow and no flutter: {:.4} mean change per frame against {:.4} steady",
+            jitter(&warbled[..44]),
+            jitter(&steady[..44])
+        );
+
+        // The tape slack shows the speed error too, or the reels read as wrong rather than the
+        // transport reading as wrong.
+        assert!(
+            spread(&warbled_sag) > 0.08,
+            "the tape span stayed rigid through the speed error: {:.4} against {:.4} steady",
+            spread(&warbled_sag),
+            spread(&steady_sag)
+        );
+
+        // And it clears. The last 12 frames sit 270-470ms past the end of the envelope, so they must be
+        // steady again - measured on the rate, which is where the wobble was injected.
+        let tail = &warbled[warbled.len() - 12..];
+        assert!(
+            spread(tail) < 0.03,
+            "the transport never recovered: rate still moving {:.4} peak-to-peak at the end",
+            spread(tail)
+        );
+    }
+
+    /// Run: cargo test --release dump_reel_warble -- --ignored --nocapture
+    ///
+    /// A filmstrip, because wow and flutter are a property of MOTION and no single frame can show
+    /// them. Both rows are sampled at identical 100ms intervals from identical constant audio, so the
+    /// spoke rivet should sit at evenly spaced angles down the steady row and at uneven ones down the
+    /// warbled row. That uneven spacing IS the effect.
+    #[test]
+    #[ignore]
+    fn dump_reel_warble() {
+        let _g = crate::dsp::flourish::test_guard();
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        const CELLS: usize = 8;
+        const EVERY: usize = 6; // frames between samples, ~100ms at 60fps
+        let (cw, ch) = (190i32, 60i32);
+        let mut rows: Vec<Vec<Canvas>> = Vec::new();
+        for fire in [false, true] {
+            let t = builtin::reel_studio_grey();
+            let mut r = Reel::default();
+            let mut c = Canvas::new(cw, ch);
+            let mut d = frame(0.5);
+            d.dt_ms = NOMINAL_DT_MS;
+            for _ in 0..400 {
+                r.draw(&mut c, &t, &d);
+            }
+            if fire {
+                crate::dsp::flourish::request();
+            }
+            let mut shots = Vec::new();
+            for k in 0..(CELLS * EVERY) {
+                r.draw(&mut c, &t, &d);
+                if k % EVERY == 0 {
+                    shots.push(c.clone());
+                }
+            }
+            rows.push(shots);
+        }
+
+        // One image: two rows of CELLS frames, each cropped to the transport's left half so the reel
+        // fills the cell. Written un-premultiplied onto the dark taskbar, as the other dumps are.
+        let (cropw, croph) = (cw / 2, ch);
+        let (ow, oh) = (cropw * CELLS as i32, croph * 2 + 4);
+        let mut out = vec![22u8; (ow * oh * 4) as usize];
+        for (ri, shots) in rows.iter().enumerate() {
+            for (ci, shot) in shots.iter().enumerate() {
+                for y in 0..croph {
+                    for x in 0..cropw {
+                        let px = shot.get(x, y);
+                        let a = px.a as f32 / 255.0;
+                        let (ox, oy) = (ci as i32 * cropw + x, ri as i32 * (croph + 4) + y);
+                        let o = ((oy * ow + ox) * 4) as usize;
+                        for (k, ch8) in [px.r, px.g, px.b].iter().enumerate() {
+                            out[o + k] = (*ch8 as f32 + 22.0 * (1.0 - a)).min(255.0) as u8;
+                        }
+                        out[o + 3] = 255;
+                    }
+                }
+            }
+        }
+        let path = dir.join(format!("reel-warble-{ow}x{oh}.rgba"));
+        std::fs::write(&path, &out).unwrap();
+        println!("wrote {} ({}x{}) - top row steady, bottom row warbled", path.display(), ow, oh);
+
+        // The filmstrip alone is weak evidence, and it is worth saying why rather than shipping it as
+        // if it were strong: three spokes are symmetric every 120 degrees, so uneven angular spacing
+        // between samples is genuinely hard to see. The rate series is the unambiguous artefact - a
+        // steady transport plots as a flat line, a warbling one as a wave - so write that too.
+        let (steady, _) = warble_trace(false, 160);
+        let (warbled, sag) = warble_trace(true, 160);
+        let mut csv = String::from("frame,steady_dps,warbled_dps,warbled_sag_px
+");
+        for i in 0..steady.len() {
+            let dps = |turns: f32| turns * 360.0 / (NOMINAL_DT_MS / 1000.0);
+            csv.push_str(&format!(
+                "{i},{:.3},{:.3},{:.3}
+",
+                dps(steady[i]),
+                dps(warbled[i]),
+                sag[i]
+            ));
+        }
+        let csvp = dir.join("reel-warble.csv");
+        std::fs::write(&csvp, csv).unwrap();
+        println!("wrote {}", csvp.display());
+    }
+
     #[test]
     fn the_fastest_reel_stays_far_below_the_spoke_aliasing_bound() {
         // A spoked wheel advancing one spoke pitch per frame looks STATIONARY, and past half a
@@ -712,7 +997,11 @@ mod tests {
         // constants, because the failure is invisible to any pixel test: each individual frame
         // is drawn perfectly correctly.
         let pitch_deg = 360.0 / SPOKES as f32;
-        let worst = SPIN_FULL_DPS * TAKEUP_RATIO * (NOMINAL_DT_MS / 1000.0);
+        // Including the flourish's peak speed multiplier. The wow/flutter depths are the sort of
+        // thing that gets nudged up for effect, and doing so silently spends this family's aliasing
+        // budget - at which point the reels appear to run BACKWARDS during the flourish.
+        let peak_speed = 1.0 + WOW_DEPTH + FLUTTER_DEPTH;
+        let worst = SPIN_FULL_DPS * TAKEUP_RATIO * peak_speed * (NOMINAL_DT_MS / 1000.0);
         assert!(
             worst < pitch_deg * 0.5 / 2.0,
             "worst-case {worst:.1} deg/frame is too close to the {:.1} deg reversal bound",

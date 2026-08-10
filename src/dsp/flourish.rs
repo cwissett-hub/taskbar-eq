@@ -264,6 +264,24 @@ pub fn firing_sequence(bands: usize) -> Vec<Vec<f32>> {
     out
 }
 
+/// Serialises every test that touches `REQUEST` or `ENABLED`, and leaves both in a known state.
+///
+/// `cargo test` runs tests in parallel threads inside ONE process, so these two atomics are shared
+/// across the whole suite. Without this, a test that requests a flourish fires one inside whatever
+/// unrelated test happens to be drawing a frame at that moment - which is exactly how a batch of
+/// flourish tests first failed, in places that had nothing to do with the change.
+///
+/// Lives here rather than in a test module so families in other modules can take the same lock.
+#[cfg(test)]
+pub fn test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // A leftover request from a panicking test would fire in the next one.
+    let _ = take_request();
+    set_enabled(true);
+    g
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,14 +296,7 @@ mod tests {
     /// turned flourishes off underneath four other tests running concurrently and they failed for a
     /// reason that had nothing to do with them. That is a real cost of a global switch, and the honest
     /// way to pay it is here rather than by pretending the tests are independent.
-    fn guard() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        // A leftover request from a panicking test would fire in the next one.
-        let _ = take_request();
-        set_enabled(true);
-        g
-    }
+    use super::test_guard as guard;
 
     fn flat(v: f32) -> Vec<f32> {
         vec![v; N]

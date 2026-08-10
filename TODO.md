@@ -3,15 +3,15 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** after the scope trigger-loss flourish.
+**Last updated:** after the tape wow-and-flutter flourish.
 
 ---
 
 ## In progress
 
-- [ ] **Per-family flourishes, three remaining.** Six are done (VFD self-test, VU needle slam,
-      waterfall tear, valve ionisation, nixie ghosting, scope trigger loss). Still to do, each needing
-      its own effect, a pixel-level test and a render: **tape wow/flutter, Pantone plate misregister,
+- [ ] **Per-family flourishes, two remaining.** Seven are done (VFD self-test, VU needle slam,
+      waterfall tear, valve ionisation, nixie ghosting, scope trigger loss, tape wow/flutter). Still to
+      do, each needing its own effect, a pixel-level test and a render: **Pantone plate misregister,
       patchbay**. One commit per family, pushed once verified.
 
 ## Waiting on you
@@ -69,6 +69,21 @@ history. Newest first within each section. Commit hashes link the claim to the e
   unbound. Found three latent bugs while wiring: a slot-index catch-all that would have overwritten the
   shuffle key, a menu array that **panics at the sixth slot**, and test interference from the
   process-global switch.
+- **Tape flourish: wow and flutter.** Real rates (1.1Hz wow, 8.5Hz flutter, deliberately not
+  harmonically related) at theatrical depths, applied to the phase step rather than to the smoothed
+  `omega` - injected into `omega` the flywheel's own ballistics would filter the flutter away. The wow
+  reaches the tape slack at 0.35, because a rate wobble with a rigid tape span reads as the reels being
+  wrong rather than the transport being wrong; flutter deliberately does not, being faster than tape
+  under tension can follow. The existing spoke-aliasing guard now includes the flourish's peak speed
+  multiplier, since that is what a later "make it deeper" tweak would silently spend.
+  Two fixture problems found and recorded in the test: firing it with the audio firing sequence gave
+  the NO-flourish arm 0.29 of rate spread because the sequence is itself a loud transient, so it fires
+  by manual request against constant audio instead; and the first recovery window ended exactly with
+  the envelope, so a "recovered" tail still carried 9% of it. Also promoted `flourish::test_guard()`
+  out of its own test module - any test touching the process-global request switch needs that lock.
+  The eyeball artefact is a rate plot, not a frame: a filmstrip is weak evidence here because three
+  spokes are symmetric every 120 degrees. `target/eyeball/review-reel-warble-rate.png`.
+
 - **Scope flourish: the sweep loses trigger lock.** Not a new drawing routine - the trigger is simply
   switched off for 1400ms, so the trace slides about one screen-width of phase and the phosphor smears
   every phase it passes through. It is the family's own documented worst bug, re-entered on purpose.
@@ -116,6 +131,11 @@ history. Newest first within each section. Commit hashes link the claim to the e
 ---
 
 ## Notes to self
+
+- **Restore the file BEFORE the run, never only after.** Twice now a mutation sweep timed out
+  mid-iteration and left a mutant constant in the tree, and the next thing I measured was silently
+  testing changed code - once reporting three "caught" mutants that had matched nothing at all. Copy
+  the good file in at the START of each iteration and echo the constant so the log proves what ran.
 
 - **Measure before claiming.** Three times this session a confident claim was wrong: the UIA cache
   (slower, not faster), the trigger key "dropping presses" (the log deduplicates), the fixture that
