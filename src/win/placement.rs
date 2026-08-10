@@ -458,7 +458,7 @@ mod live {
             }
         };
         let bar = taskbar_rect();
-        println!("taskbar: {bar:?}   elements: {}", els.len());
+        println!("taskbar: {bar:?} elements: {}", els.len());
         let Some(widget) = widget_rect_in(&els) else {
             println!("no Widgets button on this machine");
             return;

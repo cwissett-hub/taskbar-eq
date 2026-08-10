@@ -1,4 +1,17 @@
 pub mod canvas;
+
+/// Asks the current family to flourish on its next frame. See `dsp::flourish`.
+pub fn flourish_now() {
+    crate::dsp::flourish::request();
+}
+
+/// Turns family flourishes on or off at runtime. See `dsp::flourish`.
+///
+/// Re-exported here because `main` talks to the renderer, not to the DSP internals - and because the
+/// flourish switch is a presentation decision that happens to be implemented in the detector.
+pub fn flourish_enabled(on: bool) {
+    crate::dsp::flourish::set_enabled(on);
+}
 pub mod golden;
 pub mod scope;
 pub mod nixie;

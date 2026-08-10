@@ -58,6 +58,8 @@ const ID_KEYS_EDIT: usize = 1104;
 const ID_BIND_BASE: usize = 1110;
 const ID_RANDOM_THEME_NOW: usize = 1120;
 const ID_RANDOM_COLOURWAY_NOW: usize = 1121;
+const ID_FLOURISH_NOW: usize = 1122;
+const ID_FLOURISH_TOGGLE: usize = 1123;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TrayEvent {
@@ -68,6 +70,10 @@ pub enum TrayEvent {
     BindKey(usize),
     /// Shuffle now, from the menu, without needing a key bound.
     RandomNow(crate::themes::pick::RandomKind),
+    /// Fire the current family's flourish now.
+    FlourishNow,
+    /// Turn flourishes on or off.
+    ToggleFlourishes,
     /// Bind the suggested transport keys and register them immediately.
     SuggestKeys,
     /// Release every transport key.
@@ -88,6 +94,8 @@ pub struct TransportState {
     /// One label per action, already resolved to something a person can read. Indexed the same way
     /// as `hotkeys::Slot::ALL`, so the menu and the registry cannot disagree about which is which.
     pub keys: [String; crate::win::hotkeys::SLOTS],
+    /// Whether flourishes are currently switched on, so the menu can offer the right verb.
+    pub flourishes_on: bool,
     /// True when at least one configured key failed to register.
     pub broken: bool,
     pub media_keys_backend: bool,
@@ -341,9 +349,14 @@ impl Tray {
                     w!("Another colourway of this theme now"),
                 );
                 let _ = AppendMenuW(sub, MF_SEPARATOR, 0, None);
-                for (i, label) in transport.keys.iter().enumerate().skip(3) {
-                    let text =
-                        format!("{}:  {}", ["Any theme key", "Colourway key"][i - 3], label);
+                // Slots 3 and 4 ONLY, named explicitly.
+                //
+                // This was `.skip(3)` over every remaining slot, indexing a two-element label array
+                // by `i - 3`. That is correct for exactly five slots and panics at the sixth - which
+                // it reached the moment the two flourish slots were added. A menu that indexes a
+                // fixed array by a slot number is a trap; naming the pair it owns is not.
+                for (i, label) in [(3usize, "Any theme key"), (4, "Colourway key")] {
+                    let text = format!("{label}:  {}", transport.keys[i]);
                     let mut wide: Vec<u16> =
                         text.encode_utf16().chain(std::iter::once(0)).collect();
                     let _ = AppendMenuW(
@@ -354,6 +367,35 @@ impl Tray {
                     );
                 }
                 let _ = AppendMenuW(menu, MF_POPUP, sub.0 as usize, w!("Random"));
+            }
+
+            // ---- Flourishes -------------------------------------------------------------------
+            // Offered as ACTIONS as well as bindings, for the same reason the shuffles are: they work
+            // before any key is set, and they stay usable if a key turns out to be taken.
+            //
+            // A flourish is about one every thirty seconds by design, which makes it genuinely hard to
+            // look at on purpose - so "now" is the item that makes the feature reviewable.
+            if let Ok(sub) = CreatePopupMenu() {
+                let _ = AppendMenuW(sub, MF_STRING, ID_FLOURISH_NOW, w!("Flourish now"));
+                let toggle = if transport.flourishes_on {
+                    w!("Turn flourishes off")
+                } else {
+                    w!("Turn flourishes on")
+                };
+                let _ = AppendMenuW(sub, MF_STRING, ID_FLOURISH_TOGGLE, toggle);
+                let _ = AppendMenuW(sub, MF_SEPARATOR, 0, None);
+                for (i, label) in [(5usize, "Flourish now key"), (6, "On/off key")] {
+                    let text = format!("{label}:  {}", transport.keys[i]);
+                    let mut wide: Vec<u16> =
+                        text.encode_utf16().chain(std::iter::once(0)).collect();
+                    let _ = AppendMenuW(
+                        sub,
+                        MF_STRING,
+                        ID_BIND_BASE + i,
+                        windows::core::PCWSTR(wide.as_mut_ptr()),
+                    );
+                }
+                let _ = AppendMenuW(menu, MF_POPUP, sub.0 as usize, w!("Flourishes"));
             }
 
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
@@ -395,6 +437,12 @@ impl Tray {
             let id = cmd.0 as usize;
             if id == ID_RANDOM_THEME_NOW {
                 return Some(TrayEvent::RandomNow(crate::themes::pick::RandomKind::AnyTheme));
+            }
+            if id == ID_FLOURISH_NOW {
+                return Some(TrayEvent::FlourishNow);
+            }
+            if id == ID_FLOURISH_TOGGLE {
+                return Some(TrayEvent::ToggleFlourishes);
             }
             if id == ID_RANDOM_COLOURWAY_NOW {
                 return Some(TrayEvent::RandomNow(crate::themes::pick::RandomKind::SameFamily));

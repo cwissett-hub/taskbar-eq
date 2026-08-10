@@ -1487,7 +1487,7 @@ mod tests {
                     let (a, r, g, b) = (p >> 24, (p >> 16) & 0xff, (p >> 8) & 0xff, p & 0xff);
                     assert!(
                         r <= a && g <= a && b <= a,
-                        "premultiplied invariant broken at ({x},{y}) strength {strength}:                          a={a} r={r} g={g} b={b} - this is what makes a halo go black"
+                        "premultiplied invariant broken at ({x},{y}) strength {strength}: a={a} r={r} g={g} b={b} - this is what makes a halo go black"
                     );
                 }
             }

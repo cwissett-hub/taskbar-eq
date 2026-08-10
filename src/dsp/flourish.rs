@@ -31,6 +31,7 @@
 //! than nine families each shipping their own unfireable threshold.
 
 use super::onset::Flux;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Ratio and refractory used to find CANDIDATE hits.
 ///
@@ -66,6 +67,37 @@ const RATIO_AT_ZERO: f32 = 2.60;
 /// succession. This is the backstop that makes "rare" true rather than likely.
 const MIN_GAP_MS: f32 = 2500.0;
 
+/// A manual request, set by the "flourish now" hotkey or menu item.
+///
+/// A flourish is about one every thirty seconds by design, which makes it awkward to look at on
+/// purpose - so there is a button. Consumed by whichever family is drawing, and only one family draws
+/// at a time, so there is no ambiguity about who gets it.
+static REQUEST: AtomicBool = AtomicBool::new(false);
+
+/// Whether flourishes happen at all. Toggled by hotkey or menu, persisted in the config.
+///
+/// Separate from `Theme::flourish`, which is the per-colourway RATE. This is a global on/off, so
+/// turning it off does not lose the per-colourway tuning and turning it back on restores it exactly.
+static ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// Asks for a flourish on the next drawn frame.
+pub fn request() {
+    REQUEST.store(true, Ordering::Relaxed);
+}
+
+/// Takes a pending manual request.
+fn take_request() -> bool {
+    REQUEST.swap(false, Ordering::Relaxed)
+}
+
+pub fn set_enabled(v: bool) {
+    ENABLED.store(v, Ordering::Relaxed);
+}
+
+pub fn enabled() -> bool {
+    ENABLED.load(Ordering::Relaxed)
+}
+
 /// Fires on a rare, exceptional hit. One per family instance.
 #[derive(Default)]
 pub struct Trigger {
@@ -87,6 +119,18 @@ impl Trigger {
         self.since_ms += dt;
         if !self.since_ms.is_finite() {
             self.since_ms = MIN_GAP_MS;
+        }
+        // A MANUAL request fires regardless: past the rarity threshold, past the minimum gap, and past
+        // a colourway that has flourishes turned down to zero. Somebody pressed the button, so the
+        // answer is yes. `since_ms` is still reset, so a manual fire does not immediately allow an
+        // audio-driven one on top of it.
+        if take_request() {
+            self.since_ms = 0.0;
+            return true;
+        }
+        // The global switch, checked before the per-colourway rate.
+        if !enabled() {
+            return false;
         }
         // Off means off, and it means off BEFORE any state is advanced - a colourway with the flourish
         // disabled should cost nothing and accumulate nothing, so that turning it on mid-session
@@ -227,6 +271,22 @@ mod tests {
     const DT: f32 = 16.7;
     const N: usize = 64;
 
+    /// Serialises every test in this module, and resets the two process-global flags.
+    ///
+    /// **Required because the manual request and the on/off switch are process globals, and Rust runs
+    /// tests in parallel threads inside ONE process.** Without this, the test that exercises the switch
+    /// turned flourishes off underneath four other tests running concurrently and they failed for a
+    /// reason that had nothing to do with them. That is a real cost of a global switch, and the honest
+    /// way to pay it is here rather than by pretending the tests are independent.
+    fn guard() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // A leftover request from a panicking test would fire in the next one.
+        let _ = take_request();
+        set_enabled(true);
+        g
+    }
+
     fn flat(v: f32) -> Vec<f32> {
         vec![v; N]
     }
@@ -259,6 +319,7 @@ mod tests {
 
     #[test]
     fn the_envelope_decays_in_wall_clock_time_and_survives_a_poisoned_frame() {
+        let _g = guard();
         let mut e = Envelope::default();
         assert_eq!(e.update(true, DT, 400.0), 1.0, "it must be full on the frame it fires");
         // Half the decay time, whatever the frame interval. Two cadences, same elapsed time.
@@ -275,7 +336,7 @@ mod tests {
         let (fine, coarse) = (after(16.7), after(50.0));
         assert!(
             (fine - coarse).abs() < 0.1,
-            "200ms of decay gave {fine:.2} at 16.7ms frames and {coarse:.2} at 50ms - it is decaying              per frame rather than per millisecond"
+            "200ms of decay gave {fine:.2} at 16.7ms frames and {coarse:.2} at 50ms - it is decaying per frame rather than per millisecond"
         );
         assert!((fine - 0.5).abs() < 0.1, "half the decay time should be about half, got {fine:.2}");
         // Reaches zero and stays there.
@@ -291,6 +352,7 @@ mod tests {
 
     #[test]
     fn the_shared_firing_sequence_actually_fires() {
+        let _g = guard();
         // The guard on the helper the family tests depend on. If this sequence ever stopped producing
         // a flourish, every family's flourish test would still pass - while asserting nothing at all.
         let seq = firing_sequence(N);
@@ -309,7 +371,59 @@ mod tests {
     }
 
     #[test]
+    fn a_manual_request_fires_immediately_whatever_the_settings_say() {
+        let _g = guard();
+        // The button has to work when the automatic path would refuse: before the median window has
+        // filled, inside the minimum gap, and on a colourway with flourishes turned down to zero.
+        // Somebody pressed it, so the answer is yes.
+        set_enabled(true);
+        let mut t = Trigger::default();
+        request();
+        assert!(t.update(&flat(0.1), DT, 0.0), "a request must fire even at strength 0");
+
+        // Consumed exactly once - a request must not leave the display flourishing every frame.
+        assert!(!t.update(&flat(0.1), DT, 0.0), "the request fired twice");
+
+        // And it works from cold, with no candidate history at all.
+        let mut fresh = Trigger::default();
+        request();
+        assert!(fresh.update(&flat(0.1), DT, crate::themes::DEFAULT_FLOURISH));
+    }
+
+    #[test]
+    fn the_global_switch_silences_every_flourish_and_restores_them_exactly() {
+        let _g = guard();
+        // A separate control from the per-colourway rate, so turning them off must not disturb the
+        // tuning: the same material has to behave identically before and after an off/on cycle.
+        let run = || -> u32 {
+            let mut t = Trigger::default();
+            let mut n = 0;
+            for row in &firing_sequence(N) {
+                if t.update(row, DT, crate::themes::DEFAULT_FLOURISH) {
+                    n += 1;
+                }
+            }
+            n
+        };
+        set_enabled(true);
+        let before = run();
+        assert!(before > 0, "the fixture should flourish while enabled");
+
+        set_enabled(false);
+        assert_eq!(run(), 0, "nothing may flourish while the switch is off");
+        // A manual request still works while off, because it is an explicit instruction rather than
+        // the automatic behaviour the switch governs.
+        let mut t = Trigger::default();
+        request();
+        assert!(t.update(&flat(0.1), DT, crate::themes::DEFAULT_FLOURISH), "the button must still work");
+
+        set_enabled(true);
+        assert_eq!(run(), before, "turning them back on must restore the exact previous behaviour");
+    }
+
+    #[test]
     fn zero_is_off_and_costs_nothing() {
+        let _g = guard();
         let mut t = Trigger::default();
         for i in 0..2000 {
             assert!(!t.update(&flat(if i % 20 == 0 { 0.95 } else { 0.1 }), DT, 0.0));
@@ -321,6 +435,7 @@ mod tests {
 
     #[test]
     fn a_metronomic_groove_never_flourishes_at_any_setting() {
+        let _g = guard();
         // Structural, not tuned: an identical hit every beat has a ratio of exactly 1.0 against the
         // median, and every setting's threshold is above 1.0. The radar's launch knob shipped a
         // mapping that went BELOW 1.0 at its loose end and fired on every single beat.
@@ -339,6 +454,7 @@ mod tests {
 
     #[test]
     fn an_exceptional_hit_flourishes_and_an_ordinary_one_does_not() {
+        let _g = guard();
         let mut t = Trigger::default();
         // Establish what ordinary is on this material.
         for i in 0..900 {
@@ -355,6 +471,7 @@ mod tests {
 
     #[test]
     fn two_exceptional_hits_close_together_yield_only_one_flourish() {
+        let _g = guard();
         // The MIN_GAP_MS backstop. No ratio can guarantee a gap on its own, because a track can
         // contain two enormous hits a second apart - and two whole-display events inside a second read
         // as a malfunction rather than as punctuation.
@@ -387,6 +504,7 @@ mod tests {
 
     #[test]
     fn the_setting_moves_the_rate_in_the_right_direction_on_real_music() {
+        let _g = guard();
         // Monotonic on real material, which is the only place it matters. A knob that does nothing -
         // or the wrong thing - is how the radar's launch threshold went unnoticed for four attempts.
         for (name, frames) in fixtures() {
@@ -402,6 +520,7 @@ mod tests {
 
     #[test]
     fn the_default_setting_is_rare_on_every_kind_of_music() {
+        let _g = guard();
         // "Fairly rare, just for big hits", measured at the value `Theme::flourish` ships with.
         //
         // Each recording is only ~13 seconds, which is too short to estimate the rate of an event
@@ -430,7 +549,7 @@ mod tests {
         }
         assert!(
             seen_any,
-            "the default produced no flourish on ANY fixture - the exact failure this module exists              to prevent"
+            "the default produced no flourish on ANY fixture - the exact failure this module exists to prevent"
         );
     }
 
@@ -445,6 +564,7 @@ mod tests {
     #[test]
     #[ignore]
     fn probe_flourish_rate() {
+        let _g = guard();
         let path = std::env::var("TASKBAR_EQ_FIXTURE")
             .expect("set TASKBAR_EQ_FIXTURE to a --levels capture");
         let text = std::fs::read_to_string(&path).expect("read the fixture");
@@ -464,6 +584,7 @@ mod tests {
 
     #[test]
     fn the_knob_spans_a_useful_range_rather_than_two_settings_that_behave_alike() {
+        let _g = guard();
         // A knob whose ends differ by one event over two minutes is not tunable. Measured on the
         // dynamic recording, looped, because that is the material with something to find.
         let (_, frames) = fixtures().into_iter().find(|(n, _)| *n == "dnb, dynamic").unwrap();

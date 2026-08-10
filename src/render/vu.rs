@@ -696,7 +696,7 @@ mod tests {
         let moved = differing(&on, &off);
         assert!(
             moved > 120,
-            "a pinned needle sweeps a wide arc and lights a lamp on every dial, but only {moved}              pixels differ from the run with the flourish off"
+            "a pinned needle sweeps a wide arc and lights a lamp on every dial, but only {moved} pixels differ from the run with the flourish off"
         );
         // The needles FALL BACK rather than latching - and slowly, which is the whole character of a
         // moving-coil meter against its end stop. Two seconds is well past PINNED_MS.

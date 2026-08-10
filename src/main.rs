@@ -66,13 +66,14 @@ fn rebind(
     hotkeys: &mut win::hotkeys::Registry,
     cfg: &Config,
 ) -> [win::hotkeys::Outcome; win::hotkeys::SLOTS] {
-    hotkeys.apply_all([
-        &cfg.hotkeys.play_pause,
-        &cfg.hotkeys.next_track,
-        &cfg.hotkeys.prev_track,
-        &cfg.hotkeys.random_theme,
-        &cfg.hotkeys.random_colourway,
-    ])
+    // Built from the indexed accessor rather than a hand-written list, so adding a slot cannot leave
+    // one unbound - the array length is checked against SLOTS by the compiler either way, but a list
+    // is easy to get in the wrong ORDER and that would bind the right key to the wrong action.
+    let mut texts: [&str; win::hotkeys::SLOTS] = [""; win::hotkeys::SLOTS];
+    for (i, t) in texts.iter_mut().enumerate() {
+        *t = cfg.hotkeys.slot(i).unwrap_or("");
+    }
+    hotkeys.apply_all(texts)
 }
 
 /// What the tray menu should show, derived from the LIVE outcomes rather than from the config file.
@@ -95,6 +96,7 @@ fn transport_state(
         win::hotkeys::Outcome::Failed(c, _) => format!("{}  (failed)", c.label()),
     });
     win::tray::TransportState {
+        flourishes_on: cfg.flourishes,
         keys,
         broken: outcomes.iter().any(|o| o.is_broken()),
         media_keys_backend: cfg.media_backend == win::media::Backend::MediaKeys,
@@ -359,7 +361,7 @@ impl Ticker {
                 if !real.is_empty() {
                     let med = real[real.len() / 2];
                     log::write(&format!(
-                        "placement (UIA) over {} calls in {:.0}s: min {:.1}ms median {:.1}ms max                          {:.1}ms; blocks the render thread {:.1}% of the time{}",
+                        "placement (UIA) over {} calls in {:.0}s: min {:.1}ms median {:.1}ms max {:.1}ms; blocks the render thread {:.1}% of the time{}",
                         real.len(),
                         window_s,
                         real[0] as f32 / 1000.0,
@@ -839,7 +841,7 @@ fn measure_levels() -> Result<()> {
         fq(0.10), fq(0.50), fq(0.90), frame_max[frame_max.len() - 1]
     ));
     log::write(&format!(
-        "rms             p50 {:.4}  p90 {:.4}  max {:.4}",
+        "rms p50 {:.4}  p90 {:.4}  max {:.4}",
         rms_seen[rms_seen.len() / 2],
         rms_seen[(rms_seen.len() * 9) / 10],
         rms_seen[rms_seen.len() - 1]
@@ -882,7 +884,7 @@ fn measure_levels() -> Result<()> {
     let secs = samples.len() as f32 / 99.0;
 
     log::write(&format!(
-        "bass mean       p50 {:.4}  p90 {:.4}  max {:.4}  (BOLT_FLOOR is 0.35)",
+        "bass mean p50 {:.4}  p90 {:.4}  max {:.4}  (BOLT_FLOOR is 0.35)",
         pick(&smoothed_bass.iter().copied().collect::<Vec<_>>().clone(), 0.5),
         pick(&{ let mut v = smoothed_bass.clone(); v.sort_by(|a,b| a.partial_cmp(b).unwrap()); v }, 0.9),
         smoothed_bass.iter().copied().fold(0.0f32, f32::max)
@@ -896,7 +898,7 @@ fn measure_levels() -> Result<()> {
         fires as f32 / secs
     ));
     log::write(&format!(
-        "spectral flux   p50 {:.3}  p90 {:.3}  p99 {:.3}  max {:.3}",
+        "spectral flux p50 {:.3}  p90 {:.3}  p99 {:.3}  max {:.3}",
         pick(&fs, 0.5), pick(&fs, 0.9), pick(&fs, 0.99), fs[fs.len()-1]
     ));
     for k in [0.90f32, 0.95, 0.97] {
@@ -986,6 +988,10 @@ fn main() -> Result<()> {
     // 131,454 handles, degrading a fullscreen app from 160fps to 30fps with input loss; this bounds
     // that and records the growth curve. See `win::health`.
     win::health::start();
+
+    // The persisted flourish switch, pushed into the runtime flag the families read. Done once here so
+    // the very first frame honours it rather than flourishing before the config is consulted.
+    render::flourish_enabled(cfg.flourishes);
 
     let watcher = themes::watch::Watcher::new();
 
@@ -1140,6 +1146,16 @@ fn main() -> Result<()> {
                         }
                     }
                 }
+                Some(TrayEvent::FlourishNow) => {
+                    // Straight through to the detector; the family consumes it on its next frame.
+                    render::flourish_now();
+                    log::write("flourish requested from the menu");
+                }
+                Some(TrayEvent::ToggleFlourishes) => {
+                    // Routed through the SAME request the hotkey sets, so the flip and the config save
+                    // happen in exactly one place - see `hotkeys::request_toggle`.
+                    win::hotkeys::request_toggle();
+                }
                 Some(TrayEvent::RandomNow(kind)) => {
                     let current = with_ticker(|t| t.theme.id.clone()).unwrap_or_default();
                     match shuffle(&all_themes, &current, kind) {
@@ -1163,28 +1179,21 @@ fn main() -> Result<()> {
                     let dark = win::darkmode::windows_prefers_dark();
                     // The chords bound to the OTHER two actions, so the window can refuse a
                     // duplicate on the spot instead of storing one that quietly never fires.
-                    let others: Vec<win::hotkey::Chord> = [
-                        &cfg.hotkeys.play_pause,
-                        &cfg.hotkeys.next_track,
-                        &cfg.hotkeys.prev_track,
-                        &cfg.hotkeys.random_theme,
-                        &cfg.hotkeys.random_colourway,
-                    ]
-                    .iter()
-                    .enumerate()
-                    .filter(|(j, _)| *j != i)
-                    .filter_map(|(_, t)| win::hotkey::Chord::parse(t).ok())
-                    .collect();
+                    let others: Vec<win::hotkey::Chord> = (0..win::hotkeys::SLOTS)
+                        .filter(|j| *j != i)
+                        .filter_map(|j| cfg.hotkeys.slot(j))
+                        .filter_map(|t| win::hotkey::Chord::parse(t).ok())
+                        .collect();
                     match win::capture_key::capture(tray.hwnd(), label, dark, &others) {
                         Some(win::capture_key::Captured::Chord(c)) => {
                             let text = c.to_string();
                             log::write(&format!("captured {text} for {label}"));
-                            match i {
-                                0 => cfg.hotkeys.play_pause = text,
-                                1 => cfg.hotkeys.next_track = text,
-                                2 => cfg.hotkeys.prev_track = text,
-                                3 => cfg.hotkeys.random_theme = text,
-                                _ => cfg.hotkeys.random_colourway = text,
+                            match cfg.hotkeys.slot_mut(i) {
+                                Some(field) => *field = text,
+                                // Unreachable while the menu only offers SLOTS entries, and a no-op
+                                // rather than an alias if that ever stops being true. The `_ =>` this
+                                // replaces would have written a sixth slot's chord into the fifth.
+                                None => log::write(&format!("no hotkey slot {i} to bind")),
                             }
                             if let Err(e) = cfg.save() {
                                 log::write(&format!("config save failed: {e}"));
@@ -1192,12 +1201,9 @@ fn main() -> Result<()> {
                         }
                         Some(win::capture_key::Captured::Clear) => {
                             log::write(&format!("cleared the key for {label}"));
-                            match i {
-                                0 => cfg.hotkeys.play_pause.clear(),
-                                1 => cfg.hotkeys.next_track.clear(),
-                                2 => cfg.hotkeys.prev_track.clear(),
-                                3 => cfg.hotkeys.random_theme.clear(),
-                                _ => cfg.hotkeys.random_colourway.clear(),
+                            match cfg.hotkeys.slot_mut(i) {
+                                Some(field) => field.clear(),
+                                None => log::write(&format!("no hotkey slot {i} to clear")),
                             }
                             if let Err(e) = cfg.save() {
                                 log::write(&format!("config save failed: {e}"));
@@ -1265,6 +1271,17 @@ fn main() -> Result<()> {
                     }
                 }
                 None => {}
+            }
+        }
+
+        // A flourish on/off toggle asked for by a hotkey or the menu. Here rather than in the wndproc
+        // because it persists to the config, and file I/O has no business in a message handler.
+        if win::hotkeys::take_toggle_request() {
+            cfg.flourishes = !cfg.flourishes;
+            render::flourish_enabled(cfg.flourishes);
+            log::write(if cfg.flourishes { "flourishes: on" } else { "flourishes: off" });
+            if let Err(e) = cfg.save() {
+                log::write(&format!("config save failed: {e}"));
             }
         }
 

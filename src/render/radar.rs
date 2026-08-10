@@ -1630,7 +1630,7 @@ mod tests {
                 rs.sort_by(|a, b| a.partial_cmp(b).unwrap());
                 if !rs.is_empty() {
                     println!(
-                        "  ratio AT CONTACTS ({} of them): p10 {:.2}  p50 {:.2}  p90 {:.2}  max {:.2}   (need >= {:.2}..{:.2})",
+                        "  ratio AT CONTACTS ({} of them): p10 {:.2}  p50 {:.2}  p90 {:.2}  max {:.2} (need >= {:.2}..{:.2})",
                         rs.len(), rs[rs.len()/10], rs[rs.len()/2], rs[rs.len()*9/10], rs[rs.len()-1],
                         1.3, 2.5
                     );

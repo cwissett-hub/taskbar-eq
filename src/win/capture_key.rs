@@ -296,7 +296,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                             rc.bottom,
                         ),
                         None => draw(
-                            "Esc cancels    Backspace clears",
+                            "Esc cancels Backspace clears",
                             small_font.into(),
                             dim,
                             third * 2,
@@ -546,7 +546,7 @@ mod tests {
             println!(
                 "monitor dpi = {dpi} ({}% scaling)
   window  {}x{} px (from {DIP_W}x{DIP_H} dip)
-                   fonts   title {}px  chord {}px  hint {}px",
+                   fonts title {}px  chord {}px  hint {}px",
                 dpi * 100 / 96,
                 DIP_W * dpi / 96,
                 DIP_H * dpi / 96,

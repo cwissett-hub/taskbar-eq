@@ -150,7 +150,7 @@ mod tests {
             }
             let worst = *widths.iter().max().unwrap();
             println!(
-                "  {px}px (fraction {frac:.2})  widths {widths:?}  worst {worst}px                   fits190={} fits380={}",
+                "  {px}px (fraction {frac:.2})  widths {widths:?}  worst {worst}px fits190={} fits380={}",
                 worst <= avail(190),
                 worst <= avail(380)
             );

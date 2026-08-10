@@ -932,7 +932,7 @@ mod tests {
         let panel = Rgba::from_hex(&t.panel, 1.0);
         println!("panel luminance {:.1}", lum(panel));
         let lut = ramp_lut(&t);
-        println!("step  a    lum(over panel)  delta");
+        println!("step  a lum(over panel)  delta");
         let mut prev = 0.0;
         for i in 0..RAMP_STEPS {
             let e = lut[i];

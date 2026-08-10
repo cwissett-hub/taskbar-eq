@@ -993,7 +993,7 @@ mod tests {
         // below the dot lattice's first reachable coverage step.
         assert!(
             upper > 150,
-            "the screen must lay ink over the shallow end of its region too, only {upper} pixels              darkened in the upper half"
+            "the screen must lay ink over the shallow end of its region too, only {upper} pixels darkened in the upper half"
         );
         // And more over the whole field than over half of it, or the ramp is not ramping.
         assert!(
@@ -1395,7 +1395,7 @@ mod tests {
                 }
             }
             println!(
-                "{:18} worst {:.2}:1 at #{:02x}{:02x}{:02x}   floor {:.2}   ramp {}",
+                "{:18} worst {:.2}:1 at #{:02x}{:02x}{:02x} floor {:.2} ramp {}",
                 t.id,
                 worst.0,
                 worst.1.r,

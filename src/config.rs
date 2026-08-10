@@ -24,6 +24,45 @@ pub struct Hotkeys {
     pub random_theme: String,
     /// Shuffle within the family already showing.
     pub random_colourway: String,
+    /// Fire the current family's flourish right now, without waiting for an exceptional hit.
+    pub flourish: String,
+    /// Turn flourishes on or off, persisted across restarts.
+    pub flourish_toggle: String,
+}
+
+impl Hotkeys {
+    /// The chord text for slot `i`, in the same order as `hotkeys::Slot::ALL`.
+    ///
+    /// **Indexed accessors rather than a `match` at each call site.** The capture-dialog handler in
+    /// `main` used `match i { 0 => .., 3 => .., _ => random_colourway }`, and a catch-all arm over an
+    /// index is a trap: adding a sixth slot silently aliased it onto the fifth field, so binding the
+    /// new action would have overwritten an existing one and the bug would look like "my shuffle key
+    /// changed by itself". Returning `None` past the end cannot alias.
+    pub fn slot(&self, i: usize) -> Option<&str> {
+        Some(match i {
+            0 => &self.play_pause,
+            1 => &self.next_track,
+            2 => &self.prev_track,
+            3 => &self.random_theme,
+            4 => &self.random_colourway,
+            5 => &self.flourish,
+            6 => &self.flourish_toggle,
+            _ => return None,
+        })
+    }
+
+    pub fn slot_mut(&mut self, i: usize) -> Option<&mut String> {
+        Some(match i {
+            0 => &mut self.play_pause,
+            1 => &mut self.next_track,
+            2 => &mut self.prev_track,
+            3 => &mut self.random_theme,
+            4 => &mut self.random_colourway,
+            5 => &mut self.flourish,
+            6 => &mut self.flourish_toggle,
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -49,6 +88,12 @@ pub struct Config {
     pub media_backend: crate::win::media::Backend,
     /// Show the track name for a couple of seconds when the track changes.
     pub show_track_name: bool,
+    /// Whether family flourishes happen at all.
+    ///
+    /// A global on/off, separate from each colourway's `flourish` RATE - so turning them off does not
+    /// discard the per-colourway tuning, and turning them back on restores it exactly. Persisted so a
+    /// toggle survives a restart, because a setting that silently resets is worse than no setting.
+    pub flourishes: bool,
     /// Declared LAST because `toml` emits tables after root scalars; keeping struct order and file
     /// order the same is what lets the existing round-trip test keep proving serialisation works.
     pub hotkeys: Hotkeys,
@@ -72,6 +117,7 @@ impl Default for Config {
             autostart: false,
             media_backend: crate::win::media::Backend::default(),
             show_track_name: true,
+            flourishes: true,
             hotkeys: Hotkeys::default(),
         }
     }
@@ -260,5 +306,38 @@ mod tests {
                 std::fs::remove_file(&path).ok();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod slot_tests {
+    use super::*;
+
+    #[test]
+    fn every_hotkey_slot_has_its_own_field_and_none_alias() {
+        // THE guard on the trap this accessor replaced. `main` used
+        // `match i { 0 => .., 3 => .., _ => random_colourway }`, so a sixth slot would have written
+        // its chord into the fifth field - binding the new key would silently overwrite the shuffle
+        // key, and the report would be "my shuffle key changed by itself".
+        //
+        // Writing a distinct value through every slot and reading them all back is the only check that
+        // catches aliasing, because an aliased pair still round-trips individually.
+        let mut h = Hotkeys::default();
+        for i in 0..crate::win::hotkeys::SLOTS {
+            let field = h.slot_mut(i).unwrap_or_else(|| panic!("slot {i} has no field"));
+            *field = format!("KEY{i}");
+        }
+        for i in 0..crate::win::hotkeys::SLOTS {
+            assert_eq!(
+                h.slot(i),
+                Some(format!("KEY{i}").as_str()),
+                "slot {i} does not read back what was written - two slots share a field"
+            );
+        }
+        // And nothing past the end, so an out-of-range menu index is a no-op rather than a write to
+        // whichever field happened to be last.
+        assert_eq!(h.slot(crate::win::hotkeys::SLOTS), None);
+        assert!(h.slot_mut(crate::win::hotkeys::SLOTS).is_none());
+        assert_eq!(h.slot(999), None);
     }
 }

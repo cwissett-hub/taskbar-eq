@@ -45,11 +45,18 @@ pub enum Slot {
     RandomTheme,
     /// A different colourway inside the family already showing.
     RandomColourway,
+    /// Fire the current family's flourish now, rather than waiting for an exceptional hit.
+    ///
+    /// A flourish is deliberately rare - about one every thirty seconds at the shipped setting - which
+    /// makes it awkward to look at on purpose. This is the button that makes it demonstrable.
+    Flourish,
+    /// Turn flourishes on or off.
+    FlourishToggle,
 }
 
 /// How many hotkey slots there are. Used for the config array and the outcome array, so adding a
 /// slot cannot leave one of them behind.
-pub const SLOTS: usize = 5;
+pub const SLOTS: usize = 7;
 
 impl Slot {
     pub const ALL: [Slot; SLOTS] = [
@@ -58,6 +65,8 @@ impl Slot {
         Slot::PrevTrack,
         Slot::RandomTheme,
         Slot::RandomColourway,
+        Slot::Flourish,
+        Slot::FlourishToggle,
     ];
 
     /// The `RegisterHotKey` id. Small and fixed, well inside the documented 0x0000..0xBFFF range
@@ -69,6 +78,8 @@ impl Slot {
             Slot::PrevTrack => 3,
             Slot::RandomTheme => 4,
             Slot::RandomColourway => 5,
+            Slot::Flourish => 6,
+            Slot::FlourishToggle => 7,
         }
     }
 
@@ -82,7 +93,10 @@ impl Slot {
             Slot::PlayPause => Some(Action::PlayPause),
             Slot::NextTrack => Some(Action::NextTrack),
             Slot::PrevTrack => Some(Action::PrevTrack),
-            Slot::RandomTheme | Slot::RandomColourway => None,
+            Slot::RandomTheme
+            | Slot::RandomColourway
+            | Slot::Flourish
+            | Slot::FlourishToggle => None,
         }
     }
 
@@ -93,6 +107,8 @@ impl Slot {
             Slot::PrevTrack => "previous track",
             Slot::RandomTheme => "random theme",
             Slot::RandomColourway => "random colourway",
+            Slot::Flourish => "flourish now",
+            Slot::FlourishToggle => "flourishes on/off",
         }
     }
 }
@@ -290,6 +306,24 @@ fn backend() -> Backend {
 /// commands, where every press must count and so goes down an unbounded channel.
 static RANDOM_REQUEST: AtomicU8 = AtomicU8::new(0);
 
+/// Set when the flourish-toggle key is pressed. The main loop owns the config, so it does the
+/// persisting.
+static TOGGLE_REQUEST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Asks for the flourish on/off state to be flipped.
+///
+/// Public so the tray MENU and the hotkey take the same route: the flip has to persist to the config,
+/// which the main loop owns, and having two places do it is how the file and the runtime flag end up
+/// disagreeing.
+pub fn request_toggle() {
+    TOGGLE_REQUEST.store(true, Ordering::Relaxed);
+}
+
+/// Takes any pending flourish-toggle request.
+pub fn take_toggle_request() -> bool {
+    TOGGLE_REQUEST.swap(false, Ordering::Relaxed)
+}
+
 /// Takes any pending shuffle request.
 pub fn take_random_request() -> Option<crate::themes::pick::RandomKind> {
     match RANDOM_REQUEST.swap(0, Ordering::Relaxed) {
@@ -315,13 +349,25 @@ pub fn on_wm_hotkey(id: usize) -> bool {
             Some(h) => h.send(action, backend()),
             None => log::write(&format!("{}: no media thread to send to", slot.label())),
         },
-        None => {
-            // A local action. The main loop owns the theme list, so it does the work.
-            RANDOM_REQUEST.store(
-                if slot == Slot::RandomTheme { 1 } else { 2 },
-                Ordering::Relaxed,
-            );
-        }
+        None => match slot {
+            // The main loop owns the theme list, so it does the shuffling.
+            Slot::RandomTheme => RANDOM_REQUEST.store(1, Ordering::Relaxed),
+            Slot::RandomColourway => RANDOM_REQUEST.store(2, Ordering::Relaxed),
+            // These two go straight to the flourish machinery: no theme state is involved, and the
+            // request is consumed by whichever family is drawing.
+            Slot::Flourish => {
+                // Logged, unlike the shuffles, because a flourish is a one-shot visual event with no
+                // lasting trace: if the key is pressed and nothing is seen, the only way to tell a
+                // dead key from a family whose flourish is subtle is a line saying it was asked for.
+                log::write("flourish requested by hotkey");
+                crate::dsp::flourish::request();
+            }
+            Slot::FlourishToggle => TOGGLE_REQUEST.store(true, Ordering::Relaxed),
+            // Every remaining slot has a media action, so this arm is unreachable - but written out
+            // rather than left as a catch-all, so adding a slot with no action is a compile error
+            // instead of a silent no-op.
+            Slot::PlayPause | Slot::NextTrack | Slot::PrevTrack => {}
+        },
     }
     true
 }

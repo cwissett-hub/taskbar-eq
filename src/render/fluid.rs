@@ -1488,7 +1488,7 @@ mod tests {
         assert!(dark < f32::MAX, "the underglow envelope never returned to rest on real music");
         assert!(
             bright > dark + 12.0,
-            "the underglow only moved the tank from {dark:.1} to {bright:.1} luminance, which is not              a visible glow"
+            "the underglow only moved the tank from {dark:.1} to {bright:.1} luminance, which is not a visible glow"
         );
         // HONEST LIMIT OF THIS TEST: it does NOT detect the glow being drawn on the opaque canvas
         // instead of the bloomed light layer. That mutation was tried and this test still passed.
@@ -1505,7 +1505,7 @@ mod tests {
         let later = (peak + 12).min(series.len() - 1);
         assert!(
             series[later].0 > 0.55,
-            "12 frames after a hit the envelope is already down to {:.2}; that is a flash, and the              brief asked for a glow",
+            "12 frames after a hit the envelope is already down to {:.2}; that is a flash, and the brief asked for a glow",
             series[later].0
         );
     }
@@ -1554,7 +1554,7 @@ mod tests {
         }
         assert!(
             worst < 40.0,
-            "the body colour jumps {worst:.1} in a single frame, which is the hard plate change the              morph is supposed to have replaced"
+            "the body colour jumps {worst:.1} in a single frame, which is the hard plate change the morph is supposed to have replaced"
         );
     }
 

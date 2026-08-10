@@ -646,7 +646,7 @@ mod tests {
         let per_sec = strikes as f32 / (frames.len() as f32 / 99.0);
         assert!(
             (0.6..=3.5).contains(&per_sec),
-            "lightning fired {strikes} times over {:.1}s = {per_sec:.2}/s, which is outside the              range a listener would call musical",
+            "lightning fired {strikes} times over {:.1}s = {per_sec:.2}/s, which is outside the range a listener would call musical",
             frames.len() as f32 / 99.0
         );
     }
@@ -670,11 +670,11 @@ mod tests {
         let pct = hot as f32 / total as f32 * 100.0;
         assert!(
             pct < 2.0,
-            "the peak glow fires on {pct:.2}% of band-frames, which reads as constant flashing              rather than as a highlight"
+            "the peak glow fires on {pct:.2}% of band-frames, which reads as constant flashing rather than as a highlight"
         );
         assert!(
             pct > 0.05,
-            "the peak glow fires on {pct:.2}% of band-frames, so it never appears at all and the              feature is dead weight"
+            "the peak glow fires on {pct:.2}% of band-frames, so it never appears at all and the feature is dead weight"
         );
     }
 
@@ -697,7 +697,7 @@ mod tests {
         let q = |p: f32| resp[((resp.len() - 1) as f32 * p) as usize];
         assert!(
             q(0.5) > 0.40,
-            "the median band must drive most of a ridge, got {:.2} - it was 0.32 when the terrain              read as flat",
+            "the median band must drive most of a ridge, got {:.2} - it was 0.32 when the terrain read as flat",
             q(0.5)
         );
         assert!(q(0.9) > 0.90, "the loud tenth must reach near full height, got {:.2}", q(0.9));
@@ -746,7 +746,7 @@ mod tests {
         let centroid = wsum / w;
         assert!(
             centroid > midway as f64,
-            "a transient must land on the NEAR lines: centroid row {centroid:.1}, near half starts              at {midway} (ground {horizon}..{bottom})"
+            "a transient must land on the NEAR lines: centroid row {centroid:.1}, near half starts at {midway} (ground {horizon}..{bottom})"
         );
     }
 
@@ -889,7 +889,7 @@ mod tests {
         let differing = on.iter().zip(off.iter()).filter(|(a, b)| a != b).count();
         assert!(
             differing > 20,
-            "occlusion must visibly remove hidden ridges at a bunching perspective,              but only {differing} pixels changed"
+            "occlusion must visibly remove hidden ridges at a bunching perspective, but only {differing} pixels changed"
         );
     }
 

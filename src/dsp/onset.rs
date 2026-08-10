@@ -239,7 +239,7 @@ mod tests {
             // discriminating power.
             assert!(
                 gap <= 200.0 + 3.0 * dt,
-                "at dt={dt}ms the gap was {gap:.0}ms, not the configured 200ms - the refractory is                  being counted in frames"
+                "at dt={dt}ms the gap was {gap:.0}ms, not the configured 200ms - the refractory is being counted in frames"
             );
         }
     }
@@ -375,7 +375,7 @@ mod tests {
                 }
             }
             let (fr, br) = (flux_hits as f32 / secs, bass_hits as f32 / secs);
-            println!("{name:16} flux {fr:.2}/s   bass rise {br:.2}/s   ({secs:.1}s)");
+            println!("{name:16} flux {fr:.2}/s bass rise {br:.2}/s ({secs:.1}s)");
             assert!(
                 (0.3..=6.0).contains(&fr),
                 "{name}: the flux detector fires {fr:.2}/s, which is not a musical rate"

@@ -634,8 +634,8 @@ family = \"{fam}\"
         // tube.rs mattered so much.
         let toml = r##"
 schema = 1
-id     = "my-valves"
-name   = "My Valves"
+id = "my-valves"
+name = "My Valves"
 family = "tube"
 [look]
 sensitivity = 1.6
@@ -656,8 +656,8 @@ collar = "#123456"
     fn a_vaporwave_theme_round_trips_its_own_table() {
         let toml = r##"
 schema = 1
-id     = "my-sunset"
-name   = "My Sunset"
+id = "my-sunset"
+name = "My Sunset"
 family = "vapor"
 [vaporwave]
 amp    = 1.4
