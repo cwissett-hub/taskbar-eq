@@ -159,6 +159,8 @@ struct Ticker {
     /// where the first measurement of this bug ran out of road: the menu fix left two ~545ms stalls
     /// per menu and the cause had to be inferred from their cadence rather than read off.
     phases: Phases,
+    /// Recent UIA rediscovery timings in microseconds, summarised into the log once a minute.
+    rect_us: Vec<u32>,
 }
 
 /// Per-tick timings for the calls that can realistically block, all in milliseconds.
@@ -263,24 +265,99 @@ impl Ticker {
 
         self.phases = Phases::default();
 
-        // Re-discover the rect once a second - it moves with the weather text.
-        if self.rect_tick == 0 {
-            let t0 = std::time::Instant::now();
-            self.rediscover_rect();
-            self.phases.rect = t0.elapsed().as_millis() as u32;
-        }
-        self.rect_tick = (self.rect_tick + 1) % 60;
-
+        // BLOCKED? Then do as little as possible and go back to sleep.
+        //
+        // Checked BEFORE the rect rediscovery, which is the whole point: that is a UIA descendant
+        // enumeration of the taskbar costing a measured 70ms median and 188ms worst case, and it was
+        // running once a second even with a fullscreen game on top and nothing being drawn. See
+        // `win::shell_state::SUSPENDED`.
+        //
+        // The gate is deliberately NOT part of this test. `gate.is_visible()` is false during ordinary
+        // silence too, and suspending then would mean the meter took a quarter of a second to respond
+        // to the first beat of a track. Blocked means something is covering the taskbar, not that the
+        // music stopped.
+        // Two relaxed atomic loads. These used to be two cross-process shell calls made on this
+        // thread every frame - see `win::shell_state`.
         let t0 = std::time::Instant::now();
-        // Two relaxed atomic loads. These used to be two cross-process shell calls made on THIS
-        // thread every frame, and the stall log measured them at 280-380ms whenever the shell was
-        // busy - which is what a track change makes it. See `win::shell_state`.
         let inputs = win::visibility::Inputs {
             widget: self.rect,
             notification_state: win::shell_state::notification_state(),
             taskbar_visible: win::shell_state::taskbar_visible(),
         };
         self.phases.vis = t0.elapsed().as_millis() as u32;
+
+        // Only the SHELL can suspend us. NOT `should_show`, which is also false when the widget rect
+        // is unknown - and since the suspend path skips the rect rediscovery, suspending on that would
+        // deadlock: no rect, so blocked, so no rediscovery, so no rect, for ever. See
+        // `visibility::shell_blocks`.
+        let blocked =
+            win::visibility::shell_blocks(inputs.notification_state, inputs.taskbar_visible);
+        if blocked != win::shell_state::suspended() {
+            // Logged on the TRANSITION only, so the log stays useful rather than becoming a heartbeat.
+            // This is the line that will say whether a report of interference on another machine is
+            // this state or something else entirely.
+            log::write(if blocked {
+                "suspending: a fullscreen app or hidden taskbar is covering the overlay"
+            } else {
+                "resuming: the taskbar is visible again"
+            });
+        }
+        win::shell_state::set_suspended(blocked);
+        if blocked {
+            // Taken off screen, not merely left undrawn: a topmost layered window can keep a game out
+            // of exclusive fullscreen even with stale content on it.
+            //
+            // A failure here is not worth acting on: it means the window has already gone, which is
+            // the same outcome, and the alternative - logging once per tick while suspended - would
+            // fill the log with a heartbeat.
+            let _ = self.overlay.hide();
+            return;
+        }
+
+        // Re-discover the rect once a second - it moves with the weather text.
+        if self.rect_tick == 0 {
+            let t0 = std::time::Instant::now();
+            self.rediscover_rect();
+            let us = t0.elapsed().as_micros() as u32;
+            self.phases.rect = us / 1000;
+            // Kept, and reported once a minute rather than per call.
+            //
+            // This is a UIA descendant enumeration of the taskbar - the single most expensive thing
+            // the app does, and the reason the suspend path skips it. An out-of-process probe measured
+            // it at a 70ms median, but the app's own figure is what matters: it runs in a long-lived
+            // MTA with warm COM, and the whole-process CPU (4% of one core) says the real cost must be
+            // far lower than the probe suggested. Guessing either way would be worse than logging it,
+            // and on a machine that reports interference this line is the first thing to read.
+            self.rect_us.push(us);
+            if self.rect_us.len() >= 60 {
+                let mut v = std::mem::take(&mut self.rect_us);
+                v.sort_unstable();
+                // Samples over two seconds are discarded as CLOCK ARTEFACTS, not slow calls.
+                // `Instant::elapsed` keeps counting while the machine is asleep, so one call spanning a
+                // suspend/resume is recorded as minutes: the first run of this logged a 196,763ms
+                // maximum, which then dragged the mean to "333% of one core". A UIA call genuinely
+                // taking two seconds would be a different and much louder problem.
+                let real: Vec<u32> = v.iter().copied().filter(|us| *us < 2_000_000).collect();
+                let dropped = v.len() - real.len();
+                if !real.is_empty() {
+                    let med = real[real.len() / 2];
+                    log::write(&format!(
+                        "placement (UIA) over {} calls: min {:.1}ms median {:.1}ms max {:.1}ms;                          median blocks the render thread for {:.1}% of every second{}",
+                        real.len(),
+                        real[0] as f32 / 1000.0,
+                        med as f32 / 1000.0,
+                        real[real.len() - 1] as f32 / 1000.0,
+                        med as f32 / 1000.0 / 10.0,
+                        if dropped > 0 {
+                            format!(" ({dropped} sample(s) discarded as clock artefacts)")
+                        } else {
+                            String::new()
+                        }
+                    ));
+                }
+            }
+        }
+        self.rect_tick = (self.rect_tick + 1) % 60;
 
         // Clamped: a debugger pause or a suspend/resume can hand back an enormous interval, which
         // would otherwise jump the gate straight through its hide delay and snap the scroll phase
@@ -297,6 +374,8 @@ impl Ticker {
         self.smoother.update(&self.latest.bands);
 
         let t0 = std::time::Instant::now();
+        // The shell part was decided above and returned early; what is left is whether the rect is
+        // known and plausible, and whether the audio gate is open.
         if win::visibility::should_show(&inputs) && self.gate.is_visible() {
             let r = self.rect.unwrap();
             let mut canvas = Canvas::new(r.w, r.h);
@@ -880,6 +959,11 @@ fn main() -> Result<()> {
     // whenever the shell was busy, which is what a track change makes it. See `win::shell_state`.
     win::shell_state::start();
 
+    // Watches the app's own handle count. A long-lived instance was measured at 18,962 threads and
+    // 131,454 handles, degrading a fullscreen app from 160fps to 30fps with input loss; this bounds
+    // that and records the growth curve. See `win::health`.
+    win::health::start();
+
     let watcher = themes::watch::Watcher::new();
 
     let theme = all_themes
@@ -911,6 +995,7 @@ fn main() -> Result<()> {
             rect_misses: 0,
             time_s: 0.0,
             phases: Phases::default(),
+            rect_us: Vec::new(),
             banner: None,
             track_seq: win::media::now_playing().1,
             show_track_name: cfg.show_track_name,
@@ -1180,7 +1265,10 @@ fn main() -> Result<()> {
         // The tick itself. Also driven by the tray window's WM_TIMER, which is what keeps the
         // meter alive while the menu above is blocking this loop.
         tick_now();
-        std::thread::sleep(std::time::Duration::from_millis(16));
+        // 16ms normally, 250ms while a fullscreen app is on top - see `win::shell_state::SUSPENDED`.
+        std::thread::sleep(std::time::Duration::from_millis(
+            win::shell_state::tick_interval_ms() as u64,
+        ));
     }
 
     // Nothing is left holding a machine-wide key after the app closes.

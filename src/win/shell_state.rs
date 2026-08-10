@@ -45,6 +45,22 @@ static NOTIFICATION_STATE: AtomicI32 = AtomicI32::new(0);
 static TASKBAR_VISIBLE: AtomicBool = AtomicBool::new(true);
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
+/// True while the overlay is BLOCKED - a fullscreen or presentation-mode app is on top, or the taskbar
+/// is not on screen.
+///
+/// **The overlay has always stopped DRAWING in this state; it did not stop working.** It kept
+/// rediscovering its rect once a second, and that costs a fresh `IUIAutomation` instance plus a full
+/// descendant enumeration of the taskbar with two cross-process property reads per element. Measured
+/// on this machine: median 70ms, worst 188ms, or about 7% of one core spent making explorer.exe do
+/// accessibility work every single second - while the user was looking at a fullscreen game.
+///
+/// Reported as "it seemed to cause massive stuttering in full screen apps while it was in the
+/// background. I think we need the tool to sleep while there is a fullscreen application on top."
+///
+/// So this is the flag that makes it actually sleep: no UIA, no drawing, no DSP, and both tick drivers
+/// slow right down. Set by the render tick, read by the tick and by the two things that wake it.
+static SUSPENDED: AtomicBool = AtomicBool::new(false);
+
 /// Seeds the state and starts the poller. Idempotent.
 ///
 /// Idempotent because `--diagnose` and the render loop both live in this process and calling it
@@ -79,6 +95,32 @@ pub fn notification_state() -> i32 {
 pub fn taskbar_visible() -> bool {
     TASKBAR_VISIBLE.load(Ordering::Relaxed)
 }
+
+/// Records whether the overlay is currently blocked. See `SUSPENDED`.
+pub fn set_suspended(v: bool) {
+    SUSPENDED.store(v, Ordering::Relaxed);
+}
+
+/// True while the overlay is blocked and the app should be doing as little as possible.
+pub fn suspended() -> bool {
+    SUSPENDED.load(Ordering::Relaxed)
+}
+
+/// How long a tick driver should wait before waking the render loop again.
+///
+/// 16ms normally; 250ms while suspended, which is 15 times fewer wakeups. 250 rather than something
+/// longer because it is also the worst-case delay before the meter comes back when the game exits, and
+/// a quarter of a second is imperceptible there while being a real reduction in interference.
+pub fn tick_interval_ms() -> u32 {
+    if suspended() {
+        SUSPENDED_TICK_MS
+    } else {
+        ACTIVE_TICK_MS
+    }
+}
+
+pub const ACTIVE_TICK_MS: u32 = 16;
+pub const SUSPENDED_TICK_MS: u32 = 250;
 
 #[cfg(test)]
 mod tests {
@@ -141,6 +183,49 @@ mod tests {
         // Consumed so the loop cannot be optimised away entirely.
         assert!(acc >= 0 || acc < 0);
         assert!(ms < 500, "400k reads took {ms}ms - these are not atomic loads any more");
+    }
+
+    #[test]
+    fn a_fullscreen_app_suspends_the_app_and_slows_its_wakeups() {
+        // The policy the reported stutter depends on, end to end: the shell says a fullscreen app is
+        // up, the visibility rule says do not show, and the tick interval goes from 16ms to 250ms.
+        //
+        // The costly part - skipping the once-a-second UIA enumeration - is structural rather than
+        // testable here: the tick returns before `rediscover_rect` is reached. That call was measured
+        // at a 70ms median and 188ms worst case, which is what made this worth doing.
+        use super::super::visibility::{should_show, Inputs, QUNS_FULLSCREEN, QUNS_PRESENTATION};
+        let widget = Some(crate::geom::Rect { x: 1425, y: 1140, w: 190, h: 60 });
+
+        set_suspended(false);
+        assert_eq!(tick_interval_ms(), ACTIVE_TICK_MS, "an unblocked overlay ticks at the fast rate");
+
+        for state in [QUNS_FULLSCREEN, QUNS_PRESENTATION] {
+            let blocked = !should_show(&Inputs {
+                widget,
+                notification_state: state,
+                taskbar_visible: true,
+            });
+            assert!(blocked, "notification state {state} must block the overlay");
+            set_suspended(blocked);
+            assert_eq!(
+                tick_interval_ms(),
+                SUSPENDED_TICK_MS,
+                "a blocked overlay must slow its wakeups right down"
+            );
+        }
+
+        // A hidden taskbar blocks too - the other way the overlay has nowhere to be.
+        let blocked = !should_show(&Inputs { widget, notification_state: 0, taskbar_visible: false });
+        assert!(blocked, "a hidden taskbar must block the overlay");
+
+        // And it comes back.
+        set_suspended(false);
+        assert_eq!(tick_interval_ms(), ACTIVE_TICK_MS);
+
+        // The two intervals have to be far enough apart to matter and close enough that coming back is
+        // imperceptible: fifteen times fewer wakeups, and a quarter of a second at worst to resume.
+        assert!(SUSPENDED_TICK_MS >= ACTIVE_TICK_MS * 8, "suspending barely reduces the wakeups");
+        assert!(SUSPENDED_TICK_MS <= 400, "resuming would take long enough to notice");
     }
 
     #[test]

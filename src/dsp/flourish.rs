@@ -166,6 +166,11 @@ impl Envelope {
     }
 
     /// The current level without advancing, for a family that draws in more than one pass.
+    ///
+    /// Unused so far - the three families done to date each read the level once. Kept because a family
+    /// that draws print and light on separate layers needs it, and re-deriving it in the caller is how
+    /// two passes end up disagreeing about the same frame.
+    #[allow(dead_code)]
     pub fn level(&self) -> f32 {
         if self.level.is_finite() {
             self.level.clamp(0.0, 1.0)

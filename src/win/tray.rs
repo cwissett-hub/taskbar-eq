@@ -545,7 +545,11 @@ pub fn install_tick(hwnd: HWND, interval_ms: u32, tick: fn()) {
                     return;
                 }
             }
-            std::thread::sleep(std::time::Duration::from_millis(interval_ms.max(1) as u64));
+            // The suspended interval, not the installed one, while a fullscreen app is on top:
+            // otherwise this thread keeps waking the main thread sixty times a second to do nothing,
+            // which is exactly the interference the suspend exists to remove.
+            let wait = crate::win::shell_state::tick_interval_ms().max(interval_ms.min(1)).max(1);
+            std::thread::sleep(std::time::Duration::from_millis(wait as u64));
         }
     });
 

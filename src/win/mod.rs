@@ -8,6 +8,7 @@ pub mod hotkeys;
 pub mod icon;
 pub mod media;
 pub mod overlay;
+pub mod health;
 pub mod placement;
 pub mod shell_state;
 pub mod tray;

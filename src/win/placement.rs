@@ -319,6 +319,72 @@ pub fn taskbar_visible() -> bool {
 }
 
 #[cfg(test)]
+mod cost_tests {
+    /// What the once-a-second UIA rediscovery actually costs.
+    ///
+    /// Run: cargo test --release probe_uia_cost -- --ignored --nocapture
+    ///
+    /// Motivated by a report that the overlay caused "massive stuttering in full screen apps while it
+    /// was in the background". The render loop skips DRAWING when a fullscreen app is up, but it kept
+    /// doing this - a fresh `IUIAutomation` instance, a full descendant enumeration of the taskbar, and
+    /// two cross-process property fetches per element - once a second regardless.
+    #[test]
+    #[ignore]
+    fn probe_uia_cost() {
+        // COM MUST be initialised, in the same apartment the app uses. Without it `CoCreateInstance`
+        // fails, `taskbar_elements` returns Err, the caller's `unwrap_or_default()` hands back an empty
+        // vector and the probe cheerfully times the FAILURE path - the first run of this reported
+        // "0 elements, median 0.1ms", which is a measurement of nothing at all.
+        unsafe {
+            let _ = windows::Win32::System::Com::CoInitializeEx(
+                None,
+                windows::Win32::System::Com::COINIT_MULTITHREADED,
+            );
+        }
+        let mut times = Vec::new();
+        for _ in 0..15 {
+            let t0 = std::time::Instant::now();
+            let els = super::taskbar_elements().expect("UIA must work, or this measures nothing");
+            times.push((t0.elapsed().as_micros() as f64 / 1000.0, els.len()));
+            std::thread::sleep(std::time::Duration::from_millis(60));
+        }
+        let mut ms: Vec<f64> = times.iter().map(|(m, _)| *m).collect();
+        ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        println!(
+            "taskbar_elements(): {} elements, min {:.1}ms  median {:.1}ms  max {:.1}ms",
+            times[0].1,
+            ms[0],
+            ms[ms.len() / 2],
+            ms[ms.len() - 1]
+        );
+        println!("  at once per second that is {:.2}% of one core", ms[ms.len() / 2] / 1000.0 * 100.0);
+
+        // The two calls the shell-state poller makes, for comparison. If these are cheap the poller can
+        // keep running while suspended - and it has to, because it is what notices the fullscreen app
+        // going away.
+        let bench = |name: &str, f: &dyn Fn()| {
+            let mut v = Vec::new();
+            for _ in 0..200 {
+                let t0 = std::time::Instant::now();
+                f();
+                v.push(t0.elapsed().as_micros() as f64);
+            }
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            println!("  {name}: median {:.0}us  max {:.0}us", v[v.len() / 2], v[v.len() - 1]);
+        };
+        bench("SHQueryUserNotificationState", &|| {
+            let _ = super::notification_state();
+        });
+        bench("taskbar_visible", &|| {
+            let _ = super::taskbar_visible();
+        });
+        bench("taskbar_rect", &|| {
+            let _ = super::taskbar_rect();
+        });
+    }
+}
+
+#[cfg(test)]
 mod fallback_tests {
     use super::*;
 
