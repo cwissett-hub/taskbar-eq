@@ -535,6 +535,7 @@ mod newest_dump {
             ("tube", "tube-soviet"),
             ("nixie", "nixie-orange"),
             ("scope", "scope-amber"),
+            ("pantone", "pantone-spectrum"),
         ];
 
         // A waveform, for the families that read one. The phase WALKS between frames, which the scope

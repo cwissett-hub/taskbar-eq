@@ -873,14 +873,30 @@ impl Canvas {
     ///   a dark cyan and a dark red band down the panel's own left and right edges - `shift`
     ///   columns of fringe belonging to no mark at all. Those pixels keep their own channel.
     pub fn chromatic_aberration(&mut self, shift: i32) {
+        self.misregister(shift, 0);
+    }
+
+    /// The same effect with the plates free to slip in BOTH axes: `misregister(n, 0)` is
+    /// byte-identical to `chromatic_aberration(n)`, which a test asserts.
+    ///
+    /// The vertical axis exists for the Pantone family's flourish. A press misregisters in whatever
+    /// direction the sheet fed wrong, and vertical is the classic one - but the reason it is needed
+    /// here is narrower than authenticity: that family ALREADY fringes horizontally, widening with
+    /// energy, so a flourish that only pushed the horizontal shift further would read as louder music
+    /// rather than as a plate slipping. A vertical slip is unambiguously a different event.
+    ///
+    /// Every invariant documented on `chromatic_aberration` above holds unchanged, and for the same
+    /// reasons - the green plate never moves, alpha never moves, transparent stays transparent, and a
+    /// sample from outside the canvas leaves the destination's own channel alone.
+    pub fn misregister(&mut self, dx: i32, dy: i32) {
         let (w, h) = (self.w, self.h);
-        if shift == 0 || w <= 0 || h <= 0 {
+        if (dx == 0 && dy == 0) || w <= 0 || h <= 0 {
             return;
         }
-        // Bounded before it reaches any address arithmetic: `x + shift` at an i32::MAX shift
-        // overflows, which panics in debug and wraps in release. Anything beyond the canvas width
-        // samples nothing anyway, so clamping cannot change the result.
-        let shift = shift.clamp(-w, w);
+        // Bounded before it reaches any address arithmetic: `x + dx` at an i32::MAX shift overflows,
+        // which panics in debug and wraps in release. Anything beyond the canvas samples nothing
+        // anyway, so clamping cannot change the result.
+        let (dx, dy) = (dx.clamp(-w, w), dy.clamp(-h, h));
         let src = self.px.clone();
         for y in 0..h {
             let row = y * w;
@@ -891,19 +907,19 @@ impl Canvas {
                     continue; // transparent stays transparent
                 }
                 let own = Self::unpack(here);
-                let plate = |sx: i32| -> Option<Rgba> {
-                    if sx < 0 || sx >= w {
+                let plate = |sx: i32, sy: i32| -> Option<Rgba> {
+                    if sx < 0 || sx >= w || sy < 0 || sy >= h {
                         return None;
                     }
-                    let p = src[(row + sx) as usize];
+                    let p = src[(sy * w + sx) as usize];
                     if p >> 24 == 0 {
                         None
                     } else {
                         Some(Self::unpack(p))
                     }
                 };
-                let r = plate(x + shift).map(|c| c.r).unwrap_or(own.r);
-                let b = plate(x - shift).map(|c| c.b).unwrap_or(own.b);
+                let r = plate(x + dx, y + dy).map(|c| c.r).unwrap_or(own.r);
+                let b = plate(x - dx, y - dy).map(|c| c.b).unwrap_or(own.b);
                 self.px[i] = Self::pack(Rgba::new(r, own.g, b, own.a));
             }
         }
@@ -1007,6 +1023,107 @@ impl Canvas {
     #[allow(dead_code)]
     pub fn clip_outside_rect(&mut self, x: i32, y: i32, w: i32, h: i32) {
         self.clip_to_rounded_rect(x, y, w, h, 0);
+    }
+}
+
+#[cfg(test)]
+mod misregister_tests {
+    use super::*;
+
+    /// A panel with marks on it, so the plates have edges to fringe against.
+    fn plate_scene() -> Canvas {
+        let mut c = Canvas::new(40, 24);
+        c.fill_rect(0, 0, 40, 24, Rgba::new(20, 24, 30, 255));
+        for k in 0..5 {
+            c.fill_rect(3 + k * 8, 4 + k, 5, 12 - k, Rgba::new(230, 90, 60, 255));
+        }
+        c.fill_rect(0, 20, 40, 2, Rgba::new(240, 240, 230, 255));
+        c
+    }
+
+    #[test]
+    fn a_purely_horizontal_misregister_is_the_old_aberration_exactly() {
+        // `chromatic_aberration` now delegates here. Byte-identical rather than merely similar,
+        // because five colourways set `aberration` and their goldens encode the old output - a
+        // refactor that shifted a channel by one would be invisible to any looser assertion.
+        for shift in [-3i32, -1, 1, 2, 5] {
+            let (mut a, mut b) = (plate_scene(), plate_scene());
+            a.chromatic_aberration(shift);
+            b.misregister(shift, 0);
+            assert_eq!(a.bits(), b.bits(), "shift {shift} disagreed");
+        }
+    }
+
+    #[test]
+    fn the_plates_move_in_opposite_directions_and_green_stays_put() {
+        // The three-plate model is the whole point: red goes one way, blue the other, green does not
+        // move at all. A test that only checked "the pixels changed" would pass on a plain vertical
+        // blur, which is not a misregistration.
+        let before = plate_scene();
+        let mut after = plate_scene();
+        after.misregister(0, 2);
+        let (mut moved_r, mut moved_g, mut moved_b) = (0, 0, 0);
+        for y in 0..24 {
+            for x in 0..40 {
+                let (p, q) = (before.get(x, y), after.get(x, y));
+                if p.r != q.r {
+                    moved_r += 1;
+                }
+                if p.g != q.g {
+                    moved_g += 1;
+                }
+                if p.b != q.b {
+                    moved_b += 1;
+                }
+            }
+        }
+        assert_eq!(moved_g, 0, "the green plate moved: {moved_g} pixels");
+        assert!(moved_r > 20 && moved_b > 20, "the plates barely moved: r={moved_r} b={moved_b}");
+        // And in OPPOSITE directions: the red plate here should match the source two rows DOWN, the
+        // blue plate two rows UP.
+        let sample = |c: &Canvas, dy: i32, chan: usize| -> u32 {
+            let mut acc = 0u32;
+            for y in 4..18 {
+                for x in 0..40 {
+                    let p = c.get(x, y);
+                    let q = before.get(x, y + dy);
+                    let (pv, qv) = match chan {
+                        0 => (p.r, q.r),
+                        _ => (p.b, q.b),
+                    };
+                    acc += (pv as i32 - qv as i32).unsigned_abs();
+                }
+            }
+            acc
+        };
+        assert!(
+            sample(&after, 2, 0) < sample(&after, -2, 0),
+            "the red plate moved the wrong way"
+        );
+        assert!(
+            sample(&after, -2, 1) < sample(&after, 2, 1),
+            "the blue plate moved the wrong way"
+        );
+    }
+
+    #[test]
+    fn a_slip_past_the_edge_of_the_canvas_keeps_alpha_and_never_panics() {
+        // Same invariant the horizontal version documents: alpha must not move, or the overlay gets a
+        // hole in it and the Windows widget shows through.
+        for (dx, dy) in [(0, 99), (99, 0), (-99, -99), (i32::MAX, i32::MIN)] {
+            let before = plate_scene();
+            let mut after = plate_scene();
+            after.misregister(dx, dy);
+            for y in 0..24 {
+                for x in 0..40 {
+                    assert_eq!(
+                        before.get(x, y).a,
+                        after.get(x, y).a,
+                        "alpha moved at {x},{y} for ({dx},{dy})"
+                    );
+                }
+            }
+        }
     }
 }
 

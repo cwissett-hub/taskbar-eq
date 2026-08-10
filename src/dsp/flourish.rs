@@ -101,6 +101,9 @@ pub fn enabled() -> bool {
 /// Fires on a rare, exceptional hit. One per family instance.
 #[derive(Default)]
 pub struct Trigger {
+    /// Set by `force_next`, cleared by the next `update`. Test-only - see there.
+    #[cfg(test)]
+    forced: bool,
     onset: Flux,
     recent: [f32; WINDOW],
     n: usize,
@@ -114,8 +117,31 @@ impl Trigger {
     /// `strength` is `Theme::flourish`: 0 disables it entirely, and larger values fire more often by
     /// lowering the multiple of the median a hit has to reach. Values above 1 are clamped - the
     /// interesting range is all below it, and letting it run away would defeat `MIN_GAP_MS`.
+    /// Makes the next `update` on THIS trigger fire, whatever the audio and the colourway say.
+    ///
+    /// The deterministic way to test a flourish: no process-global state, so no lock and no race with
+    /// whatever else the suite is running. See the note inside `update`.
+    #[cfg(test)]
+    pub fn force_next(&mut self) {
+        self.forced = true;
+    }
+
     pub fn update(&mut self, levels: &[f32], dt_ms: f32, strength: f32) -> bool {
         let dt = if dt_ms.is_finite() { dt_ms.clamp(0.0, 200.0) } else { 16.7 };
+        // A test firing THIS trigger, ahead of everything including the manual request.
+        //
+        // Tests must use this and not `request()`. `REQUEST` is one process-global atomic and every
+        // family's `draw` calls `take_request()`, so in a parallel suite - which is how cargo runs
+        // tests, as threads inside one process - a request posted by one test is routinely consumed by
+        // an unrelated test that happens to be drawing a frame at that moment. That is not
+        // hypothetical: it is why a fixture built on `request()` measured a flourish that had visibly
+        // fired, at the right offset, and still compared byte-identical. `test_guard()` cannot fix it,
+        // because it only serialises the tests that take the lock, and every drawing test is a thief.
+        #[cfg(test)]
+        if std::mem::take(&mut self.forced) {
+            self.since_ms = 0.0;
+            return true;
+        }
         self.since_ms += dt;
         if !self.since_ms.is_finite() {
             self.since_ms = MIN_GAP_MS;

@@ -173,6 +173,24 @@ fn screened(x: i32, y: i32, coverage: f32) -> bool {
 /// wall that just looks like a seam between two halves.
 const DIAG_SLOPE: f32 = 2.0;
 
+/// The flourish: a plate slips out of register and creeps back.
+///
+/// The family already misregisters horizontally, and widens that fringe with energy - so pushing the
+/// horizontal shift further would read as the music getting louder, not as a press going wrong. The
+/// slip is therefore mostly VERTICAL, which is an axis nothing else in this family uses, plus 1px of
+/// horizontal so it reads as a sheet that has physically moved rather than as a scanline artefact.
+///
+/// 3px vertical at a 60px panel is a twentieth of the height and about half a bar's cap - big enough
+/// to be unmistakable, small enough that the bars still read as bars. At 5 the panel came apart into
+/// three coloured ghosts and stopped being a chart.
+///
+/// 900ms, and it decays rather than snapping: a plate that springs back instantly reads as one dropped
+/// frame, which at 60fps most people simply do not see. The decay is what makes it read as a press
+/// running out of register and being brought back in.
+const MISREG_X: f32 = 1.0;
+const MISREG_Y: f32 = 3.0;
+const MISREG_MS: f32 = 900.0;
+
 /// Sweeps of the glitch slice per second.
 ///
 /// Slow: the slice is a fault, and a fault that recurs 10 times a second is a strobe. 0.55Hz gives
@@ -181,6 +199,9 @@ const GLITCH_HZ: f32 = 0.55;
 
 #[derive(Default)]
 pub struct Pantone {
+    /// The flourish: the plates slip out of register. See `MISREG_Y`.
+    flourish: crate::dsp::flourish::Trigger,
+    slip: crate::dsp::flourish::Envelope,
     /// Fast-falling peak hold per column, in displayed-response units.
     ///
     /// A `Vec` because `bar_count` reaches 48 and `#[derive(Default)]` has no impl for arrays that
@@ -442,9 +463,22 @@ impl Family for Pantone {
         // degrades as it is driven harder is the "failing panel" half of this look; the 0.55 floor
         // keeps the fringe visible at silence so the colourway's identity does not depend on the
         // music.
-        if t.aberration.is_finite() && t.aberration != 0.0 {
-            let shift = (t.aberration * (0.55 + 0.75 * energy)).round();
-            c.chromatic_aberration(shift as i32);
+        //
+        // THE FLOURISH adds to the same offset rather than running a second pass. Two passes would
+        // sample the first pass's own output, so the second one's red plate would be fringing against
+        // an already-fringed image - the plates would separate by more than either shift asked for and
+        // the amount would depend on their order.
+        let fired = self.flourish.update(&d.levels, d.dt_ms, t.flourish);
+        let slip = self.slip.update(fired, d.dt_ms, MISREG_MS);
+        let base = if t.aberration.is_finite() && t.aberration != 0.0 {
+            t.aberration * (0.55 + 0.75 * energy)
+        } else {
+            0.0
+        };
+        let dx = (base + slip * MISREG_X).round() as i32;
+        let dy = (slip * MISREG_Y).round() as i32;
+        if dx != 0 || dy != 0 {
+            c.misregister(dx, dy);
         }
     }
 }
@@ -453,6 +487,142 @@ impl Family for Pantone {
 mod tests {
     use super::*;
     use crate::themes::builtin;
+
+    /// The vertical lag at which one channel of `on` best matches the same channel of `off`.
+    ///
+    /// This measures the plate DISPLACEMENT itself rather than any consequence of it, which matters
+    /// because the consequences are all ambiguous at this size: "more pixels where red and blue
+    /// disagree" is also what a wider horizontal fringe produces, and this family already has one of
+    /// those that grows with the music.
+    fn plate_lag(on: &Canvas, off: &Canvas, chan: usize) -> i32 {
+        let (w, h) = (on.width(), on.height());
+        let mut best = (u64::MAX, 0i32);
+        for lag in -6..=6 {
+            let mut acc = 0u64;
+            for y in 8..(h - 8) {
+                for x in 4..(w - 4) {
+                    let p = on.get(x, y);
+                    let q = off.get(x, y + lag);
+                    let (a, b) = match chan {
+                        0 => (p.r, q.r),
+                        1 => (p.g, q.g),
+                        _ => (p.b, q.b),
+                    };
+                    acc += (a as i32 - b as i32).unsigned_abs() as u64;
+                }
+            }
+            if acc < best.0 {
+                best = (acc, lag);
+            }
+        }
+        best.1
+    }
+
+    /// Renders the family with and without a flourish, from byte-identical audio.
+    ///
+    /// Fired by forcing the trigger directly. Two reasons, and the second one cost an hour:
+    ///
+    /// Not the audio firing sequence, because that sequence is a loud transient and this family's
+    /// fringe width and glitch amplitude both follow energy - the arms would differ in ways that have
+    /// nothing to do with the flourish.
+    ///
+    /// Not `flourish::request()` either, because `REQUEST` is a single process-global atomic that
+    /// EVERY family's `draw` consumes. In a parallel suite an unrelated drawing test eats the request,
+    /// and the symptom is bizarre: the effect provably fires with the right offset when the test runs
+    /// alone, and the two canvases compare byte-identical when the whole suite runs.
+    fn slip_pair(after: usize, aberration: f32) -> (Canvas, Canvas) {
+        let mut t = builtin::all()
+            .into_iter()
+            .find(|t| t.family == "pantone")
+            .expect("no pantone colourway");
+        // Every shipped colourway in this family carries a standing horizontal aberration, so the
+        // amount is a parameter: 0 isolates the vertical slip, and the colourway's own value is the
+        // production case, where the flourish has to remain legible ON TOP of a fringe that is
+        // already there.
+        t.aberration = aberration;
+        t.flourish = crate::themes::DEFAULT_FLOURISH;
+        let run = |fire: bool| -> Canvas {
+            let mut p = Pantone::default();
+            let mut c = Canvas::new(190, 60);
+            let mut d = flat(0.45);
+            d.dt_ms = 16.7;
+            for _ in 0..20 {
+                p.draw(&mut c, &t, &d);
+            }
+            if fire {
+                p.flourish.force_next();
+            }
+            for _ in 0..after {
+                p.draw(&mut c, &t, &d);
+            }
+            c
+        };
+        (run(true), run(false))
+    }
+
+    #[test]
+    fn the_flourish_slips_a_plate_out_of_register_vertically() {
+        // Both arms, at one frame after firing where the envelope is full and the offset is its peak.
+        // The second arm is the one that matters in production: the vertical lag must still read
+        // cleanly with the colourway's own horizontal fringe underneath it.
+        let standing = builtin::all()
+            .into_iter()
+            .find(|t| t.family == "pantone")
+            .map(|t| t.aberration)
+            .unwrap();
+        assert!(standing != 0.0, "this test assumes the family fringes by default");
+        // The expected lag is a LITERAL 3, not `MISREG_Y as i32`. Written against the constant, this
+        // test passed with `MISREG_Y` mutated to zero - the expectation moved with the thing it was
+        // supposed to be checking, which is the most comfortable kind of vacuous test.
+        assert_eq!(
+            MISREG_Y, 3.0,
+            "the slip depth changed; update the expected plate lag in this test deliberately"
+        );
+        for ab in [0.0, standing] {
+            let (on, off) = slip_pair(1, ab);
+            assert_ne!(on.bits(), off.bits(), "the flourish changed nothing at aberration {ab}");
+            assert_eq!(
+                plate_lag(&on, &off, 0),
+                3,
+                "the red plate did not slip down 3px at aberration {ab}"
+            );
+            assert_eq!(
+                plate_lag(&on, &off, 2),
+                -3,
+                "the blue plate did not slip up 3px at aberration {ab}"
+            );
+            assert_eq!(plate_lag(&on, &off, 1), 0, "the green plate moved at aberration {ab}");
+        }
+    }
+
+    #[test]
+    fn the_slip_lasts_long_enough_to_be_seen() {
+        // A separate test because it catches a separate failure. `Envelope::update` sets the level to
+        // 1.0 on the firing frame whatever its decay is set to, so the peak-offset test above passes
+        // with `MISREG_MS` mutated to 1ms - an effect that would exist for a single frame at 60fps and
+        // be invisible. Measured a third of a second in, where a 900ms envelope still has about 63% of
+        // its level and the offset still rounds to 2px.
+        let (on, off) = slip_pair(20, 0.0);
+        assert!(
+            plate_lag(&on, &off, 0) > 0,
+            "the slip was gone 334ms after firing, so nobody would see it"
+        );
+    }
+
+    #[test]
+    fn the_plates_come_back_into_register() {
+        // 60 frames is 1.0s against a 900ms envelope, so the slip has fully expired. Byte-identical,
+        // which also proves the flourish leaves no residue in the family's own state.
+        let standing = builtin::all()
+            .into_iter()
+            .find(|t| t.family == "pantone")
+            .map(|t| t.aberration)
+            .unwrap();
+        for ab in [0.0, standing] {
+            let (on, off) = slip_pair(60, ab);
+            assert_eq!(on.bits(), off.bits(), "the plates never came back into register at {ab}");
+        }
+    }
 
     fn flat(level: f32) -> FrameData {
         let mut d = FrameData::default();

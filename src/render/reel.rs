@@ -802,14 +802,17 @@ mod tests {
         for _ in 0..400 {
             r.draw(&mut c, &t, &d);
         }
-        // Fired by REQUEST rather than by the audio firing sequence, which is not a shortcut - it is
-        // the only way to hold the audio constant. The firing sequence is a loud transient, so it
-        // drives `omega` and `sag` hard in BOTH arms and they then decay back over ~300ms; measured,
-        // that transient alone gave the no-flourish arm 0.29 of rate spread and 0.46 of sag spread,
-        // swamping the effect under test. A request fires past the rarity check and past a strength of
-        // zero, so both arms see byte-identical, unchanging input.
+        // Fired by forcing this trigger, rather than with the audio firing sequence, which is not a
+        // shortcut - it is the only way to hold the audio constant. The firing sequence is a loud
+        // transient, so it drives `omega` and `sag` hard in BOTH arms and they then decay back over
+        // ~300ms; measured, that transient alone gave the no-flourish arm 0.29 of rate spread and 0.46
+        // of sag spread, swamping the effect under test.
+        //
+        // `flourish::request()` was used here first and is racy in a parallel suite - `REQUEST` is one
+        // process-global atomic and every family's `draw` consumes it, so an unrelated drawing test
+        // eats it. See the note in `Trigger::update`.
         if fire {
-            crate::dsp::flourish::request();
+            r.flourish.force_next();
             r.draw(&mut c, &t, &d);
         }
         let (mut steps, mut sags) = (Vec::new(), Vec::new());
@@ -849,7 +852,6 @@ mod tests {
         // 470ms of recovery past the end of it. 132 frames - exactly the envelope - was tried first and
         // is subtly wrong: the last frames still carry ~9% of the envelope, which left 0.0315 of
         // peak-to-peak in a "recovered" tail that was never actually past the effect.
-        let _g = crate::dsp::flourish::test_guard();
         let (steady, steady_sag) = warble_trace(false, 160);
         let (warbled, warbled_sag) = warble_trace(true, 160);
 
@@ -912,7 +914,6 @@ mod tests {
     #[test]
     #[ignore]
     fn dump_reel_warble() {
-        let _g = crate::dsp::flourish::test_guard();
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -930,7 +931,7 @@ mod tests {
                 r.draw(&mut c, &t, &d);
             }
             if fire {
-                crate::dsp::flourish::request();
+                r.flourish.force_next();
             }
             let mut shots = Vec::new();
             for k in 0..(CELLS * EVERY) {

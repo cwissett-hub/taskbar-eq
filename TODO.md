@@ -3,16 +3,15 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** after the tape wow-and-flutter flourish.
+**Last updated:** after the Pantone plate-misregister flourish.
 
 ---
 
 ## In progress
 
-- [ ] **Per-family flourishes, two remaining.** Seven are done (VFD self-test, VU needle slam,
-      waterfall tear, valve ionisation, nixie ghosting, scope trigger loss, tape wow/flutter). Still to
-      do, each needing its own effect, a pixel-level test and a render: **Pantone plate misregister,
-      patchbay**. One commit per family, pushed once verified.
+- [ ] **Per-family flourishes, ONE remaining.** Eight are done (VFD self-test, VU needle slam,
+      waterfall tear, valve ionisation, nixie ghosting, scope trigger loss, tape wow/flutter, Pantone
+      plate misregister). Still to do: **patchbay**.
 
 ## Waiting on you
 
@@ -26,9 +25,23 @@ history. Newest first within each section. Commit hashes link the claim to the e
 - [ ] **"Any theme" is now uniform per FAMILY, not per colourway** - my judgement call, not a bug fix.
       A colourway in a small family is now individually likelier than one in a large family. Three-line
       revert if you would rather have the old behaviour.
+- [ ] **Judge the Pantone slip for intensity.** `target/eyeball/review-pantone-flourish.png`. It is
+      the strongest of the nine by a distance - every element splits into red/green/blue ghosts and the
+      bottom rules become three separate coloured lines. That is what misregistration IS, and it clears
+      in 900ms, but say if it is too much and `MISREG_Y` comes down from 3px.
 - [ ] **Windows 10 verification** - blocked on a `--diagnose` log from the other machine.
 
 ## Open, unresolved
+
+- [ ] **A rare test flake, understood but not fully fixed.** Five family flourish tests (VFD, VU,
+      waterfall, valve, nixie) fire via the audio path, which consults the process-global `ENABLED`
+      switch that `dsp::flourish`'s own tests toggle. No lock can protect that: a switch that is false
+      is false for every test running at that moment. Seen ONCE in 25 full-suite runs, and 36 runs
+      since have been clean. The fix is the pattern the pantone, reel and scope tests now use -
+      `Trigger::force_next()`, which is instance-local - but converting the other five needs each
+      fixture's firing frame re-derived, because forcing at the START of the firing sequence measures a
+      third of a second of decayed envelope and fails. Attempted, reverted, recorded rather than left
+      half-done.
 
 - [ ] **THE RESOURCE LEAK. Cause still unknown.** A days-old instance measured 18,962 threads /
       131,454 handles / 1.47 GB / 1.46 cores against a healthy 14 / 320 / 26 MB / 4% of one core. That
@@ -69,6 +82,20 @@ history. Newest first within each section. Commit hashes link the claim to the e
   unbound. Found three latent bugs while wiring: a slot-index catch-all that would have overwritten the
   shuffle key, a menu array that **panics at the sixth slot**, and test interference from the
   process-global switch.
+- **Pantone flourish: a plate slips out of register.** The family ALREADY fringes horizontally and
+  widens that fringe with energy, so pushing the horizontal shift further would have read as louder
+  music. The slip is therefore mostly vertical - an axis nothing else here uses - which meant
+  generalising `Canvas::chromatic_aberration` into a 2-D `misregister(dx, dy)`; the old entry point
+  delegates and is asserted byte-identical, because five colourways' goldens encode its output.
+  Two vacuous tests found by mutation. The plate-lag assertion compared against `MISREG_Y as i32`, so
+  mutating that constant to zero moved the expectation with it - it is a literal 3 now. And the peak
+  test passed with the envelope mutated to 1ms, because `Envelope` sets its level to 1.0 on the firing
+  frame whatever its decay is, so a separate test now measures a third of a second in.
+  Also found a REAL race, not a test artefact: `flourish::request()` is one process-global atomic and
+  every family's `draw` consumes it, so in a parallel suite an unrelated drawing test eats it. The
+  symptom was pathological - the effect provably fired at the right offset when run alone and compared
+  byte-identical when the suite ran. `Trigger::force_next()` fires one instance and touches no globals.
+
 - **Tape flourish: wow and flutter.** Real rates (1.1Hz wow, 8.5Hz flutter, deliberately not
   harmonically related) at theatrical depths, applied to the phase step rather than to the smoothed
   `omega` - injected into `omega` the flywheel's own ballistics would filter the flutter away. The wow
