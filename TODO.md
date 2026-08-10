@@ -3,16 +3,16 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** after the valve-ionisation flourish.
+**Last updated:** after the nixie-ghosting flourish.
 
 ---
 
 ## In progress
 
-- [ ] **Per-family flourishes, five remaining.** Four are done (VFD self-test, VU needle slam,
-      waterfall tear, valve ionisation). Still to do, each needing its own effect, a pixel-level test
-      and a render: **nixie ghosting, scope trigger loss, tape wow/flutter, Pantone plate misregister,
-      patchbay**. One commit per family, pushed once verified.
+- [ ] **Per-family flourishes, four remaining.** Five are done (VFD self-test, VU needle slam,
+      waterfall tear, valve ionisation, nixie ghosting). Still to do, each needing its own effect, a
+      pixel-level test and a render: **scope trigger loss, tape wow/flutter, Pantone plate
+      misregister, patchbay**. One commit per family, pushed once verified.
 
 ## Waiting on you
 
@@ -69,6 +69,17 @@ history. Newest first within each section. Commit hashes link the claim to the e
   unbound. Found three latent bugs while wiring: a slot-index catch-all that would have overwritten the
   shuffle key, a menu array that **panics at the sixth slot**, and test interference from the
   process-global switch.
+- **Nixie flourish: every cathode fires.** The unused digits all glow at once, which is what a
+  badly-driven tube does. 520ms - the shortest of any family's, because this display's whole cue is
+  WHICH digit is lit, so an effect that lights all ten has to get out of the way fast. The test took
+  three attempts to become non-vacuous: "the brightest cell is still the live one" passed a mutation
+  to full opacity (the live strike composites last and carries a glow cloud, so it wins regardless),
+  and a flat live/ghost ratio was nearly vacuous because the cloud's spill already dominates the
+  neighbouring cells. It now measures the share of the live digit's legibility HEADROOM that the
+  ghosting eats: 32% shipped, 88% at full opacity, gate at 55%. Also caught myself testing a stale
+  file - an earlier timed-out sweep had left the constant at 0.42, so three "mutations" matched
+  nothing and silently tested unchanged code. Mutants are now echoed before each run.
+
 - **Valve flourish: gas ionisation.** A cold blue haze through every envelope - the wrong colour for the
   display, which is the entire point, so it is a fixed blue rather than a tint of the theme. Drawn
   BENEATH the cathode glow, which is both easier and more truthful: the gas fills the tube while the

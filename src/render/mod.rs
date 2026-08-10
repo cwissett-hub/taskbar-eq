@@ -533,6 +533,7 @@ mod newest_dump {
             ("vu", "hifi-white"),
             ("waterfall", "waterfall-heat"),
             ("tube", "tube-soviet"),
+            ("nixie", "nixie-orange"),
         ];
         let mut n = 0;
         for (family, theme_id) in picks {

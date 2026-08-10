@@ -229,8 +229,32 @@ impl Geom {
     }
 }
 
+/// How long every-cathode ghosting lasts, and how brightly it fires.
+///
+/// A nixie's ghosting is real: strike one cathode hard and the neighbours glow faintly from ionised
+/// neon drifting across them - which on a badly-driven tube is what eventually poisons the unused
+/// digits. Here the whole stack fires at once, so the readout briefly shows all ten digits.
+///
+/// 520ms, much shorter than the valve row's 1100ms. Neon relaxes fast, and this family's cue is WHICH
+/// digit is lit - so an effect that lights all of them has to get out of the way quickly or the display
+/// stops saying anything for as long as it lasts.
+///
+/// 0.30 alpha, which has to sit in a specific gap: clearly brighter than the static ghost cathodes
+/// (`Theme::ghost`, about 0.85 of a low value) so it reads as firing rather than as the scale being
+/// visible, and dim enough that the live digit still reads as the reading.
+///
+/// The upper bound is measured, not judged. The live digit's own glow cloud already spills into its
+/// neighbours, so the useful quantity is the share of that separation the ghosting eats: 0.30 takes
+/// **32%** of it, and full opacity takes **88%**. The test gate sits at 55%, which trips at about 0.56
+/// alpha - so the shipped value has an ~1.9x margin rather than sitting on the edge of its own test.
+const GHOST_ALL_MS: f32 = 520.0;
+const GHOST_ALL_ALPHA: f32 = 0.30;
+
 #[derive(Default)]
 pub struct Nixie {
+    /// The flourish: every cathode in every tube fires at once. See `dsp::flourish`.
+    flourish: crate::dsp::flourish::Trigger,
+    ghost_all: crate::dsp::flourish::Envelope,
     /// Fast-falling peak hold per tube, in DIGIT units (not levels), so the afterglow lands on a
     /// cell boundary the same way the live digit does.
     ///
@@ -322,6 +346,12 @@ impl Family for Nixie {
     fn draw(&mut self, c: &mut Canvas, t: &Theme, d: &FrameData) {
         let (w, h) = (c.width(), c.height());
         c.clear();
+
+        // The flourish, advanced before any size guard so a canvas too small to draw still keeps the
+        // trigger's window current.
+        let dt = if d.dt_ms.is_finite() { d.dt_ms.clamp(0.0, 200.0) } else { 16.7 };
+        let fired = self.flourish.update(&d.levels, dt, t.flourish);
+        let ghost_all = self.ghost_all.update(fired, dt, GHOST_ALL_MS);
         let panel_r = 3;
         c.rounded_rect(
             1,
@@ -432,6 +462,25 @@ impl Family for Nixie {
                 // Belt and braces: persistent state is exactly where a NaN does lasting damage,
                 // since it survives into every later frame.
                 self.marker[i] = pos;
+            }
+
+            // THE FLOURISH: every cathode fires at once.
+            //
+            // Text only, with no glow cloud, unlike `strike`. Partly cost - ten digits across every
+            // tube would be a hundred elliptical gradients a frame - and partly legibility: the cloud
+            // is what makes a struck digit look struck, so giving it to all ten would erase the
+            // distinction the family exists to draw. Drawn BEFORE the live strike so the lit digit is
+            // composited on top and stays dominant.
+            if ghost_all > 0.01 {
+                let a = (GHOST_ALL_ALPHA * ghost_all).clamp(0.0, 1.0);
+                for k in 0..g.digits {
+                    lit.text_3x5(
+                        cx - 1,
+                        g.cell_y(k),
+                        DIGIT_STR[k.clamp(0, 9) as usize],
+                        Rgba::from_hex(&t.lit, a),
+                    );
+                }
             }
 
             // Afterglow of the peak, at a fraction of a struck cathode and with no cloud of its
@@ -583,6 +632,94 @@ mod tests {
             }
         }
         best.1
+    }
+
+    #[test]
+    fn the_flourish_fires_every_cathode_and_then_gets_out_of_the_way() {
+        // This family's whole cue is WHICH digit is lit, so an effect that lights all ten has to be
+        // measured on two properties at once: it must light cells the audio did not, AND it must not
+        // out-shine the live digit while doing so. A test for only the first would happily pass on an
+        // effect that made the readout unreadable.
+        let seq = crate::dsp::flourish::firing_sequence(64);
+        let quiet = flat(0.11);
+        let run = |flourish: f32, after: usize| -> Canvas {
+            let mut t = builtin::nixie_neon_green();
+            t.flourish = flourish;
+            let mut f = Nixie::default();
+            let mut c = Canvas::new(190, 60);
+            for row in &seq {
+                let mut d = FrameData { dt_ms: 16.7, ..FrameData::default() };
+                for (i, v) in d.levels.iter_mut().enumerate() {
+                    *v = row.get(i).copied().unwrap_or(0.0);
+                }
+                d.peaks = d.levels;
+                f.draw(&mut c, &t, &d);
+            }
+            for _ in 0..after {
+                f.draw(&mut c, &t, &quiet);
+            }
+            c
+        };
+        let g = Geom::new(190, 60).unwrap();
+        // Cells carrying real neon, counted across one tube's stack. The threshold sits above the
+        // static ghost cathodes so this counts FIRING cells, not the visible scale.
+        let firing = |c: &Canvas, tube: usize| -> usize {
+            (0..g.digits)
+                .filter(|k| {
+                    let y = g.cell_y(*k) + CELL_H / 2;
+                    let x = g.cx(tube);
+                    let p = c.get(x, y);
+                    p.r as u32 + p.g as u32 + p.b as u32 > 120
+                })
+                .count()
+        };
+        let on = run(crate::themes::DEFAULT_FLOURISH, 3);
+        let off = run(0.0, 3);
+        assert_ne!(on.bits(), off.bits(), "the flourish changed nothing");
+        let (a, b) = (firing(&on, 2), firing(&off, 2));
+        assert!(a > b + 3, "every cathode should fire: {a} cells lit against {b} without it");
+
+        // The live digit must still READ as the reading. Two weaker formulations were tried and
+        // discarded by mutating the alpha to 1.0, which should be obviously wrong:
+        //   - "the brightest cell is still the live one" PASSED the mutation. The live strike is
+        //     composited after the ghosting and carries a glow cloud, so it stays nominally brightest
+        //     however bright the ghosts get.
+        //   - a flat live/ghost ratio was nearly vacuous, because the neighbouring cells already carry
+        //     1720 of that cloud's spill before the flourish adds anything. Measured: the natural
+        //     margin is 1.83x and a full-opacity ghost still reaches 1.11x, so a threshold straddling
+        //     those is a couple of percent of guard band on a number mostly made of light the flourish
+        //     did not put there.
+        // So measure the share of the legibility HEADROOM (live cell minus that same cell's light
+        // without the flourish) that the ghosting consumes. Shipped: 452 of 1434, a 32% share. At full
+        // opacity: 2310 of 2630, 88%. Both measured; the gate at 55% catches the second.
+        let live = lit_digit(&on, &g, 2);
+        assert_eq!(
+            live,
+            lit_digit(&off, &g, 2),
+            "the flourish moved which digit reads as lit"
+        );
+        let loudest = (0..g.digits)
+            .filter(|k| *k != live)
+            .max_by(|a, b| {
+                cell_light(&on, &g, 2, *a)
+                    .partial_cmp(&cell_light(&on, &g, 2, *b))
+                    .unwrap()
+            })
+            .unwrap();
+        let live_light = cell_light(&on, &g, 2, live);
+        let quiet_neighbour = cell_light(&off, &g, 2, loudest);
+        let added = cell_light(&on, &g, 2, loudest) - quiet_neighbour;
+        let headroom = live_light - quiet_neighbour;
+        let share = added / headroom.max(1.0);
+        assert!(
+            share < 0.55,
+            "the ghosting is eating the reading: it adds {added:.0} of the {headroom:.0} that              separates the live digit from its neighbour, a {:.0}% share",
+            share * 100.0
+        );
+
+        // And it clears quickly - 520ms, because a readout showing all ten digits says nothing.
+        let settled = firing(&run(crate::themes::DEFAULT_FLOURISH, 60), 2);
+        assert!(settled <= b + 1, "the ghosting never cleared: {settled} cells still lit against {b}");
     }
 
     #[test]
