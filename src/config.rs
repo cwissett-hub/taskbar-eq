@@ -69,8 +69,6 @@ impl Hotkeys {
 #[serde(default)]
 pub struct Config {
     pub theme: String,
-    pub brightness: f32,
-    pub saturation: f32,
     pub threshold_dbfs: f32,
     pub reveal_ms: u32,
     pub hide_ms: u32,
@@ -103,8 +101,6 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             theme: "vfd-ice".into(),
-            brightness: 1.0,
-            saturation: 1.0,
             threshold_dbfs: -55.0,
             reveal_ms: 400,
             hide_ms: 4500,
@@ -190,7 +186,10 @@ mod tests {
     fn round_trips_through_toml() {
         let mut c = Config::default();
         c.theme = "matrix-green".into();
-        c.brightness = 0.8;
+        // A non-default value on a field that IS read, so the round trip proves something. This used
+        // `brightness`, which was removed - it was parsed and saved and read by nothing, so the test was
+        // round-tripping a field whose value could never matter.
+        c.hide_ms = 6000;
         let s = toml::to_string_pretty(&c).unwrap();
         assert_eq!(toml::from_str::<Config>(&s).unwrap(), c);
     }

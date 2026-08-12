@@ -240,7 +240,6 @@ refusing to start, so a partial file keeps working and a bad one cannot lock you
 | `flourishes` | `true` | Global on/off for flourishes, separate from each colourway's own rate |
 | `[hotkeys]` | all empty | `play_pause`, `next_track`, `prev_track`, `random_theme`, `random_colourway`, `flourish`, `flourish_toggle` |
 | `autostart` | `false` | **A record, not the truth.** The live state is the registry `Run` value, which is what the menu reads |
-| `brightness`, `saturation` | `1.0` | **Currently inert** — they are parsed and saved but nothing reads them. Listed because a field that looks like a setting and does nothing is worse undocumented than documented |
 
 The same folder holds `taskbar-eq.log` (truncated per run) and a `themes\` directory for your own
 colourway files, which hot-reload on save and can replace a built-in by reusing its `id`.
