@@ -157,6 +157,12 @@ impl Rgba {
     ///
     /// Roughly 0.0 for any grey, about 0.11 for a mid orange, and up to ~0.32 for the most saturated
     /// colours sRGB can express.
+    ///
+    /// `cfg(test)` because it is an INSTRUMENT, not part of any render path - nothing drawn on screen
+    /// needs to know its own chroma. Left out of release builds rather than silenced with an
+    /// `allow(dead_code)`, so the claim that the release build is warning-free stays true without
+    /// hiding anything.
+    #[cfg(test)]
     pub fn oklab_chroma_of(c: Rgba) -> f32 {
         let d = |v: u8| {
             let v = v as f32 / 255.0;
