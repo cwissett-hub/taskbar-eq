@@ -100,7 +100,17 @@ Regenerate any of these with <code>cargo test --release dump_flourishes -- --ign
   <figure><img src="flame-prototype.png" alt="flame organ prototype">
   <figcaption>rows: quiet &middot; normal &middot; loud &middot; a comb (alternating loud and quiet band
   groups), which is the row that shows whether the per-band reading is legible</figcaption></figure>
-  <p class="judge"><strong>What I want your eyes on:</strong> this is the <em>less watercolour</em> pass.
+  <p class="judge"><strong>What I want your eyes on:</strong> this is the <em>warmth</em> pass on top of
+  the <em>less watercolour</em> one. Warmth comes from a fire lighting its surroundings, not from softening
+  its own edges, so it is three separate cues: a two-stage spill (a bright halo close in, a faint one
+  reaching much further), the manifold lit per-column by the plume standing on it, and an ember wash on the
+  panel scaled by how hard the whole rank is burning. All three are drawn BEFORE the opaque body, so they
+  cost no crispness &mdash; the ordering is doing the work.<br><br>
+  <strong>It costs the most of any family and I measured it rather than guessing:</strong> 2.81ms a frame
+  against 1.09ms with the glow removed, so the glow was 61% of it. The wide pass is now recomputed every
+  third frame and cached, which is a 20Hz ambient under a 60Hz flame and invisible &mdash; 2.06ms, level
+  with <code>segmented</code> at 1.84ms.<br><br>
+  Earlier passes, for the record: this is the <em>less watercolour</em> version.
   The wash came from three things, all now changed: the whole field was bloomed rather than just the hot
   core, the coolest zone was drawn as a broad low-alpha gradient, and the diffusion bled too far sideways.
   The field is now posterised to five discrete levels drawn at full alpha, only the core blooms, and the

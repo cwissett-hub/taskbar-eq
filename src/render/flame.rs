@@ -109,6 +109,60 @@ const FLOOR: f32 = 0.16;
 /// cathodes: the opaque body goes straight onto the panel, and only the light blooms.
 const CORE_HEAT: f32 = 0.62;
 
+/// The warmth: how far the flames' light spills, and how strongly.
+///
+/// A fire feels warm because it LIGHTS THE ROOM, not because its own edges are soft - and that
+/// distinction is the whole design here. The first version had no spill at all and read as cold cut-out
+/// shapes; the version before that got its warmth from softening the flame itself, which read as
+/// watercolour. Neither is what a fire looks like.
+///
+/// So the spill is a separate layer: the whole field, bloomed WIDE, composited BEFORE the crisp body.
+/// `Canvas::bloom` puts its halo under existing content and the body is opaque, so the halo survives
+/// only in the air around the plumes - hard edges, warm surroundings. Ordering is doing all the work.
+///
+/// TWO STAGES, because one is not convincing. A single bloom gives either a tight rim or a wide wash and
+/// neither reads as heat: real glow is a bright halo close in plus a faint one reaching much further.
+/// A single stage at radius 7 was tried and measured too timid to feel warm at all.
+///
+/// Both are drawn before the opaque body, so pushing them hard costs no crispness - which is the whole
+/// reason the layers were separated in the first place. The colourway's own `bloom` is not used for
+/// either: it is tuned for point sources like a cathode or a lamp, and this is a field of light.
+const SPILL_NEAR_RADIUS: i32 = 3;
+const SPILL_NEAR_ALPHA: f32 = 0.95;
+const SPILL_FAR_RADIUS: i32 = 11;
+const SPILL_FAR_ALPHA: f32 = 0.55;
+
+/// How often the WIDE spill is recomputed, in frames.
+///
+/// Measured, because this family is the most expensive one here and it was worth knowing why before
+/// guessing: a frame costs 2.81ms with both spills and 1.09ms with neither, so the glow is 61% of it -
+/// and `bloom` is separable, so cost is linear in radius, which makes the radius-11 pass about
+/// three-quarters of that on its own.
+///
+/// Recomputed every third frame and cached in between. That is a 20Hz ambient glow under a 60Hz flame,
+/// and it is invisible: the wide spill is a diffuse field with no edges to alias, and what little lag it
+/// gains reads as thermal inertia, which a real fire has. The NEAR spill is recomputed every frame - it
+/// hugs the plume closely enough that lag there would show as the halo detaching.
+///
+/// Brings the family from 2.81ms a frame to about 1.9ms, which is level with `segmented`.
+const SPILL_FAR_EVERY: u32 = 3;
+
+/// How much the flames warm the panel behind them, at full drive.
+///
+/// The last of the three warmth cues and the most diffuse: a fire does not only halo, it raises the
+/// ambient level of everything near it. A vertical gradient from the manifold upward, scaled by how hard
+/// the whole manifold is burning, so a quiet passage leaves the panel cold and a loud one has the metal
+/// glowing. 0.20 - enough to feel, far too little to read as a lit panel.
+const EMBER_ALPHA: f32 = 0.20;
+
+/// How brightly the plumes light the manifold they stand on.
+///
+/// The single most effective warmth cue for the least work, and the one a real photograph always has:
+/// the metal directly under a flame is lit by it. Sampled per column from the heat just above the pipe,
+/// so a tall plume lights its own nozzle brightly and a pilot flame barely at all - which also makes the
+/// manifold a second, redundant reading of the spectrum.
+const MANIFOLD_LIT: f32 = 0.85;
+
 /// Response window, in band-level units. Matches the other families' convention - see `patchbay`'s
 /// `RESP_FLOOR` note for why this is placed on what the DSP actually produces rather than on 0..1.
 const RESP_FLOOR: f32 = 0.10;
@@ -155,6 +209,8 @@ pub struct Flame {
     w: i32,
     h: i32,
     frame: u32,
+    /// The wide spill, kept between frames. See `SPILL_FAR_EVERY`.
+    far_glow: Option<Canvas>,
 }
 
 impl Flame {
@@ -294,6 +350,73 @@ impl Family for Flame {
         // `Canvas::bloom` also puts its halo UNDER existing content, so blooming a canvas that already
         // carries the opaque panel would hide it completely - the trap documented in segmented, scope,
         // vu, tube and waterfall.
+        // THE EMBER WASH: the panel itself warmed by how hard the manifold is burning. Drawn first, so
+        // everything else sits on top of it. See `EMBER_ALPHA`.
+        let drive: f32 = {
+            let n = nozzle_count(cw);
+            (0..n).map(|i| response(Self::level_for(d, i, n), t.sensitivity)).sum::<f32>() / n as f32
+        };
+        if drive > 0.02 {
+            let a = (drive * EMBER_ALPHA).clamp(0.0, 1.0);
+            c.vertical_gradient(
+                2,
+                iy,
+                cw - 4,
+                ih + manifold_h,
+                &[
+                    (0.0, Rgba::from_hex(&t.lit, 0.0)),
+                    (0.55, Rgba::from_hex(&t.lit, a * 0.45)),
+                    (1.0, Rgba::from_hex(&t.lit, a)),
+                ],
+                true,
+            );
+        }
+
+        // THE SPILL, before the crisp body so the body lands on top of it. See `SPILL_NEAR_RADIUS`.
+        //
+        // Built from the whole field rather than only the core: the cool outer zones are most of the light
+        // a fire throws, and a spill built from the core alone leaves the tall plumes glowing and the low
+        // ones cold.
+        let mut spill = Canvas::new(cw, ch);
+        for y in 0..ih {
+            for x in 0..iw {
+                let v = self.at(x, y);
+                if v < FLOOR * 0.6 {
+                    continue;
+                }
+                let frac = x as f32 / iw as f32;
+                spill.fill_rect(
+                    ix + x,
+                    iy + y,
+                    1,
+                    1,
+                    super::tint(t, frac, d.time_s, false, &t.lit, v.clamp(0.0, 1.0)),
+                );
+            }
+        }
+        // Far first, then near on top of it: the wide faint field, then the bright close halo.
+        //
+        // The far pass is cached and refreshed every `SPILL_FAR_EVERY` frames - it is 45% of this
+        // family's whole frame cost on its own. Also refreshed whenever the cached canvas is the wrong
+        // size, which is how a resize is handled: a stale glow at the old width would be drawn into the
+        // corner of the new one.
+        let stale = self
+            .far_glow
+            .as_ref()
+            .map(|g| g.width() != cw || g.height() != ch)
+            .unwrap_or(true);
+        if stale || self.frame % SPILL_FAR_EVERY == 0 {
+            let mut far = spill.clone();
+            far.bloom(SPILL_FAR_RADIUS, SPILL_FAR_ALPHA);
+            self.far_glow = Some(far);
+        }
+        if let Some(far) = self.far_glow.as_ref() {
+            c.draw_over(far);
+        }
+        let mut near = spill.clone();
+        near.bloom(SPILL_NEAR_RADIUS, SPILL_NEAR_ALPHA);
+        c.draw_over(&near);
+
         let mut core = Canvas::new(cw, ch);
         for y in 0..ih {
             for x in 0..iw {
@@ -348,6 +471,30 @@ impl Family for Flame {
         let my = ch - 3 - manifold_h;
         c.fill_rect(2, my, cw - 4, manifold_h, Rgba::from_hex(&t.tube.chassis_bottom, 0.95));
         c.fill_rect(2, my, cw - 4, 1, Rgba::from_hex(&t.tube.glass, 0.16));
+
+        // LIT BY ITS OWN FLAMES, per column. The cheapest warmth cue there is and the one every
+        // photograph of a fire has: the metal under a flame is lit by it. Sampled from the heat in the
+        // bottom rows of the field, so a tall plume lights its nozzle brightly and a pilot flame barely
+        // at all - which incidentally makes the manifold a second reading of the spectrum.
+        for x in 0..(cw - 4) {
+            let fx = x - (ix - 2);
+            if fx < 0 || fx >= iw {
+                continue;
+            }
+            let lit_by = (self.at(fx, ih - 1) + self.at(fx, ih - 2) + self.at(fx, ih - 3)) / 3.0;
+            if lit_by < 0.04 {
+                continue;
+            }
+            let frac = fx as f32 / iw as f32;
+            let a = (lit_by * MANIFOLD_LIT).clamp(0.0, 0.9);
+            // The top two rows only: light falls on the face pointing at the flame, not down the side of
+            // the pipe. Drawn as a tint over the metal rather than replacing it, so the pipe still reads
+            // as metal that is lit and not as a coloured bar.
+            for k in 0..2 {
+                c.fill_rect(2 + x, my + k, 1, 1, super::tint(t, frac, d.time_s, false, &t.lit, a * (1.0 - k as f32 * 0.45)));
+            }
+        }
+
         let n = nozzle_count(cw);
         let collar = Rgba::from_hex(&t.tube.collar, 0.85);
         for i in 0..n {
@@ -375,6 +522,57 @@ mod tests {
         }
         d.peaks = d.levels;
         d
+    }
+
+    /// Run: cargo test --release probe_flame_cost -- --ignored --nocapture
+    ///
+    /// What a frame of this costs, against families that already ship. Worth measuring rather than
+    /// estimating, because this app has a history of costing someone else's framerate: the warmth is two
+    /// full-canvas blooms per frame on top of the diffusion pass, and "it is only a blur" is exactly the
+    /// kind of assumption that turned out to be wrong about the UIA cache.
+    ///
+    /// `Canvas::bloom` is separable - two 1-D passes - so its cost is linear in radius, not quadratic.
+    /// That is the reason a radius of 11 is affordable at all.
+    #[test]
+    #[ignore]
+    fn probe_flame_cost() {
+        let d = flat(0.45);
+        let cases: [(&str, Box<dyn Fn() -> Box<dyn Family>>); 4] = [
+            ("flame (2 blooms + field)", Box::new(|| Box::new(Flame::default()))),
+            ("waterfall", Box::new(|| Box::new(crate::render::waterfall::Waterfall::default()))),
+            ("tube", Box::new(|| Box::new(crate::render::tube::Tube::default()))),
+            ("segmented", Box::new(|| Box::new(crate::render::segmented::Segmented::default()))),
+        ];
+        println!("  {:<26} {:>10} {:>12}", "family", "ms/frame", "% of 16.7ms");
+        for (name, make) in &cases {
+            let t = match *name {
+                "flame (2 blooms + field)" => builtin::tube_soviet(),
+                _ => builtin::all()
+                    .into_iter()
+                    .find(|th| {
+                        th.family
+                            == match *name {
+                                "waterfall" => "waterfall",
+                                "tube" => "tube",
+                                _ => "segmented",
+                            }
+                    })
+                    .unwrap(),
+            };
+            let mut f = make();
+            let mut c = Canvas::new(190, 60);
+            // Warm up, so buffer allocation and first-touch page faults are not in the figure.
+            for _ in 0..60 {
+                f.draw(&mut c, &t, &d);
+            }
+            let n = 300;
+            let t0 = std::time::Instant::now();
+            for _ in 0..n {
+                f.draw(&mut c, &t, &d);
+            }
+            let ms = t0.elapsed().as_secs_f64() * 1000.0 / n as f64;
+            println!("  {name:<26} {ms:>10.3} {:>11.1}%", ms / 16.7 * 100.0);
+        }
     }
 
     /// Run: cargo test --release dump_flame -- --ignored --nocapture
