@@ -155,7 +155,7 @@ fn response(level: f32, sensitivity: f32) -> f32 {
 /// The stop at 0.0 is synthesised, not authored, and is fully transparent - see the module docs.
 /// It also keeps the authored stops bright enough to pass the project's 3:1 lit-vs-panel contrast
 /// rule, which the dark end of a heat ramp could never satisfy if it had to be a real colour.
-fn ramp_stops(t: &Theme) -> Vec<(f32, Rgba)> {
+pub(crate) fn ramp_stops(t: &Theme) -> Vec<(f32, Rgba)> {
     let mut authored: Vec<(f32, &str)> =
         t.zones.iter().map(|z| (z.upto, z.lit.as_str())).collect();
     if authored.len() < 2 {
@@ -184,7 +184,7 @@ fn ramp_stops(t: &Theme) -> Vec<(f32, Rgba)> {
 /// to zero at the bottom of the ramp, interpolating premultiplied values would drag the colour
 /// toward black as it faded, so a red cell would go maroon on its way out instead of simply
 /// getting fainter. The canvas premultiplies on store.
-fn ramp_at(stops: &[(f32, Rgba)], x: f32) -> Rgba {
+pub(crate) fn ramp_at(stops: &[(f32, Rgba)], x: f32) -> Rgba {
     if stops.is_empty() {
         return Rgba::TRANSPARENT;
     }

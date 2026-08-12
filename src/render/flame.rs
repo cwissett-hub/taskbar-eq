@@ -69,6 +69,25 @@ const COOL: f32 = 0.023;
 /// the first was wanted.
 const CENTRE_BIAS: f32 = 0.62;
 
+/// TWO ATTEMPTS AT THE BULBOUS TIPS, BOTH REVERTED, recorded so they are not repeated.
+///
+/// The plumes swell into a bulb near their tops rather than tapering to a wisp. It appeared as soon as
+/// fractional sampling stopped the diffusion leaking heat sideways into the staircase - the heat it had
+/// been losing was suddenly being kept, and it piles up where the rise stalls.
+///
+/// 1. **Extra cooling with height.** At 1.4 it truncated the plumes with hard flat tops, which is worse
+///    than the bulbs; at 0.45 it was indistinguishable from doing nothing. Cooling decides where a plume
+///    ENDS and says nothing about its shape on the way there.
+/// 2. **More sideways spread with height** (falling centre bias), which is the entrainment a real flame
+///    has. At 0.24 - taking the bias from 0.62 to 0.38 at the tip - it made no visible difference either.
+///
+/// Both were removed rather than left in at a setting that does nothing, which is the same fault as the
+/// inert `brightness` and `saturation` config fields this project documents.
+///
+/// The likely real cause is that there is no VELOCITY here: heat only diffuses, so it cannot outrun its
+/// own spreading, and a genuine taper needs the gas to rise faster than it mixes. That is an advection
+/// term, a bigger change, and worth doing deliberately rather than by tuning a constant.
+
 /// Peak sideways lick, in pixels of sampling offset.
 ///
 /// What stops the plumes being static triangles - but it has to be COHERENT. The first version drew the
@@ -86,20 +105,18 @@ const CENTRE_BIAS: f32 = 0.62;
 /// less interesting picture.
 const LICK: f32 = 0.95;
 
-/// Heat levels the field is quantised to before it is drawn, and the heat below which nothing is drawn
-/// at all.
+/// Heat below which nothing is drawn at all, and the width of the band over which the edge fades in.
 ///
-/// THIS IS WHAT STOPS IT LOOKING LIKE WATERCOLOUR. A continuous heat-to-alpha ramp gives every plume a
-/// soft translucent halo that fades to nothing, and at 60px that reads as a wash rather than as
-/// combustion. Snapping the field to five discrete levels, each drawn at FULL alpha, gives the plume hard
-/// contour edges - the same graphic, banded look the segmented, nixie and Pantone families get from
-/// having discrete elements in the first place.
+/// The history here is worth keeping, because the family has been wrong in both directions. The first
+/// version drew anything above 0.02 at a 10% alpha minimum, which painted a faint envelope two or three
+/// pixels beyond every plume - watercolour. The second snapped the field to five discrete levels at full
+/// alpha, which fixed that and introduced banding: crisp, but pixel art rather than fire.
 ///
-/// `FLOOR` is the other half of it. The first version drew anything above 0.02 at a 10% alpha minimum,
-/// which painted a faint envelope two or three pixels beyond the plume on every side. Nothing below 0.16
-/// is drawn now, so the plume has an edge instead of a fringe.
-const ZONES: f32 = 5.0;
-const FLOOR: f32 = 0.16;
+/// Neither extreme is what a flame looks like. A real edge is continuous but NARROW, so this is a
+/// smoothstep over `EDGE` of heat - about two pixels of falloff at this cooling rate. Continuous enough
+/// to be smooth, tight enough not to be a wash.
+const FLOOR: f32 = 0.13;
+const EDGE: f32 = 0.085;
 
 /// Heat at or above which a cell is treated as the flame's core, and blooms.
 ///
@@ -244,6 +261,27 @@ impl Flame {
         self.heat[(y * self.w + x) as usize]
     }
 
+    /// The field sampled at a FRACTIONAL x, interpolated between the two neighbouring cells.
+    ///
+    /// This is most of what separates "a flame" from "pixel art of a flame". The lean was previously
+    /// applied as `lick.round()`, which snaps the sampling to whole cells - so a plume bending gradually
+    /// moves in discrete one-pixel jumps and manufactures a staircase along both its edges. Nothing about
+    /// the physics is stepped; the rounding was.
+    ///
+    /// Linear in x only, not bilinear. The vertical neighbour is always the row directly below, which is
+    /// exactly what the diffusion means, and interpolating vertically as well would blur the plume along
+    /// the axis it is travelling - the one direction where the sharpness is real.
+    fn at_frac(&self, x: f32, y: i32) -> f32 {
+        if !x.is_finite() {
+            return 0.0;
+        }
+        let x0 = x.floor();
+        let f = x - x0;
+        let a = self.at(x0 as i32, y);
+        let b = self.at(x0 as i32 + 1, y);
+        a + (b - a) * f
+    }
+
     /// One diffusion pass, then the seeding.
     ///
     /// Iterated from the TOP down, reading the row below. That order is what makes it safe in place: the
@@ -267,10 +305,12 @@ impl Flame {
                 let lick = LICK
                     * ((fy * 0.28 - ft * 0.13 + ph).sin() * 0.7
                         + (fy * 0.09 + ft * 0.05 + ph * 1.7).sin() * 0.5);
-                let sx = x + lick.round() as i32;
-                let below = self.at(sx, y + 1);
-                let l = self.at(sx - 1, y + 1);
-                let r = self.at(sx + 1, y + 1);
+                // Sampled at the FRACTIONAL offset - see `at_frac` for why rounding it was the main
+                // source of the stepped look.
+                let sx = x as f32 + lick;
+                let below = self.at_frac(sx, y + 1);
+                let l = self.at_frac(sx - 1.0, y + 1);
+                let r = self.at_frac(sx + 1.0, y + 1);
                 let side = (1.0 - CENTRE_BIAS) * 0.5;
                 let mixed = below * CENTRE_BIAS + l * side + r * side;
                 // Flicker in the COOLING rather than in the heat: cooling more on some cells eats holes
@@ -417,6 +457,8 @@ impl Family for Flame {
         near.bloom(SPILL_NEAR_RADIUS, SPILL_NEAR_ALPHA);
         c.draw_over(&near);
 
+        // Built once a frame, not per pixel: 64 interpolations against ~10,000 lookups.
+        let ramp = super::waterfall::ramp_stops(t);
         let mut core = Canvas::new(cw, ch);
         for y in 0..ih {
             for x in 0..iw {
@@ -424,33 +466,28 @@ impl Family for Flame {
                 if v < FLOOR {
                     continue;
                 }
-                // Posterised: snapped to one of `ZONES` levels and drawn at FULL alpha, so the plume has
-                // contour edges rather than a gradient. `z` is 1..=ZONES.
-                let z = ((v * ZONES).floor() + 1.0).min(ZONES);
-                let frac = x as f32 / iw as f32;
+                // CONTINUOUS, through the colourway's own multi-stop ramp. `Theme::zones` is already
+                // "(position, colour)" and the spectrogram family builds a heat ramp from it the same
+                // way, so a flame colourway declares its stops - deep red, orange, yellow, white - and
+                // needs nothing new in the schema. The builder is shared with that family rather than
+                // copied, for the reason the two onset detectors were merged.
+                let col = super::waterfall::ramp_at(&ramp, v.clamp(0.0, 1.0));
+                // Smoothstep alpha over a narrow band, so the edge is anti-aliased rather than either
+                // banded or washed. See `EDGE`.
+                let e = ((v - FLOOR) / EDGE).clamp(0.0, 1.0);
+                let a = e * e * (3.0 - 2.0 * e);
                 if v >= CORE_HEAT {
-                    // The hottest band is the colourway's `hot`; the one below it is a blend, so the core
-                    // is not a single flat blob at high drive.
-                    let a = if z >= ZONES { 1.0 } else { 0.82 };
-                    core.fill_rect(ix + x, iy + y, 1, 1, Rgba::from_hex(&t.hot, a));
+                    // The core goes on the bloomed layer, so the hottest part of the flame is what throws
+                    // light. Held at the ramp's top rather than a flat `hot`, so a colourway whose stops
+                    // run to white gets white and one running to pale blue gets that.
+                    core.fill_rect(ix + x, iy + y, 1, 1, Rgba::new(col.r, col.g, col.b, 255));
                 } else {
-                    // Body zones, opaque, dimmed by zone so the banding reads as depth. 0.34 to 1.0
-                    // rather than 0.55 to 1.0: the narrower range made the whole plume one flat orange,
-                    // which is crisp but not fiery. The outermost band is still clearly present - a band
-                    // that fades to nothing is the gradient this exists to replace.
-                    let k = 0.34 + 0.66 * (z / ZONES);
-                    let col = super::tint(t, frac, d.time_s, false, &t.lit, 1.0);
                     c.fill_rect(
                         ix + x,
                         iy + y,
                         1,
                         1,
-                        Rgba::new(
-                            (col.r as f32 * k) as u8,
-                            (col.g as f32 * k) as u8,
-                            (col.b as f32 * k) as u8,
-                            255,
-                        ),
+                        Rgba::new(col.r, col.g, col.b, (a * 255.0) as u8),
                     );
                 }
             }
@@ -592,7 +629,17 @@ mod tests {
             ("loud", Box::new(|_| 0.62)),
             ("comb", Box::new(|i| if (i / 6) % 2 == 0 { 0.60 } else { 0.14 })),
         ];
-        let t = builtin::tube_soviet();
+        // A sodium-flame ramp, authored here because the colourways do not exist yet. Deep red at the
+        // cool tips through orange and yellow to white at the base, which is the luminance progression a
+        // real flame has and the thing the posterised version could not express.
+        let mut t = builtin::tube_soviet();
+        t.zones = vec![
+            crate::themes::Zone { upto: 0.28, lit: "#7a1500".into(), hot: "#7a1500".into() },
+            crate::themes::Zone { upto: 0.52, lit: "#e04a06".into(), hot: "#e04a06".into() },
+            crate::themes::Zone { upto: 0.74, lit: "#ff9a1f".into(), hot: "#ff9a1f".into() },
+            crate::themes::Zone { upto: 0.90, lit: "#ffd76a".into(), hot: "#ffd76a".into() },
+            crate::themes::Zone { upto: 1.00, lit: "#fff6e0".into(), hot: "#fff6e0".into() },
+        ];
         let (w, h) = (190i32, 60i32);
         let mut rows = Vec::new();
         for (_label, f) in &cases {
