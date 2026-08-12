@@ -448,10 +448,13 @@ The app also writes that log on every normal launch, so a failure can be reporte
   fall behind again. If you wrote a theme file for either family before then, it was being
   skipped with a warning.
 - **Six families are new and only lightly reviewed.** An adversarial pass on each found real defects
-  and one is still open: the **Patchbay**'s cables fold 12.8 of the 64 bands each (only 5 cables fit
-  at 190 px), so its sag cue flattens on real music. The **Spectrogram**'s vacuous fold test is now
-  **fixed** — it took three attempts, and the cause was not the one assumed: the pitch-track marker
-  lands on the same row a lone loud band folds into, so the test was measuring the marker. Fixed already: the Reel's peak lamp needed an RMS of 0.508 to light, against a real
+  and **both are now fixed**, though neither turned out to be what the note above claimed. The
+  **Patchbay** was said to flatten on real music; measured over three real-music captures the spread
+  across cables is healthy (0.70–0.80 of the range, and 0% of frames flat) — the real fault was that
+  its response window was placed on *band* levels while the family feeds it a *peak-biased group*
+  level, so the bass cable sat pinned at full deflection on 64%, 96% and 100% of frames. And the
+  **Spectrogram**'s vacuous fold test was not a ramp problem: the pitch-track marker lands on the same
+  row a lone loud band folds into, so the test was measuring the marker. Fixed already: the Reel's peak lamp needed an RMS of 0.508 to light, against a real
   ceiling of about 0.12, so it was dead code that could never fire on music.
 - **Every family leaks a few bezel pixels outside the rounded panel.** The bezel is drawn after
   `clip_to_rounded_rect`, and it is square while the panel's corners are not, so ~4 pixels per corner

@@ -3,23 +3,24 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** the Spectrogram's vacuous fold test is fixed. All nine flourishes done, review
-sheet written, README current.
+**Last updated:** the Patchbay's pinned bass cable is fixed. Both documented open defects are now
+closed; all nine flourishes done, review sheet written, README current.
 
 ---
 
 ## In progress
 
-- [ ] **One documented defect left that I can act on alone:** the **Patchbay** folds 12.8 of the 64
-      bands into each cable at 190px (only 5 cables fit), so its sag cue flattens on real music. Next
-      up. Everything else on the list needs your eyes or a recurrence of a bug.
+- [ ] **Nothing I can act on alone.** Both documented defects are closed. Everything left needs your
+      eyes or a recurrence of a bug.
 
 ## Waiting on you
 
-- [ ] **THE REVIEW SHEET IS WRITTEN: open `docs/review/index.html`.** Nine items, one per family, each
-      with the render, what it is meant to be, and what specifically I want judged. It is one pass
-      rather than thirteen. **Item 7, the Pantone plate slip, is the one I would change first** - it is
-      the strongest of the nine by a distance and comes down on one word.
+- [ ] **THE REVIEW SHEET IS WRITTEN: open `docs/review/index.html`.** Ten items now - the nine
+      flourishes plus the Patchbay window fix - each with the render, what it is meant to be, and what
+      specifically I want judged. One pass rather than thirteen. **Item 7, the Pantone plate slip, is
+      the one I would change first** - it is the strongest of the nine by a distance and comes down on
+      one word. **Item 10 is a trade to confirm**, not a bug: the fix costs about a quarter of the
+      separation between cables to stop the bass one pinning.
 - [ ] **The `flourish` and `flourish_toggle` hotkeys are deliberately unbound** - the keys are yours to
       choose. Tray menu -> Flourishes -> the two "key" entries. `Ctrl+Semicolon` and `Ctrl+Quote` both
       registered cleanly when tested; `Ctrl+Win+F` and `Ctrl+Alt+G` are already taken on this machine.
@@ -81,6 +82,21 @@ sheet written, README current.
   unbound. Found three latent bugs while wiring: a slot-index catch-all that would have overwritten the
   shuffle key, a menu array that **panics at the sixth slot**, and test interference from the
   process-global switch.
+- **The Patchbay's bass cable was pinned at full deflection, and the documented defect was wrong.**
+  The README said its sag cue "flattens on real music" because 5 cables fold 12.8 bands each. Measured
+  over the three real-music captures, that is not true: the spread across cables is 0.70-0.80 of the
+  range and **0%** of frames are flat. The real fault was the response window. `the_response_window_...`
+  asserted that band levels of 0.15-0.65 cover most of the travel - true, and irrelevant, because
+  `response` is never handed a band level. It is handed `level_for`, a group reduction biased 0.65
+  toward the peak of ~12.8 bands, whose MEDIAN on the bass cable is 0.63-0.69 - above the 0.62 at which
+  the window already saturated. So the lowest cable was stuck at the end of its travel on **64%, 96%
+  and 100%** of frames on the three tracks, carrying no information at all.
+  `RESP_SPAN` 0.52 -> 0.70 puts the top just above the p99 of every cable at both widths. Pinning falls
+  to **0% everywhere**, at a cost of about a quarter of the separation between cables (0.206 -> 0.153).
+  An intermediate 0.62 was measured and rejected: it keeps separation at 0.173 but leaves the bass cable
+  pinned 29% of the time on dynamic music. The test now asserts on the group levels over the real
+  fixtures and fails on the old constant. **Rendered before/after - item 10 on the review sheet.**
+
 - **The Spectrogram's vacuous fold test is FIXED.** It passed with `max` replaced by `mean` - the bug
   it existed to catch. Three attempts, and the cause was none of the things I first assumed:
   **the pitch-track marker was the problem.** `draw` marks each column's dominant band in `t.hot` at

@@ -84,6 +84,12 @@ Regenerate any of these with <code>cargo test --release dump_flourishes -- --ign
   <figure><img src="patchbay-repatch.png" alt="Patchbay re-patch"><figcaption>rows are frames 0, 19, 39, 58, 77 of the 78-frame swing</figcaption></figure>
   <p class="judge"><strong>What I want your eyes on:</strong> Whether the plugs sitting mid-air between sockets (rows 2 and 4) read as a cable in transit or as a mistake.</p>
 </section>
+<section>
+  <h2><span class="n">10</span>Patchbay: the response window, before and after</h2>
+  <p class="what">Not a flourish - a fix. The bass cable was pinned at full deflection on 64%, 96% and 100% of frames across three real-music captures, so its sag carried no information. The window now reaches full travel at a group level of 0.80 instead of 0.62.</p>
+  <figure><img src="patchbay-window.png" alt="Patchbay: the response window, before and after"><figcaption>top: the old window &middot; bottom: the new one. Same real-music frames, same code - only the window differs</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> Whether the panel now reads as too slack. Pinning is 0% on every cable at both widths, but it cost about a quarter of the separation between cables. An intermediate value keeps more separation and leaves the bass cable pinned 29% of the time - say which trade you prefer.</p>
+</section>
 <footer>
 Generated from the renderers themselves, not drawn by hand. Progress log:
 <code>TODO.md</code>. Source of these images: <code>cargo test --release dump_flourishes</code>,

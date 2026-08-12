@@ -63,8 +63,27 @@ const MIN_H: i32 = 30;
 /// Fixed, not a peak follower, for the same reason the valve row's is fixed: this is a level
 /// meter, so the same band level must always give the same sag. A follower would show a quiet
 /// passage at the same droop as a loud one.
+/// The response window: where 0 and 1 of a cable's travel sit, in group-level units.
+///
+/// PLACED ON THE GROUP LEVELS THIS FAMILY ACTUALLY PRODUCES, which is not the same thing as the band
+/// levels the DSP produces, and the difference was a real defect. `level_for` reduces a cable's whole
+/// band group biased 0.65 toward its PEAK, and at 190px there are only 5 cables, so each one peaks over
+/// about 12.8 bands. That group value is far above a typical single band.
+///
+/// The span was 0.52, which put the top of the travel at level 0.62 - below the bass cable's MEDIAN
+/// group level of 0.63-0.69 on real music. Measured over the three real-music captures, the lowest
+/// cable therefore sat pinned at full deflection **64%, 96% and 100%** of all frames on the three
+/// tracks, and at 380px the second cable pinned 30-67% too. A cable at the end of its travel carries no
+/// information at all, which killed the family's only cue on the cable most likely to be watched.
+///
+/// 0.70 puts the top at 0.80, just above the p99 of every cable on every fixture (0.70-0.79). Measured
+/// result: pinning falls to **0% on every cable, both widths, all three tracks**. It costs about a
+/// quarter of the separation between cables - mean pairwise separation 0.206 -> 0.153 at 190px - which
+/// is the honest trade and is why an intermediate 0.62 was measured too: that keeps separation at 0.173
+/// but leaves the bass cable pinned 29% of the time on dynamic music, i.e. still dead a third of the
+/// time. Losing a quarter of the separation to gain a cable that always moves is the better bargain.
 const RESP_FLOOR: f32 = 0.10;
-const RESP_SPAN: f32 = 0.52;
+const RESP_SPAN: f32 = 0.70;
 
 /// Weight given to a group's LOUDEST band rather than its mean.
 ///
@@ -675,6 +694,194 @@ mod tests {
         (xs, c, peak.1)
     }
 
+    /// Run: cargo test --release dump_patchbay_window -- --ignored --nocapture
+    ///
+    /// The before and after of re-placing the response window, on real music, for eyeballing - this
+    /// changes how a shipped family looks and the numbers alone should not decide that.
+    ///
+    /// The OLD mapping is reproduced exactly rather than approximated: `response` is linear in
+    /// sensitivity, so `(level - FLOOR) / 0.52` is identical to `((level - FLOOR) / 0.70) * (0.70/0.52)`.
+    /// Setting sensitivity to that ratio therefore renders the pre-fix behaviour through the post-fix
+    /// code, so the two rows differ in the window and in nothing else.
+    #[test]
+    #[ignore]
+    fn dump_patchbay_window() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
+        std::fs::create_dir_all(&dir).unwrap();
+        let frames: Vec<Vec<f32>> =
+            include_str!("../../tests/fixtures/real-music-dynamic.csv")
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| l.split(',').filter_map(|v| v.parse::<f32>().ok()).collect())
+                .filter(|f: &Vec<f32>| f.len() >= crate::dsp::bands::NUM_BANDS)
+                .collect();
+        assert!(frames.len() > 120, "fixture too short: {}", frames.len());
+
+        const OLD_SPAN: f32 = 0.52;
+        let (w, h) = (190i32, 60i32);
+        let mut shots = Vec::new();
+        for sens in [RESP_SPAN / OLD_SPAN, 1.0] {
+            let mut t = builtin::all()
+                .into_iter()
+                .find(|t| t.family == "patchbay")
+                .expect("no patchbay colourway");
+            t.sensitivity = sens;
+            let mut pb = Patchbay::default();
+            let mut c = Canvas::new(w, h);
+            // 120 frames of the real capture, so the cable slew has settled on real content rather
+            // than on a synthetic step.
+            for f in frames.iter().take(120) {
+                let mut d = FrameData::default();
+                d.levels.copy_from_slice(&f[..crate::dsp::bands::NUM_BANDS]);
+                d.peaks = d.levels;
+                d.dt_ms = NOMINAL_DT_MS;
+                pb.draw(&mut c, &t, &d);
+            }
+            shots.push(c);
+        }
+
+        let (ow, oh) = (w, h * 2 + 4);
+        let mut out = vec![22u8; (ow * oh * 4) as usize];
+        for (ri, shot) in shots.iter().enumerate() {
+            for y in 0..h {
+                for x in 0..w {
+                    let px = shot.get(x, y);
+                    let a = px.a as f32 / 255.0;
+                    let o = (((ri as i32 * (h + 4) + y) * ow + x) * 4) as usize;
+                    for (k, ch) in [px.r, px.g, px.b].iter().enumerate() {
+                        out[o + k] = (*ch as f32 + 22.0 * (1.0 - a)).min(255.0) as u8;
+                    }
+                    out[o + 3] = 255;
+                }
+            }
+        }
+        let path = dir.join(format!("patchbay-window-{ow}x{oh}.rgba"));
+        std::fs::write(&path, &out).unwrap();
+        println!(
+            "wrote {} ({ow}x{oh}) - top row: the OLD window (span {OLD_SPAN}), bottom row: the new one (span {})",
+            path.display(),
+            RESP_SPAN
+        );
+    }
+
+    /// Run: cargo test --release probe_patchbay_spread -- --ignored --nocapture
+    ///
+    /// Quantifies the defect the README records: with only 5 cables at 190px each one folds 12.8 of the
+    /// 64 bands, so on real music every cable ends up reporting much the same thing and the sag - the
+    /// family's one cue - flattens.
+    ///
+    /// Measured on the three real-music captures rather than on synthetic spectra, because that is the
+    /// claim: a comb fixture would separate the cables perfectly and say nothing about music.
+    #[test]
+    #[ignore]
+    fn probe_patchbay_spread() {
+        let parse = |csv: &str| -> Vec<Vec<f32>> {
+            csv.lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| l.split(',').filter_map(|v| v.parse::<f32>().ok()).collect())
+                .collect()
+        };
+        let fixtures = [
+            ("steady groove", parse(include_str!("../../tests/fixtures/real-music-bands.csv"))),
+            ("dnb, dynamic", parse(include_str!("../../tests/fixtures/real-music-dynamic.csv"))),
+            ("flat-mastered", parse(include_str!("../../tests/fixtures/real-music-flat.csv"))),
+        ];
+        println!("cables at 190px: {} | at 380px: {}", cable_count(190), cable_count(380));
+        for (name, frames) in &fixtures {
+            for w in [190i32, 380] {
+                let cables = cable_count(w);
+                // Per frame: the spread across cables of the DISPLAYED response, which is what the sag
+                // is a linear function of. Averaged over the capture, plus the share of frames where
+                // every cable sits within a tenth of the others - a frame in which the panel reads as
+                // one object rather than as five independent cues.
+                let (mut spread_acc, mut flat_frames, mut n) = (0.0f64, 0usize, 0usize);
+                let mut per_cable = vec![0.0f64; cables];
+                // Two sharper questions than "is it flat": how often is a cable PINNED at the top of
+                // its travel, where it carries no information at all; and how far apart are the
+                // cables that are not the bass one, which is where the means bunch up.
+                let mut pinned = vec![0usize; cables];
+                let mut mid_spread = 0.0f64;
+                for f in frames {
+                    if f.len() < crate::dsp::bands::NUM_BANDS {
+                        continue;
+                    }
+                    let mut d = FrameData::default();
+                    d.levels.copy_from_slice(&f[..crate::dsp::bands::NUM_BANDS]);
+                    d.peaks = d.levels;
+                    let resp: Vec<f32> = (0..cables)
+                        .map(|i| Patchbay::response(Patchbay::level_for(&d, i, cables), 1.0))
+                        .collect();
+                    let (lo, hi) = resp.iter().fold((f32::MAX, f32::MIN), |(l, h), v| (l.min(*v), h.max(*v)));
+                    spread_acc += (hi - lo) as f64;
+                    if hi - lo < 0.10 {
+                        flat_frames += 1;
+                    }
+                    for (c, v) in per_cable.iter_mut().zip(&resp) {
+                        *c += *v as f64;
+                    }
+                    for (k, v) in resp.iter().enumerate() {
+                        if *v >= 0.99 {
+                            pinned[k] += 1;
+                        }
+                    }
+                    // Mean pairwise separation among every cable except the lowest, whose saturation
+                    // would otherwise dominate the figure.
+                    if cables > 2 {
+                        let rest = &resp[1..];
+                        let (mut acc, mut pairs) = (0.0f64, 0usize);
+                        for a in 0..rest.len() {
+                            for b in (a + 1)..rest.len() {
+                                acc += (rest[a] - rest[b]).abs() as f64;
+                                pairs += 1;
+                            }
+                        }
+                        mid_spread += acc / pairs.max(1) as f64;
+                    }
+                    n += 1;
+                }
+                if n == 0 {
+                    continue;
+                }
+                // The GROUP levels the family actually feeds `response`, which is the quantity the
+                // window should have been placed on. Percentiles, per cable.
+                let mut lv: Vec<Vec<f32>> = vec![Vec::new(); cables];
+                for f in frames {
+                    if f.len() < crate::dsp::bands::NUM_BANDS {
+                        continue;
+                    }
+                    let mut d = FrameData::default();
+                    d.levels.copy_from_slice(&f[..crate::dsp::bands::NUM_BANDS]);
+                    d.peaks = d.levels;
+                    for (i, out) in lv.iter_mut().enumerate() {
+                        out.push(Patchbay::level_for(&d, i, cables));
+                    }
+                }
+                let pct = |v: &mut Vec<f32>, q: f64| -> f32 {
+                    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                    v[((v.len() - 1) as f64 * q) as usize]
+                };
+                let p50: Vec<String> = lv.iter_mut().map(|v| format!("{:.2}", pct(v, 0.50))).collect();
+                let p99: Vec<String> = lv.iter_mut().map(|v| format!("{:.2}", pct(v, 0.99))).collect();
+                println!("{:<18}group p50 [{}]
+{:<18}group p99 [{}]", "", p50.join(" "), "", p99.join(" "));
+                let means: Vec<String> = per_cable.iter().map(|c| format!("{:.2}", c / n as f64)).collect();
+                let pins: Vec<String> = pinned.iter().map(|c| format!("{:.0}%", 100.0 * *c as f64 / n as f64)).collect();
+                println!(
+                    "  {name:<14} w={w} n={cables}  spread {:.3}  flat {:>4.1}%  mid-sep {:.3}
+                     {:<18}means [{}]
+{:<18}pinned at 1.0 [{}]",
+                    spread_acc / n as f64,
+                    100.0 * flat_frames as f64 / n as f64,
+                    mid_spread / n as f64,
+                    "",
+                    means.join(" "),
+                    "",
+                    pins.join(" ")
+                );
+            }
+        }
+    }
+
     #[test]
     fn the_flourish_repatches_every_cable_to_the_other_jack_of_its_pair() {
         let jacks = cable_count(190) * 2;
@@ -918,11 +1125,64 @@ mod tests {
 
     #[test]
     fn the_response_window_spends_its_range_on_levels_the_dsp_actually_produces() {
-        // Real music delivers roughly 0.15-0.65 per active band, so a mapping linear over 0..1
-        // would spend about a third of the sag travel and the panel would look dead.
-        let lo = Patchbay::response(0.15, 1.0);
-        let hi = Patchbay::response(0.65, 1.0);
-        assert!(hi - lo > 0.75, "the music window must cover most of the range: {lo} -> {hi}");
+        // This test USED TO ASSERT ON BAND LEVELS and that is why it missed a real defect for so long.
+        // It checked that 0.15-0.65 per band covered most of the travel - true, and irrelevant, because
+        // `response` is never handed a band level. It is handed `level_for`, a group reduction biased
+        // toward the PEAK of ~12.8 bands, which routinely runs half again as high. The window was
+        // therefore placed on a quantity this family does not produce, and the lowest cable sat pinned
+        // at full deflection on most frames of real music.
+        //
+        // So it now asserts on the real thing: the group levels, over the real-music captures, and the
+        // property that actually matters - no cable spends meaningful time stuck at either end, where
+        // it carries no information. `probe_patchbay_spread` prints the whole table.
+        let parse = |csv: &str| -> Vec<Vec<f32>> {
+            csv.lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| l.split(',').filter_map(|v| v.parse::<f32>().ok()).collect())
+                .collect()
+        };
+        let fixtures = [
+            ("steady groove", parse(include_str!("../../tests/fixtures/real-music-bands.csv"))),
+            ("dnb, dynamic", parse(include_str!("../../tests/fixtures/real-music-flat.csv"))),
+            ("flat-mastered", parse(include_str!("../../tests/fixtures/real-music-dynamic.csv"))),
+        ];
+        for (name, frames) in &fixtures {
+            for w in [190i32, 380] {
+                let cables = cable_count(w);
+                let mut pinned = vec![0usize; cables];
+                let mut n = 0usize;
+                for f in frames {
+                    if f.len() < crate::dsp::bands::NUM_BANDS {
+                        continue;
+                    }
+                    let mut d = FrameData::default();
+                    d.levels.copy_from_slice(&f[..crate::dsp::bands::NUM_BANDS]);
+                    d.peaks = d.levels;
+                    for (i, p) in pinned.iter_mut().enumerate() {
+                        if Patchbay::response(Patchbay::level_for(&d, i, cables), 1.0) >= 0.99 {
+                            *p += 1;
+                        }
+                    }
+                    n += 1;
+                }
+                assert!(n > 100, "{name}: fixture too short to measure ({n} frames)");
+                for (i, count) in pinned.iter().enumerate() {
+                    let share = 100.0 * *count as f64 / n as f64;
+                    assert!(
+                        share < 8.0,
+                        "{name} at w={w}: cable {i} is pinned at full deflection on {share:.0}% of \
+                         frames, so its sag carries no information there. The window is placed on the \
+                         wrong quantity - see RESP_FLOOR"
+                    );
+                }
+            }
+        }
+
+        // The window still has to SPEND its range, or the fix for pinning would just be a dead panel.
+        // Group levels sit around 0.22-0.69 on these captures, so that band must cover most of the
+        // travel.
+        let (lo, hi) = (Patchbay::response(0.22, 1.0), Patchbay::response(0.69, 1.0));
+        assert!(hi - lo > 0.60, "the music window must cover most of the range: {lo} -> {hi}");
         assert_eq!(Patchbay::response(0.0, 1.0), 0.0, "silence maps to zero, not a pedestal");
         assert_eq!(Patchbay::response(1.0, 1.0), 1.0, "full scale reaches the top");
         assert!(
