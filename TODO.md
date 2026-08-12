@@ -3,8 +3,8 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** chroma now has a flourish (an ink plate starves). ONE family left without one:
-fluid.
+**Last updated:** chroma done, inert config fields removed. FLUID cavitation ATTEMPTED AND REVERTED -
+see below. Everything in the tree is committed, green and pushed.
 
 Earlier: the FLAME ORGAN ships - a new family, 7 colourways, its own flourish. 100
 colourways across 14 families.
@@ -53,8 +53,31 @@ closed; all nine flourishes done, review sheet written, README current.
 
 ## In progress
 
-- [ ] **One family still has no flourish: fluid.** Radar (barrage jamming) and chroma (an ink plate
-      starves) are both done. I had been saying "all nine
+- [ ] **FLUID STILL HAS NO FLOURISH, and I reverted my attempt rather than ship it half-verified.**
+      Cavitation is the right idea - it is the one fault that belongs to the liquid rather than the
+      electronics - but this family has the tightest invariants in the project and three models failed
+      against them. Written down so the next attempt starts from here rather than from scratch:
+
+      1. **Froth injected into the wave field.** Cannot work at any amplitude. The wave equation
+         propagates whatever is injected and interference then raises crests elsewhere, so
+         `the_crests_stay_inside_the_tank_on_real_music` went to 3.8%, then 3.2% at half amplitude, then
+         4.0% - against a baseline where the family clips on **0.00%** of column-frames and asserts under
+         1%. The number was not the problem, the model was.
+      2. **Downward-biased froth.** Cavitation forms voids, so biasing it negative is more honest - and it
+         still clipped, for the same propagation reason.
+      3. **Loss of coupling** (the diaphragm pushes vapour, so it stops driving). Physically the best
+         model and it removes energy rather than adding it, but on its own it does not ROUGHEN anything,
+         so nothing reads as cavitation.
+
+      The promising combination is 3 plus a froth applied to the DRAWN surface line rather than the
+      simulation - it cannot propagate or clip, and it got the crest and depth-ramp invariants passing.
+      Two things blocked it: it necessarily breaks
+      `the_drawn_surface_line_follows_the_simulated_field` (which needs an explicit exemption, since a
+      froth IS a deliberate deviation), and my roughness instrument reported 0.00 for both arms even
+      though a probe confirmed the froth reaching `surf` at 0.7-3.0px - so the instrument, not the
+      effect, is what needs solving first. Do not trust a surface measurement on this family without
+      probing a column's pixels first: the meniscus is one bright row over a dark gradient, and the
+      water below it is dimmer than the air-water boundary above. I had been saying "all nine
       families", which was wrong - there are thirteen. A colourway's `flourish` rate is a documented
       setting that does nothing on those three, which is the same "looks like a setting, is not" problem
       as the dead config fields. Planned: **radar** takes jamming or a chaff bloom, **chroma** starves an
