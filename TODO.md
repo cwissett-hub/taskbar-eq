@@ -3,14 +3,16 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** README brought up to date. All nine flourishes done, review sheet written.
+**Last updated:** the Spectrogram's vacuous fold test is fixed. All nine flourishes done, review
+sheet written, README current.
 
 ---
 
 ## In progress
 
-- [ ] **Nothing.** The list below is what is left, and all of it needs either your eyes or a
-      recurrence of a bug. Nothing is half-finished in the tree.
+- [ ] **One documented defect left that I can act on alone:** the **Patchbay** folds 12.8 of the 64
+      bands into each cable at 190px (only 5 cables fit), so its sag cue flattens on real music. Next
+      up. Everything else on the list needs your eyes or a recurrence of a bug.
 
 ## Waiting on you
 
@@ -79,6 +81,19 @@ history. Newest first within each section. Commit hashes link the claim to the e
   unbound. Found three latent bugs while wiring: a slot-index catch-all that would have overwritten the
   shuffle key, a menu array that **panics at the sixth slot**, and test interference from the
   process-global switch.
+- **The Spectrogram's vacuous fold test is FIXED.** It passed with `max` replaced by `mean` - the bug
+  it existed to catch. Three attempts, and the cause was none of the things I first assumed:
+  **the pitch-track marker was the problem.** `draw` marks each column's dominant band in `t.hot` at
+  high alpha, at the row that band folds into - so for a spectrum with one loud band, that is exactly
+  the row the test sampled. It was measuring the marker, which sits at full brightness whatever the
+  fold does. Two reasonable-looking dead ends first: lowering the levels to stay inside `response`'s
+  clamp (the marker does not care about level), and comparing against separate renders predicting each
+  fold (which read 252.8 where a max fold predicts 138.8 - HIGHER than the value it was meant to
+  match, because one pixel compared across two renders carries its neighbours' bloom).
+  Now a louder decoy band parks the marker seven rows away, and the comparison is within ONE render:
+  make one of the row's bands loud, or all of them - a max reads the same either way. Verified against
+  a mean fold (51 against 135) and a min fold (13 against 135).
+
 - **README rewritten for everything added since 2026-08-05.** A full "Using it" chapter (mouse, tray
   menu, the seven keys and the capture dialog, Spotify transport and both backends, the banner, all
   nine flourishes, suspend and the watchdog), a configuration reference for every config field, and the

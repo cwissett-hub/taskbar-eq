@@ -624,26 +624,85 @@ mod tests {
 
     #[test]
     fn folding_bands_into_fewer_rows_keeps_a_single_band_peak() {
-        // Fold by MAX, not mean. At h=24 the plot is 18 rows for 64 bands, so each row carries
-        // 3-4 bands and a lone peak is diluted to roughly a quarter of its level by a mean:
-        // measured, this row renders at luminance 245 folded by max and would render at 86 folded
-        // by mean, i.e. the peak would read as background.
+        // Fold by MAX, not mean. At h=24 the plot is 18 rows for 64 bands, so each row carries 3-4
+        // bands, and a mean would dilute a lone peak to about a quarter of its level - the peak would
+        // read as background, which is the one thing this family exists to show.
         //
-        // Compared against the SAME row driven by an all-loud spectrum, so this measures the fold
-        // and not the ramp.
-        let t = builtin::waterfall_heat();
-        let peak = render(&t, 6, 190, 24, &uneven(30, 31, 0.75, 0.14));
-        let everything = render(&t, 6, 190, 24, &flat(0.75));
-        // The newest column, and the row band 30 folds into.
+        // THE PITCH TRACK IS WHY THIS TEST WAS VACUOUS, and it is worth spelling out because nothing
+        // about the failure pointed at it. `draw` marks each column's DOMINANT band in `t.hot` at high
+        // alpha, at `m * rows / NUM_BANDS` - and for a spectrum with one loud band, that is the same row
+        // the loud band folds into. The original test rendered exactly that spectrum and sampled exactly
+        // that row, so it was measuring the marker, which sits at full brightness whatever the fold
+        // does. It read 244.8 with a max fold and 244.8 with the max replaced by a mean.
+        //
+        // Two intermediate versions are worth recording as dead ends, because both looked reasonable:
+        //   - lowering the levels to stay inside `response`'s clamp did not help; the marker is drawn
+        //     from `t.hot` and does not care about the level at all past `MARK_MIN_RESP`.
+        //   - comparing the row against separate renders predicting each fold did not help either. It
+        //     measured 252.8 where a max fold predicts 138.8 - HIGHER than the value it was meant to
+        //     match - because a single pixel compared across two renders carries its neighbours' bloom
+        //     and, here, the marker.
+        //
+        // So the loud band under test is NOT the dominant one. A much louder band sits far down the
+        // spectrum, which parks the marker seven rows away, and the row under test then carries nothing
+        // but the fold. The comparison is within one render: make ONE of the row's bands loud, or ALL of
+        // them. A max returns the loudest either way, so the row must read the same; a mean returns a
+        // quarter of the level in the first case and all of it in the second.
+        const LOUD: f32 = 0.35;
+        const QUIET: f32 = 0.13;
+        // Louder than LOUD, and low in the spectrum, so it owns the pitch track and takes the marker
+        // out of the row being measured.
+        const DECOY_BAND: usize = 5;
+        const DECOY: f32 = 0.60;
+
+        let t = builtin::waterfall_mono();
         let x = PLOT_LEFT + (190 - 4 - RAIL_RESERVE) - 1;
         let rows: usize = 24 - 6;
-        let y = PLOT_TOP + rows as i32 - 1 - (30 * rows / NUM_BANDS) as i32;
-        let got = lum(peak.get(x, y));
-        let full = lum(everything.get(x, y));
+        // The row band 30 folds into, and the band range it covers - the same arithmetic `draw` uses.
+        let r = 30 * rows / NUM_BANDS;
+        let y = PLOT_TOP + rows as i32 - 1 - r as i32;
+        let (lo, hi) = (r * NUM_BANDS / rows, ((r + 1) * NUM_BANDS / rows).max(r * NUM_BANDS / rows + 1));
+        assert!(hi - lo >= 3, "the fold is too shallow here to tell max from mean: {} bands", hi - lo);
+        let decoy_row = DECOY_BAND * rows / NUM_BANDS;
         assert!(
-            got > full * 0.9,
-            "a single loud band must colour its row as strongly as a fully loud spectrum does \
-             (max fold), got {got:.0} vs {full:.0}"
+            decoy_row + 2 < r,
+            "the decoy's marker at row {decoy_row} is too close to the row under test at {r}"
+        );
+
+        // `loud` bands sit at LOUD, the decoy at DECOY, everything else at QUIET.
+        let spectrum = |loud: std::ops::Range<usize>| -> FrameData {
+            let mut d = FrameData::default();
+            for (i, v) in d.levels.iter_mut().enumerate() {
+                *v = if i == DECOY_BAND {
+                    DECOY
+                } else if loud.contains(&i) {
+                    LOUD
+                } else {
+                    QUIET
+                };
+            }
+            d.peaks = d.levels;
+            d
+        };
+        let row = |d: &FrameData| lum(render(&t, 6, 190, 24, d).get(x, y));
+
+        let one_loud = row(&spectrum(30..31));
+        let all_loud = row(&spectrum(lo..hi));
+        let none_loud = row(&spectrum(0..0));
+
+        // The fixture has to be able to see the difference at all: if a loud row and a quiet row render
+        // the same, the levels are outside the usable part of the ramp and nothing below means anything.
+        // This is the guard whose absence let the earlier versions pass on the bug.
+        assert!(
+            all_loud > none_loud + 25.0,
+            "loud and quiet render the same here ({all_loud:.0} against {none_loud:.0}), so this test \
+             cannot tell a max fold from a mean one"
+        );
+        assert!(
+            (one_loud - all_loud).abs() < 6.0,
+            "the row folded like a MEAN: one loud band in it reads {one_loud:.0} and all {} read \
+             {all_loud:.0}. Under a max fold those are the same reading",
+            hi - lo
         );
     }
 
