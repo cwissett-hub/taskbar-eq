@@ -94,7 +94,7 @@ fn poll_once() {
     // `GetMonitorInfoW` are cheap by comparison with the notification state, but they belong with it -
     // one thread owns talking to the shell, and the render loop only ever reads atomics.
     FULLSCREEN_FOREGROUND.store(
-        crate::win::visibility::covers_monitor(super::placement::foreground_window()),
+        crate::win::visibility::covers_monitor(super::placement::foreground_window().as_ref()),
         Ordering::Relaxed,
     );
 }

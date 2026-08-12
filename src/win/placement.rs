@@ -91,7 +91,7 @@ mod live_fullscreen_tests {
             );
             assert!(!info.is_shell, "a STATIC popup is not a shell window");
             assert!(
-                covers_monitor(Some(info)),
+                covers_monitor(Some(&info)),
                 "a real borderless window at {mon:?} must read as covering the monitor, got {:?}",
                 info.window
             );
@@ -127,13 +127,46 @@ mod live_fullscreen_tests {
             let hwnd = borderless(work);
             let info = window_info(hwnd).expect("a visible popup must be readable");
             assert!(
-                !covers_monitor(Some(info)),
+                !covers_monitor(Some(&info)),
                 "a window at the work area {work:?} must NOT read as fullscreen against monitor \
                  {}x{} - this is what stops a maximised window suspending the overlay",
                 m.right - m.left,
                 m.bottom - m.top
             );
             let _ = DestroyWindow(hwnd);
+        }
+    }
+
+    #[test]
+    fn a_packaged_app_is_not_treated_as_the_shell() {
+        // The exclusion list is the one place where being generous silently costs coverage: anything on
+        // it can cover the whole monitor and the overlay keeps drawing over it. Two names were on this
+        // list and were removed, and this test is what stops them coming back.
+        //
+        // `ApplicationFrameWindow` hosts PACKAGED apps - a store game running fullscreen lives in one,
+        // so excluding it reproduces the original bug for that whole class of app.
+        // `Windows.UI.Core.CoreWindow` is the same mistake one level down: it is the Start menu and the
+        // search flyout, but it is also every UWP app's own window.
+        assert!(
+            !is_shell_class("ApplicationFrameWindow"),
+            "ApplicationFrameWindow must NOT be excluded - it hosts packaged apps, so a store game              running fullscreen lives in one, and excluding it means such a game never suspends the              overlay"
+        );
+        // And a few real application classes, for the same reason.
+        for class in ["Chrome_WidgetWin_1", "UnityWndClass", "SDL_app", "CabinetWClass"] {
+            assert!(!is_shell_class(class), "{class} is an application, not the shell");
+        }
+        // The ones that ARE the shell. CoreWindow is here on measured evidence, not by guesswork: with
+        // the session locked, the foreground window on this machine is a full-monitor CoreWindow
+        // belonging to LockApp, and Start and Search are the same class and also full-monitor - so
+        // without it the meter would vanish whenever Start was opened.
+        for class in [
+            "Shell_TrayWnd",
+            "Shell_SecondaryTrayWnd",
+            "Progman",
+            "WorkerW",
+            "Windows.UI.Core.CoreWindow",
+        ] {
+            assert!(is_shell_class(class), "{class} is the shell and must be excluded");
         }
     }
 
@@ -149,7 +182,7 @@ mod live_fullscreen_tests {
             "Shell_TrayWnd must be recognised as the shell, or the overlay would suspend whenever the \
              taskbar had focus"
         );
-        assert!(!covers_monitor(Some(info)), "the shell must never count as a fullscreen app");
+        assert!(!covers_monitor(Some(&info)), "the shell must never count as a fullscreen app");
     }
 }
 
@@ -512,17 +545,37 @@ pub fn window_info(hwnd: HWND) -> Option<crate::win::visibility::Foreground> {
                 h: mr.bottom - mr.top,
             },
             is_shell: is_shell_class(&class),
+            class,
         })
     }
 }
 
 /// The shell's own window classes, which own the foreground on an ordinary idle desktop.
 ///
-/// Kept as a named function so it can be tested without a desktop: treating these as fullscreen would
-/// suspend the overlay permanently whenever the user clicked the desktop, and because the suspend path
-/// skips rediscovery that is a deadlock in all but name. `Shell_TrayWnd` is the taskbar itself,
-/// `Progman` and `WorkerW` are the desktop, and `Windows.UI.Core.CoreWindow` covers the Start menu and
-/// the Widgets panel - all of which legitimately cover the screen at times.
+/// Named, so it can be tested without a desktop and so the list is reviewable. Treating one of these as
+/// fullscreen would suspend the overlay whenever the desktop or the taskbar had focus, and because the
+/// suspend path skips rect rediscovery that is a deadlock in all but name.
+///
+/// **The list is deliberately SHORT, and two plausible-looking entries were removed after being written
+/// down.** Every name here costs coverage: anything on it can cover the whole screen and the overlay
+/// will keep drawing over it.
+///
+/// - `Shell_TrayWnd` / `Shell_SecondaryTrayWnd` - the taskbar itself, on the primary and other monitors.
+/// - `Progman` / `WorkerW` - the desktop. This is what owns the foreground on an idle machine, and it is
+///   exactly monitor-sized, so without it the overlay would suspend itself on an idle desktop.
+///
+/// - `Windows.UI.Core.CoreWindow` - the shell's own full-screen surfaces. This one was removed while
+///   writing the list and then put back on evidence, which is worth recording. Measured on this machine:
+///   with the session locked, the foreground window is a `Windows.UI.Core.CoreWindow` of exactly
+///   1920x1200 on a 1920x1200 monitor, belonging to `LockApp`. The Start menu and the search flyout are
+///   the same class and are also sized to the whole monitor on Windows 11, even though they paint only
+///   part of it - so without this entry the meter would disappear every time Start was opened, which is
+///   a far more visible fault than the one being fixed.
+///
+/// **`ApplicationFrameWindow` was on this list and has been REMOVED.** It is the host frame for packaged
+/// apps, not a shell window: a store game running fullscreen lives in one, so excluding it reproduced
+/// the original bug for that whole class of app. Kept out deliberately, and asserted by a test, because
+/// it is exactly the sort of name that looks like it belongs here.
 pub fn is_shell_class(class: &str) -> bool {
     matches!(
         class,
@@ -531,8 +584,6 @@ pub fn is_shell_class(class: &str) -> bool {
             | "Progman"
             | "WorkerW"
             | "Windows.UI.Core.CoreWindow"
-            | "XamlExplorerHostIslandWindow"
-            | "ApplicationFrameWindow"
     )
 }
 

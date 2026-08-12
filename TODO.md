@@ -11,6 +11,14 @@ closed; all nine flourishes done, review sheet written, README current.
 
 ## In progress
 
+- [ ] **One judgement call in the fullscreen fix worth a second opinion.** The shell-class exclusion
+      list decides what does NOT count as a fullscreen app, and every name on it costs coverage.
+      `Windows.UI.Core.CoreWindow` is on it, because measured here the LOCK SCREEN is a full-monitor
+      CoreWindow, and Start and Search are the same class and also full-monitor on Win11 - so without
+      it the meter would vanish whenever you opened Start. The cost: a genuinely fullscreen UWP app
+      whose own CoreWindow is foreground would not suspend us. Packaged games hosted in
+      `ApplicationFrameWindow` ARE caught - I took that name off the list for exactly that reason.
+
 - [ ] **Please retest on the gaming machine.** The borderless-fullscreen fix is in. Two things to
       check: does the overlay still draw over a game, and does the stutter still appear after 30-45
       minutes. If it does, run `taskbar-eq.exe --diagnose` **while the game is running** (alt-tab out,

@@ -20,7 +20,7 @@ pub struct Inputs {
 }
 
 /// What the foreground window looks like, for `covers_monitor`.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Foreground {
     /// The window's own rect, in physical pixels.
     pub window: Rect,
@@ -28,6 +28,10 @@ pub struct Foreground {
     pub monitor: Rect,
     /// True for the shell's own windows and the desktop, which are never "a fullscreen app".
     pub is_shell: bool,
+    /// The window class, carried only so `--diagnose` can say which window it decided about. On a
+    /// machine where the overlay is drawing over a game, the game's own class is the most useful single
+    /// fact in the report - it is what says whether the exclusion list wrongly caught it.
+    pub class: String,
 }
 
 /// How many pixels a window may fall short of the monitor on any edge and still count as fullscreen.
@@ -58,7 +62,7 @@ const COVER_SLOP: i32 = 2;
 /// Geometry rather than a window style, because styles vary: some games are `WS_POPUP`, some keep a
 /// caption they have moved off screen, some use a borderless window at exactly the monitor size. What
 /// they all have in common is covering the monitor.
-pub fn covers_monitor(fg: Option<Foreground>) -> bool {
+pub fn covers_monitor(fg: Option<&Foreground>) -> bool {
     let Some(fg) = fg else { return false };
     // The shell owning the foreground is the normal desktop case, and treating it as fullscreen would
     // suspend the overlay permanently on an idle machine - a deadlock in all but name, since the
@@ -115,16 +119,17 @@ mod fullscreen_tests {
     /// typical Windows 11 taskbar at 100% scaling.
     const TASKBAR_H: i32 = 48;
 
-    fn fg(window: Rect, is_shell: bool) -> Option<Foreground> {
-        Some(Foreground { window, monitor: MON, is_shell })
+    fn fg(window: Rect, is_shell: bool) -> Foreground {
+        Foreground { window, monitor: MON, is_shell, class: "TestClass".into() }
     }
+
 
     #[test]
     fn a_borderless_fullscreen_game_covers_the_monitor() {
         // The case the shell's notification state cannot see, and the reason this exists: a window at
         // exactly the monitor's bounds with no border. Reported as "the equaliser sometimes renders on
         // top of fullscreen programs".
-        assert!(covers_monitor(fg(MON, false)));
+        assert!(covers_monitor(Some(&fg(MON, false))));
     }
 
     #[test]
@@ -135,17 +140,17 @@ mod fullscreen_tests {
         // misses the monitor by the taskbar's height, which is tens of pixels rather than the 2px of
         // slop allowed here.
         let maximised = Rect { x: 0, y: 0, w: MON.w, h: MON.h - TASKBAR_H };
-        assert!(!covers_monitor(fg(maximised, false)));
+        assert!(!covers_monitor(Some(&fg(maximised, false))));
         // And with the taskbar at the top, which is where the miss is on the other edge.
         let top_taskbar = Rect { x: 0, y: TASKBAR_H, w: MON.w, h: MON.h - TASKBAR_H };
-        assert!(!covers_monitor(fg(top_taskbar, false)));
+        assert!(!covers_monitor(Some(&fg(top_taskbar, false))));
     }
 
     #[test]
     fn a_game_that_rounds_its_own_size_still_counts() {
         // Some titles report a window an odd pixel short. 2px of slop, which is far below a taskbar.
         let nearly = Rect { x: 1, y: 1, w: MON.w - 2, h: MON.h - 2 };
-        assert!(covers_monitor(fg(nearly, false)));
+        assert!(covers_monitor(Some(&fg(nearly, false))));
     }
 
     #[test]
@@ -153,7 +158,7 @@ mod fullscreen_tests {
         // The desktop, the taskbar and the Start menu all legitimately cover the screen. Treating them
         // as a game would suspend the overlay the moment the user clicked the desktop - and because the
         // suspend path skips rect rediscovery, that is a deadlock in all but name.
-        assert!(!covers_monitor(fg(MON, true)));
+        assert!(!covers_monitor(Some(&fg(MON, true))));
     }
 
     #[test]
@@ -163,11 +168,12 @@ mod fullscreen_tests {
         // whenever GetWindowRect or GetMonitorInfoW fails.
         assert!(!covers_monitor(None));
         // Degenerate rects are the same class of non-answer.
-        assert!(!covers_monitor(fg(Rect { x: 0, y: 0, w: 0, h: 0 }, false)));
-        assert!(!covers_monitor(Some(Foreground {
+        assert!(!covers_monitor(Some(&fg(Rect { x: 0, y: 0, w: 0, h: 0 }, false))));
+        assert!(!covers_monitor(Some(&Foreground {
             window: MON,
             monitor: Rect { x: 0, y: 0, w: 0, h: 0 },
             is_shell: false,
+            class: "TestClass".into(),
         })));
     }
 
@@ -178,14 +184,20 @@ mod fullscreen_tests {
         // zero is what makes this work, and getting it wrong would mean the check never fired on any
         // multi-monitor setup - which is most gaming machines.
         let mon2 = Rect { x: 2560, y: 0, w: 1920, h: 1080 };
-        let full = Some(Foreground { window: mon2, monitor: mon2, is_shell: false });
-        assert!(covers_monitor(full));
-        let maximised = Some(Foreground {
+        let full = Foreground {
+            window: mon2,
+            monitor: mon2,
+            is_shell: false,
+            class: "TestClass".into(),
+        };
+        assert!(covers_monitor(Some(&full)));
+        let maximised = Foreground {
             window: Rect { x: 2560, y: 0, w: 1920, h: 1080 - TASKBAR_H },
             monitor: mon2,
             is_shell: false,
-        });
-        assert!(!covers_monitor(maximised));
+            class: "TestClass".into(),
+        };
+        assert!(!covers_monitor(Some(&maximised)));
     }
 
     #[test]

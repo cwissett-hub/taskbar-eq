@@ -647,17 +647,19 @@ fn diagnose() -> Result<()> {
     // borderless game - and therefore the line to read on a machine where the overlay is drawing over
     // one. `SHQueryUserNotificationState` above will say 5 (accepts notifications) in that case.
     let fg = win::placement::foreground_window();
-    let fullscreen_foreground = win::visibility::covers_monitor(fg);
-    log::write(&match fg {
+    let fullscreen_foreground = win::visibility::covers_monitor(fg.as_ref());
+    log::write(&match &fg {
         Some(f) => format!(
-            "foreground window: {}x{} at {},{} on a {}x{} monitor{} => covers the monitor: {}",
+            "foreground window: class \"{}\" {}x{} at {},{} on a {}x{} monitor{} => covers the \
+             monitor: {}",
+            f.class,
             f.window.w,
             f.window.h,
             f.window.x,
             f.window.y,
             f.monitor.w,
             f.monitor.h,
-            if f.is_shell { " (the shell's own window)" } else { "" },
+            if f.is_shell { " (the shell's own, so never counted)" } else { "" },
             if fullscreen_foreground { "YES  <- the overlay will suspend" } else { "no" }
         ),
         None => "foreground window: none readable (minimised, or nothing focused)".to_string(),
