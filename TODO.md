@@ -3,7 +3,7 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** the Patchbay's pinned bass cable is fixed. Both documented open defects are now
+**Last updated:** Windows 10 verification dropped at your request. The Patchbay's pinned bass cable is fixed. Both documented open defects are now
 closed; all nine flourishes done, review sheet written, README current.
 
 ---
@@ -29,7 +29,6 @@ closed; all nine flourishes done, review sheet written, README current.
 - [ ] **"Any theme" is now uniform per FAMILY, not per colourway** - my judgement call, not a bug fix.
       A colourway in a small family is now individually likelier than one in a large family. Three-line
       revert if you would rather have the old behaviour.
-- [ ] **Windows 10 verification** - blocked on a `--diagnose` log from the other machine.
 
 ## Open, unresolved
 
