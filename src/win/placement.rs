@@ -15,6 +15,145 @@ pub fn is_widget_name(name: &str) -> bool {
 }
 
 #[cfg(test)]
+mod live_fullscreen_tests {
+    use super::*;
+    use crate::win::visibility::covers_monitor;
+    use windows::Win32::Foundation::{HINSTANCE, HWND};
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTOPRIMARY,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DestroyWindow, SetWindowPos, ShowWindow, HWND_TOP, SWP_NOACTIVATE,
+        SW_SHOWNOACTIVATE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
+    };
+
+    /// The primary monitor's full bounds, which is what a borderless game covers.
+    fn primary() -> Rect {
+        let mut mi = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        unsafe {
+            let mon = MonitorFromPoint(
+                windows::Win32::Foundation::POINT { x: 0, y: 0 },
+                MONITOR_DEFAULTTOPRIMARY,
+            );
+            assert!(GetMonitorInfoW(mon, &mut mi).as_bool(), "GetMonitorInfoW failed");
+        }
+        let r = mi.rcMonitor;
+        Rect { x: r.left, y: r.top, w: r.right - r.left, h: r.bottom - r.top }
+    }
+
+    /// A borderless, non-activating, off-taskbar window at the given rect - the shape of a
+    /// borderless-fullscreen game as far as this check is concerned.
+    ///
+    /// `WS_EX_NOACTIVATE` and `SW_SHOWNOACTIVATE` so running the suite does not steal focus from
+    /// whatever the machine is doing. That is also why the test asks `window_info` about the handle
+    /// directly instead of making it foreground: it needs to verify the reading, not win a fight with
+    /// `SetForegroundWindow`.
+    unsafe fn borderless(r: Rect) -> HWND {
+        let hwnd = CreateWindowExW(
+            WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+            w!("STATIC"),
+            w!("taskbar-eq fullscreen probe"),
+            WS_POPUP,
+            r.x,
+            r.y,
+            r.w,
+            r.h,
+            None,
+            None,
+            Some(HINSTANCE(std::ptr::null_mut())),
+            None,
+        )
+        .expect("CreateWindowExW should succeed for a STATIC popup");
+        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        // Explicitly positioned as well as created there: a popup can be moved by the shell on
+        // creation, and the whole test turns on the rect being what was asked for.
+        let _ = SetWindowPos(hwnd, Some(HWND_TOP), r.x, r.y, r.w, r.h, SWP_NOACTIVATE);
+        hwnd
+    }
+
+    #[test]
+    fn a_real_borderless_window_at_the_monitor_bounds_reads_as_fullscreen() {
+        // The end-to-end check through the real Win32 calls, which is the part the synthetic rect tests
+        // in `visibility` cannot reach. Reading `rcWork` instead of `rcMonitor`, or the wrong monitor,
+        // passes every one of those and still never fires on a game.
+        let mon = primary();
+        assert!(mon.w > 100 && mon.h > 100, "implausible monitor {mon:?}");
+        unsafe {
+            let hwnd = borderless(mon);
+            let info = window_info(hwnd).expect("a visible popup must be readable");
+            assert_eq!(
+                (info.monitor.w, info.monitor.h),
+                (mon.w, mon.h),
+                "the monitor bounds were read wrong"
+            );
+            assert!(!info.is_shell, "a STATIC popup is not a shell window");
+            assert!(
+                covers_monitor(Some(info)),
+                "a real borderless window at {mon:?} must read as covering the monitor, got {:?}",
+                info.window
+            );
+            let _ = DestroyWindow(hwnd);
+        }
+    }
+
+    #[test]
+    fn a_real_window_the_size_of_the_work_area_does_not() {
+        // The other half, and the one that protects everyday use: a window sized like a maximised one
+        // must NOT suspend the overlay. Measured against the real work area rather than a guessed
+        // taskbar height, so it is right on any taskbar size, position or scaling.
+        let mut mi = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        unsafe {
+            let mon = MonitorFromPoint(
+                windows::Win32::Foundation::POINT { x: 0, y: 0 },
+                MONITOR_DEFAULTTOPRIMARY,
+            );
+            assert!(GetMonitorInfoW(mon, &mut mi).as_bool());
+        }
+        let (m, wk) = (mi.rcMonitor, mi.rcWork);
+        if wk.right - wk.left == m.right - m.left && wk.bottom - wk.top == m.bottom - m.top {
+            // An auto-hidden taskbar leaves no work-area inset, so there is nothing to distinguish.
+            // Skipping is honest; asserting would be asserting about this machine's taskbar settings.
+            eprintln!("skipped: the work area equals the monitor, so there is no maximised case here");
+            return;
+        }
+        let work = Rect { x: wk.left, y: wk.top, w: wk.right - wk.left, h: wk.bottom - wk.top };
+        unsafe {
+            let hwnd = borderless(work);
+            let info = window_info(hwnd).expect("a visible popup must be readable");
+            assert!(
+                !covers_monitor(Some(info)),
+                "a window at the work area {work:?} must NOT read as fullscreen against monitor \
+                 {}x{} - this is what stops a maximised window suspending the overlay",
+                m.right - m.left,
+                m.bottom - m.top
+            );
+            let _ = DestroyWindow(hwnd);
+        }
+    }
+
+    #[test]
+    fn the_taskbar_itself_is_recognised_as_the_shell() {
+        // `is_shell_class` is a list of strings, and a list of strings is exactly the kind of thing that
+        // rots silently. This checks the one entry that can be verified on any machine: the real
+        // taskbar's own window.
+        let hwnd = tray_hwnd().expect("the taskbar must exist");
+        let info = window_info(hwnd).expect("the taskbar must be readable");
+        assert!(
+            info.is_shell,
+            "Shell_TrayWnd must be recognised as the shell, or the overlay would suspend whenever the \
+             taskbar had focus"
+        );
+        assert!(!covers_monitor(Some(info)), "the shell must never count as a fullscreen app");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -305,6 +444,96 @@ pub fn rect_left_of(anchor: Rect, taskbar: Rect, gap: i32, width: i32) -> Rect {
         x = taskbar.x;
     }
     Rect { x, y: taskbar.y, w: width, h: taskbar.h }
+}
+
+/// What the foreground window is, and the full bounds of the monitor it sits on.
+///
+/// Feeds `visibility::covers_monitor`, which is the only check that notices a borderless-fullscreen
+/// game - see the note there for why the shell's own notification state does not.
+///
+/// Returns None when there is no foreground window, when reading it fails, or when it is minimised.
+/// None means "no evidence of a game", which is the safe answer: a false positive here suspends the
+/// overlay on a normal desktop, and the suspend path does no rediscovery.
+pub fn foreground_window() -> Option<crate::win::visibility::Foreground> {
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    window_info(unsafe { GetForegroundWindow() })
+}
+
+/// The same reading, for a window given by handle.
+///
+/// Split out from `foreground_window` so it can be tested against a REAL window. The synthetic rect
+/// tests in `visibility` cover the predicate, but they cannot tell whether this function reads a live
+/// window correctly - and reading `rcWork` instead of `rcMonitor`, or a monitor other than the window's
+/// own, would pass every one of them while never firing on a game. A test that creates a borderless
+/// window at the monitor's bounds and asks about it directly does not have to win a fight with
+/// `SetForegroundWindow` to be honest.
+pub fn window_info(hwnd: HWND) -> Option<crate::win::visibility::Foreground> {
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetClassNameW, GetWindowRect, IsIconic, IsWindowVisible,
+    };
+    unsafe {
+        if hwnd.0.is_null() || !IsWindowVisible(hwnd).as_bool() || IsIconic(hwnd).as_bool() {
+            return None;
+        }
+        let mut wr = windows::Win32::Foundation::RECT::default();
+        GetWindowRect(hwnd, &mut wr).ok()?;
+
+        let mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        let mut mi = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if !GetMonitorInfoW(mon, &mut mi).as_bool() {
+            return None;
+        }
+        // rcMonitor, NOT rcWork. The work area excludes the taskbar, so comparing against it would
+        // call every maximised window fullscreen and suspend the overlay whenever anything was
+        // maximised - which is most of the time.
+        let mr = mi.rcMonitor;
+
+        let mut class = [0u16; 64];
+        let n = GetClassNameW(hwnd, &mut class);
+        let class = String::from_utf16_lossy(&class[..n.max(0) as usize]);
+
+        Some(crate::win::visibility::Foreground {
+            window: Rect {
+                x: wr.left,
+                y: wr.top,
+                w: wr.right - wr.left,
+                h: wr.bottom - wr.top,
+            },
+            monitor: Rect {
+                x: mr.left,
+                y: mr.top,
+                w: mr.right - mr.left,
+                h: mr.bottom - mr.top,
+            },
+            is_shell: is_shell_class(&class),
+        })
+    }
+}
+
+/// The shell's own window classes, which own the foreground on an ordinary idle desktop.
+///
+/// Kept as a named function so it can be tested without a desktop: treating these as fullscreen would
+/// suspend the overlay permanently whenever the user clicked the desktop, and because the suspend path
+/// skips rediscovery that is a deadlock in all but name. `Shell_TrayWnd` is the taskbar itself,
+/// `Progman` and `WorkerW` are the desktop, and `Windows.UI.Core.CoreWindow` covers the Start menu and
+/// the Widgets panel - all of which legitimately cover the screen at times.
+pub fn is_shell_class(class: &str) -> bool {
+    matches!(
+        class,
+        "Shell_TrayWnd"
+            | "Shell_SecondaryTrayWnd"
+            | "Progman"
+            | "WorkerW"
+            | "Windows.UI.Core.CoreWindow"
+            | "XamlExplorerHostIslandWindow"
+            | "ApplicationFrameWindow"
+    )
 }
 
 pub fn notification_state() -> i32 {

@@ -3,15 +3,19 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** Windows 10 verification dropped at your request. The Patchbay's pinned bass cable is fixed. Both documented open defects are now
+**Last updated:** found and fixed why the overlay draws over fullscreen games - borderless
+fullscreen was invisible to every signal the suspend logic had. Both documented open defects are now
 closed; all nine flourishes done, review sheet written, README current.
 
 ---
 
 ## In progress
 
-- [ ] **Nothing I can act on alone.** Both documented defects are closed. Everything left needs your
-      eyes or a recurrence of a bug.
+- [ ] **Please retest on the gaming machine.** The borderless-fullscreen fix is in. Two things to
+      check: does the overlay still draw over a game, and does the stutter still appear after 30-45
+      minutes. If it does, run `taskbar-eq.exe --diagnose` **while the game is running** (alt-tab out,
+      or use a second monitor) and send me the `foreground window:` line - that says exactly what the
+      new check sees. The log also records every suspend and resume transition.
 
 ## Waiting on you
 
@@ -31,6 +35,15 @@ closed; all nine flourishes done, review sheet written, README current.
       revert if you would rather have the old behaviour.
 
 ## Open, unresolved
+
+- [ ] **How much of the leak the fullscreen fix explains is INFERENCE, not measurement.** Confirmed:
+      borderless fullscreen was invisible to every signal, so the overlay never suspended on that
+      machine, and it kept drawing a topmost layered window over the game and kept making UIA calls into
+      the shell. Inferred: that this is why the handles and threads climbed. The chain is plausible -
+      UIA calls into an `explorer.exe` starved by a game block for far longer, and RPC worker threads
+      accumulate while they do - but I have NOT reproduced 19,000 threads, and the `--stress` harness
+      that hammers each suspect path is in the tree unmeasured, because the priority changed mid-run.
+      Do not let me call this fixed until the gaming machine says so.
 
 - [ ] **A rare test flake, understood but not fully fixed.** Five family flourish tests (VFD, VU,
       waterfall, valve, nixie) fire via the audio path, which consults the process-global `ENABLED`

@@ -180,8 +180,19 @@ There is a picture of all nine, with what to look at, in [docs/review/index.html
 
 ### It gets out of the way
 
-The tool **suspends itself** whenever a fullscreen Direct3D app or presentation mode is running, or
-the taskbar is hidden. Suspended, the overlay window is genuinely hidden rather than merely left
+The tool **suspends itself** whenever something is covering the taskbar: a fullscreen app, presentation
+mode, or a hidden taskbar.
+
+"A fullscreen app" is checked two ways, and the second matters more than it looks.
+`SHQueryUserNotificationState` reports fullscreen only for **exclusive** Direct3D - so a game in
+*borderless windowed* fullscreen, which is the default for most modern titles, left every signal saying
+"nothing is covering you". The overlay carried on drawing a topmost layered window over the game and
+carried on making UI Automation calls into the shell. Both are expensive in the way that gets reported as
+stuttering: a topmost layered window denies a fullscreen app independent flip, so it composites through
+the desktop compositor instead of presenting directly. So there is now a geometric check too - if the
+foreground window covers its monitor's full bounds and is not one of the shell's own windows, the overlay
+sleeps. Sized to the *work area* instead, that check would call every maximised window fullscreen;
+`--diagnose` prints what it sees. Suspended, the overlay window is genuinely hidden rather than merely left
 undrawn — a topmost layered window can keep a game out of exclusive fullscreen just by existing — and
 the tick drops from 16 ms to 250 ms, roughly fifteen times fewer wakeups. No drawing, and no UI
 Automation calls, which are the expensive part: each one blocks inside `explorer.exe` for about 52 ms.
@@ -190,10 +201,16 @@ Silence deliberately does **not** suspend it, or the first beat after a quiet pa
 quarter-second to appear.
 
 A watchdog checks the process handle count every 30 seconds, warns in the log at 3,000, and exits at
-30,000. That is not theoretical: an instance left running for days was measured at 18,962 threads and
-131,454 handles, and took a fullscreen game from 160 fps to 30 with dropped input. The cause is not
-yet found — **[TODO.md](TODO.md) tracks it** — so until it is, the tool bounds its own damage and
-lets autostart bring it back clean.
+30,000. That is not theoretical: an instance was measured at 18,962 threads and 131,454 handles, and took
+a fullscreen game from 160 fps to 30 with dropped input.
+
+That was originally thought to need days of uptime. It does not - it was later reported after **30 to 45
+minutes**, on a machine that plays games in borderless fullscreen, and never on one that does no
+fullscreen rendering at all. The borderless-fullscreen gap above is the leading explanation for both
+halves: no suspend, so the overlay keeps drawing over the game and keeps calling UI Automation into an
+`explorer.exe` the game has starved, and those calls block for longer and longer.
+**[TODO.md](TODO.md) records what is confirmed and what is still inference.** The watchdog stays either
+way, and bounds the damage while autostart brings it back clean.
 
 ---
 

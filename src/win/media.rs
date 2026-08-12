@@ -348,6 +348,21 @@ pub fn send(action: Action, backend: Backend) -> Result<(), String> {
 /// needs no synchronisation beyond the mutex and cannot fire from the wrong thread.
 static NOW_PLAYING: std::sync::Mutex<(String, u64)> = std::sync::Mutex::new((String::new(), 0));
 
+/// One real media-session round trip, for the leak hunt only. See `main::stress`.
+///
+/// Deliberately NOT `now_playing`, which returns a cached string: hammering that would measure a mutex
+/// read and report a reassuring zero while the thing that actually runs every 400ms went unmeasured.
+/// This does what the media thread does - resolve the session and read the track off it.
+///
+/// The caller must be in an MTA. `find_session` blocks on a WinRT async with `join()`, which deadlocks
+/// on a thread that has an STA and no message pump.
+pub fn poll_for_stress() -> String {
+    match find_session() {
+        Ok(Some((_, s))) => title_of(&s),
+        _ => String::new(),
+    }
+}
+
 /// The current track and its change counter.
 pub fn now_playing() -> (String, u64) {
     NOW_PLAYING.lock().unwrap_or_else(|e| e.into_inner()).clone()

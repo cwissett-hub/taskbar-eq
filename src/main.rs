@@ -288,6 +288,7 @@ impl Ticker {
             widget: self.rect,
             notification_state: win::shell_state::notification_state(),
             taskbar_visible: win::shell_state::taskbar_visible(),
+            fullscreen_foreground: win::shell_state::fullscreen_foreground(),
         };
         self.phases.vis = t0.elapsed().as_millis() as u32;
 
@@ -295,8 +296,11 @@ impl Ticker {
         // is unknown - and since the suspend path skips the rect rediscovery, suspending on that would
         // deadlock: no rect, so blocked, so no rediscovery, so no rect, for ever. See
         // `visibility::shell_blocks`.
-        let blocked =
-            win::visibility::shell_blocks(inputs.notification_state, inputs.taskbar_visible);
+        let blocked = win::visibility::shell_blocks(
+            inputs.notification_state,
+            inputs.taskbar_visible,
+            inputs.fullscreen_foreground,
+        );
         if blocked != win::shell_state::suspended() {
             // Logged on the TRANSITION only, so the log stays useful rather than becoming a heartbeat.
             // This is the line that will say whether a report of interference on another machine is
@@ -639,10 +643,31 @@ fn diagnose() -> Result<()> {
         if win::placement::taskbar_visible() { "YES" } else { "NO  <- auto-hide taskbar?" }
     ));
 
+    // The geometric fullscreen check, reported separately because it is the one that catches a
+    // borderless game - and therefore the line to read on a machine where the overlay is drawing over
+    // one. `SHQueryUserNotificationState` above will say 5 (accepts notifications) in that case.
+    let fg = win::placement::foreground_window();
+    let fullscreen_foreground = win::visibility::covers_monitor(fg);
+    log::write(&match fg {
+        Some(f) => format!(
+            "foreground window: {}x{} at {},{} on a {}x{} monitor{} => covers the monitor: {}",
+            f.window.w,
+            f.window.h,
+            f.window.x,
+            f.window.y,
+            f.monitor.w,
+            f.monitor.h,
+            if f.is_shell { " (the shell's own window)" } else { "" },
+            if fullscreen_foreground { "YES  <- the overlay will suspend" } else { "no" }
+        ),
+        None => "foreground window: none readable (minimised, or nothing focused)".to_string(),
+    });
+
     let inputs = win::visibility::Inputs {
         widget: rect,
         notification_state: quns,
         taskbar_visible: win::placement::taskbar_visible(),
+        fullscreen_foreground,
     };
     log::write(&format!(
         "=> would draw: {}",
@@ -938,9 +963,109 @@ fn attach_console_if_wanted(force: bool) {
     }
 }
 
+/// Hunts the resource leak by repetition, and reports what each suspect costs per thousand calls.
+///
+/// # Why this exists
+///
+/// The leak is real and severe - 18,962 threads and 131,454 handles on a days-old instance, which took
+/// a fullscreen game from 160fps to 30 with dropped input - but it has never been reproducible in
+/// minutes, so it has stayed a mystery bounded by `win::health` rather than a bug that got fixed.
+///
+/// The arithmetic is what suggested this. The pathological instance had been alive about three days and
+/// sat 131,134 handles above a healthy one. At one taskbar rediscovery every two seconds, three days is
+/// 129,600 rediscoveries. Those two numbers agreeing to within 2% is either a coincidence or the whole
+/// answer, and a loop that does 20,000 rediscoveries in a few minutes can tell which.
+///
+/// # How to read it
+///
+/// Each row reports handles and threads gained per 1,000 iterations. Anything at or above about 1.0
+/// handles per 1,000 is a leak worth chasing; a real leak of one-per-call shows up as ~1000. Noise from
+/// other activity in the process is a few handles either way, so small negatives are normal and mean
+/// nothing.
+fn stress() -> Result<()> {
+    // MTA, because UIA and WASAPI both need COM and the render thread uses the same mode. Without this
+    // the UIA row measures the failure path and reports a clean zero - which is exactly how an earlier
+    // leak probe wasted an afternoon.
+    if let Err(e) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok() {
+        println!("CoInitializeEx failed: {e}  <- the UIA row below will be meaningless");
+    }
+    println!("stress: hunting the resource leak. Each row is cost per 1,000 iterations.\n");
+    println!(
+        "  {:<26} {:>8} {:>10} {:>10} {:>9}",
+        "suspect", "iters", "handles/1k", "threads/1k", "ms/call"
+    );
+
+    // Runs `f` `iters` times and prints what it cost. Counts are sampled either side; the thread count
+    // needs a Toolhelp snapshot of the whole machine, so it is taken twice, not per iteration.
+    let run = |name: &str, iters: u32, mut f: Box<dyn FnMut() + '_>| {
+        let (h0, t0) = (win::health::handle_count(), win::health::thread_count());
+        let start = std::time::Instant::now();
+        for _ in 0..iters {
+            f();
+        }
+        let ms = start.elapsed().as_secs_f64() * 1000.0;
+        // A beat, so anything that is merely slow to be reclaimed is not reported as leaked.
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let (h1, t1) = (win::health::handle_count(), win::health::thread_count());
+        let per = |a: Option<u32>, b: Option<u32>| -> String {
+            match (a, b) {
+                (Some(a), Some(b)) => {
+                    format!("{:+.1}", (b as f64 - a as f64) * 1000.0 / iters as f64)
+                }
+                _ => "?".to_string(),
+            }
+        };
+        println!(
+            "  {name:<26} {iters:>8} {:>10} {:>10} {:>9.2}",
+            per(h0, h1),
+            per(t0, t1),
+            ms / iters as f64
+        );
+    };
+
+    // THE PRIME SUSPECT: a fresh IUIAutomation instance plus a full descendant enumeration of the
+    // taskbar, which the render loop does every two seconds for as long as it is running.
+    run("UIA taskbar_elements", 2_000, Box::new(|| {
+        let _ = win::placement::taskbar_elements();
+    }));
+    // The two cheap shell calls beside it, for contrast - if the UIA row leaks and these do not, that
+    // localises it to the UIA client rather than to COM or to talking to the shell at all.
+    run("taskbar_rect", 20_000, Box::new(|| {
+        let _ = win::placement::taskbar_rect();
+    }));
+    run("notification_state", 20_000, Box::new(|| {
+        let _ = win::placement::notification_state();
+    }));
+    // The WinRT media session poll, which runs every 400ms for the life of the process. This is the
+    // real GSMTC round trip, not the cached value `now_playing` returns - hammering the cache would
+    // measure an atomic read and report a reassuring zero.
+    run("media session poll", 1_000, Box::new(|| {
+        let _ = win::media::poll_for_stress();
+    }));
+    // Bare COM object creation, to separate "creating any COM object leaks" from "creating THIS one
+    // does".
+    run("CoCreateInstance(UIA)", 5_000, Box::new(|| {
+        let _: Result<windows::Win32::UI::Accessibility::IUIAutomation, _> = unsafe {
+            windows::Win32::System::Com::CoCreateInstance(
+                &windows::Win32::UI::Accessibility::CUIAutomation,
+                None,
+                windows::Win32::System::Com::CLSCTX_INPROC_SERVER,
+            )
+        };
+    }));
+
+    println!(
+        "\nA leak of one handle per call reads as ~1000 in the handles/1k column. Noise is a few units\n\
+         either way, so small values and small negatives mean nothing."
+    );
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    let wants_output = args.iter().any(|a| a == "--console" || a == "--diagnose" || a == "--levels");
+    let wants_output = args
+        .iter()
+        .any(|a| a == "--console" || a == "--diagnose" || a == "--levels" || a == "--stress");
     attach_console_if_wanted(wants_output);
 
     if std::env::args().any(|a| a == "--levels") {
@@ -950,6 +1075,11 @@ fn main() -> Result<()> {
     // reason the overlay is not on screen.
     if std::env::args().any(|a| a == "--diagnose") {
         return diagnose();
+    }
+    // `--stress` hunts the resource leak by hammering each thing the render loop does repeatedly and
+    // watching this process's own handle and thread counts. See `stress()`.
+    if std::env::args().any(|a| a == "--stress") {
+        return stress();
     }
     // Before anything else, so a failure during startup is recoverable from the log rather than
     // flashing past on a console that closes with the process.

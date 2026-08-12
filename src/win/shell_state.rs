@@ -43,6 +43,11 @@ const POLL_MS: u64 = 200;
 /// appears is a much worse failure than one frame of one that should not have.
 static NOTIFICATION_STATE: AtomicI32 = AtomicI32::new(0);
 static TASKBAR_VISIBLE: AtomicBool = AtomicBool::new(true);
+/// Whether the foreground window covers its whole monitor - a borderless-fullscreen game.
+///
+/// Defaults to FALSE, matching the other two: the safe default is the one that shows the meter, because
+/// a meter that never appears is a far worse failure than one frame of one that should not have.
+static FULLSCREEN_FOREGROUND: AtomicBool = AtomicBool::new(false);
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
 /// True while the overlay is BLOCKED - a fullscreen or presentation-mode app is on top, or the taskbar
@@ -84,6 +89,14 @@ pub fn start() {
 fn poll_once() {
     NOTIFICATION_STATE.store(super::placement::notification_state(), Ordering::Relaxed);
     TASKBAR_VISIBLE.store(super::placement::taskbar_visible(), Ordering::Relaxed);
+    // Polled here rather than on the render thread with the rest, and for the same reason the other
+    // two are: these are the calls that reach outside this process. `GetForegroundWindow` and
+    // `GetMonitorInfoW` are cheap by comparison with the notification state, but they belong with it -
+    // one thread owns talking to the shell, and the render loop only ever reads atomics.
+    FULLSCREEN_FOREGROUND.store(
+        crate::win::visibility::covers_monitor(super::placement::foreground_window()),
+        Ordering::Relaxed,
+    );
 }
 
 /// The shell's notification state as of the last poll. Free to call.
@@ -94,6 +107,11 @@ pub fn notification_state() -> i32 {
 /// Whether the taskbar was on screen as of the last poll. Free to call.
 pub fn taskbar_visible() -> bool {
     TASKBAR_VISIBLE.load(Ordering::Relaxed)
+}
+
+/// Whether a borderless-fullscreen app was covering the screen as of the last poll. Free to call.
+pub fn fullscreen_foreground() -> bool {
+    FULLSCREEN_FOREGROUND.load(Ordering::Relaxed)
 }
 
 /// Records whether the overlay is currently blocked. See `SUSPENDED`.
@@ -201,6 +219,7 @@ mod tests {
 
         for state in [QUNS_FULLSCREEN, QUNS_PRESENTATION] {
             let blocked = !should_show(&Inputs {
+                fullscreen_foreground: false,
                 widget,
                 notification_state: state,
                 taskbar_visible: true,
@@ -215,7 +234,12 @@ mod tests {
         }
 
         // A hidden taskbar blocks too - the other way the overlay has nowhere to be.
-        let blocked = !should_show(&Inputs { widget, notification_state: 0, taskbar_visible: false });
+        let blocked = !should_show(&Inputs {
+            widget,
+            notification_state: 0,
+            taskbar_visible: false,
+            fullscreen_foreground: false,
+        });
         assert!(blocked, "a hidden taskbar must block the overlay");
 
         // And it comes back.

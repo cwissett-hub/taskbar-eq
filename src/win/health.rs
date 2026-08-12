@@ -46,7 +46,12 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use windows::Win32::Foundation::HANDLE;
-use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessHandleCount};
+use windows::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+};
+use windows::Win32::System::Threading::{
+    GetCurrentProcess, GetCurrentProcessId, GetProcessHandleCount,
+};
 
 /// How often the count is checked.
 ///
@@ -126,12 +131,46 @@ pub fn start() {
 }
 
 /// This process's open handle count, or None if the call fails.
-fn handle_count() -> Option<u32> {
+pub fn handle_count() -> Option<u32> {
     let mut n = 0u32;
     let h: HANDLE = unsafe { GetCurrentProcess() };
     // A failure here is not worth reporting every 30 seconds: the watchdog degrades to doing nothing,
     // which is exactly what the app did before it existed.
     unsafe { GetProcessHandleCount(h, &mut n) }.ok().map(|()| n)
+}
+
+/// This process's thread count, or None if the snapshot fails.
+///
+/// Deliberately NOT what the watchdog polls - see the module note on handles being the cheap proxy.
+/// This exists for the leak hunt, where the distinction matters: 19,000 threads is what actually
+/// stalled the game, and knowing whether a suspect path leaks threads, handles, or both is the
+/// difference between a diagnosis and a growth curve.
+///
+/// Toolhelp snapshots EVERY thread on the machine and filters by owning process, which is why it is
+/// too expensive for a 30-second poll but fine for a deliberate measurement.
+pub fn thread_count() -> Option<u32> {
+    unsafe {
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0).ok()?;
+        let mut e = THREADENTRY32 {
+            dwSize: std::mem::size_of::<THREADENTRY32>() as u32,
+            ..Default::default()
+        };
+        let me = GetCurrentProcessId();
+        let mut n = 0u32;
+        if Thread32First(snap, &mut e).is_ok() {
+            loop {
+                if e.th32OwnerProcessID == me {
+                    n += 1;
+                }
+                e.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+                if Thread32Next(snap, &mut e).is_err() {
+                    break;
+                }
+            }
+        }
+        let _ = windows::Win32::Foundation::CloseHandle(snap);
+        Some(n)
+    }
 }
 
 #[cfg(test)]
@@ -155,6 +194,30 @@ mod tests {
         assert!(WARN_HANDLES > 320 * 5, "the warning would fire on a healthy instance");
         assert!(FATAL_HANDLES > WARN_HANDLES * 5, "no room between warning and exit");
         assert!(FATAL_HANDLES < 131_454, "the exit must trip well before the measured pathology");
+    }
+
+    #[test]
+    fn this_process_reports_a_plausible_thread_count() {
+        // Same guard as the handle count, for the same reason: a probe that returns 0 cannot fire. The
+        // test harness runs tests in parallel threads, so this is comfortably above 1.
+        let n = thread_count().expect("the Toolhelp snapshot must work on our own process");
+        assert!(n >= 2, "{n} threads is implausibly few - the snapshot is not filtering to us");
+        assert!(n < 5_000, "{n} threads in the test harness suggests the filter is not working");
+    }
+
+    #[test]
+    fn counting_threads_does_not_itself_leak() {
+        // The snapshot is a HANDLE, and a leak hunt whose instrument leaks is worse than no hunt. This
+        // would have caught a missing CloseHandle, which is exactly the class of bug being looked for.
+        let before = handle_count().expect("handle count");
+        for _ in 0..300 {
+            let _ = thread_count();
+        }
+        let after = handle_count().expect("handle count");
+        assert!(
+            after < before + 30,
+            "counting threads 300 times leaked handles: {before} -> {after}"
+        );
     }
 
     #[test]
