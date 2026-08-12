@@ -3,7 +3,10 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** measured the leak for the first time. Two real per-call leaks found and reduced
+**Last updated:** vapor now has a flourish (a vertical roll). Correction: the flourishes were
+NINE of THIRTEEN families, not all of them - radar, chroma and fluid still have none.
+
+Earlier: measured the leak for the first time. Two real per-call leaks found and reduced
 4.4x - and the arithmetic says neither of them is the fault you reported. Both documented open defects are now
 closed; all nine flourishes done, review sheet written, README current.
 
@@ -41,6 +44,19 @@ closed; all nine flourishes done, review sheet written, README current.
 - [ ] **"Any theme" is now uniform per FAMILY, not per colourway** - my judgement call, not a bug fix.
       A colourway in a small family is now individually likelier than one in a large family. Three-line
       revert if you would rather have the old behaviour.
+
+## In progress
+
+- [ ] **Three families still have no flourish: radar, chroma, fluid.** I had been saying "all nine
+      families", which was wrong - there are thirteen. A colourway's `flourish` rate is a documented
+      setting that does nothing on those three, which is the same "looks like a setting, is not" problem
+      as the dead config fields. Planned: **radar** takes jamming or a chaff bloom, **chroma** starves an
+      ink plate so a stripe drops out, **fluid** cavitates.
+- [ ] **New family on request: a flame organ (a Rubens' tube).** Pipes along the bottom, each emitting a
+      vertical plume whose HEIGHT is its band - a position cue, which is what this project prefers.
+      Cheap: a bottom-seeded heat-diffusion buffer, one pass over ~11,400 cells, the same cost class as
+      the spectrogram's history. Three colourways fall out of one buffer (flame, vapour, plasma).
+      Prototype and render FIRST, before any test machinery.
 
 ## Open, unresolved
 

@@ -99,8 +99,73 @@ const TERRAIN_SPAN_LEVEL: f32 = 0.456;
 /// Below 1 to expand the low half of the distribution, where most band-frames actually live.
 const TERRAIN_GAMMA: f32 = 0.6;
 
+/// The flourish: the picture loses vertical sync and rolls.
+///
+/// Of every fault a CRT can have, this is the one that needs no explaining - the image slides upward
+/// and wraps, with the blanking interval showing as a dark bar travelling with the seam. It is also the
+/// only one of the nine that is a fault of the DISPLAY rather than of the signal, which suits the one
+/// family here that is pretending to be a screen rather than an instrument.
+///
+/// 1500ms, and the roll DECELERATES with the envelope, so it reads as sync being lost and then pulled
+/// back rather than as a fixed-speed pan.
+///
+/// 3.2px per frame at full envelope is about 190px a second - a little over three screen heights on a
+/// 60px panel. Fast, deliberately: a slow roll reads as the scene scrolling, which is what this family
+/// already does on purpose with `scroll`, and the whole point is that it should look broken.
+const ROLL_MS: f32 = 1500.0;
+const ROLL_PX_PER_FRAME: f32 = 3.2;
+
+/// Height of the dark blanking bar drawn at the wrap seam.
+///
+/// Without it the effect reads as a pan rather than a roll, because nothing marks where the picture
+/// ends and begins again. 3px at a 60px panel - one is invisible against the grid, and much more eats
+/// the scene it is supposed to be interrupting.
+const ROLL_SEAM_PX: i32 = 3;
+
+/// Rolls the panel interior vertically by `offset` pixels, wrapping, and marks the seam.
+///
+/// Operates on the composed frame rather than on the scene's geometry, and that is the point: a real
+/// vertical-sync fault displaces the raster, not the thing being drawn. Shifting the horizon and the
+/// grid separately would produce a scene drawn from a different viewpoint, which is not the same
+/// picture moved.
+///
+/// The rows outside `top..top + span` are left alone, so the bezel and the panel edge stay put - they
+/// are the physical frame the picture is rolling inside.
+fn roll(c: &mut Canvas, top: i32, span: i32, offset: i32) {
+    if span <= 1 || offset.rem_euclid(span) == 0 {
+        return;
+    }
+    let off = offset.rem_euclid(span);
+    let src = c.clone();
+    let w = c.width();
+    for y in 0..span {
+        // Reading from BELOW the destination sends the picture upward, which is the direction a
+        // vertical-sync fault rolls on every set I have seen described.
+        let sy = top + (y + off).rem_euclid(span);
+        for x in 0..w {
+            let p = src.get(x, sy);
+            c.punch_rect(x, top + y, 1, 1);
+            if p.a > 0 {
+                c.fill_rect(x, top + y, 1, 1, p);
+            }
+        }
+    }
+    // The blanking bar sits at the seam - the row where the bottom of the picture meets its own top.
+    let seam = top + (span - off).rem_euclid(span);
+    for k in 0..ROLL_SEAM_PX {
+        let y = top + (seam - top + k).rem_euclid(span);
+        c.fill_rect(0, y, w, 1, Rgba::new(0, 0, 0, 210));
+    }
+}
+
 #[derive(Default)]
 pub struct Vapor {
+    /// The flourish: the picture loses vertical sync. See `ROLL_MS`.
+    flourish: crate::dsp::flourish::Trigger,
+    roll: crate::dsp::flourish::Envelope,
+    /// Accumulated roll offset in pixels. Reset to zero the moment the envelope expires, so the scene
+    /// cannot be left permanently displaced - which is what a purely accumulating offset would do.
+    roll_px: f32,
     /// Grid scroll phase, wrapping 0->1.
     scroll: f32,
     /// The shared spectral-flux onset detector - see `dsp::onset`. The fluid tank uses the same
@@ -341,6 +406,23 @@ impl Family for Vapor {
         // `update_bolt`.
         let bolt = self.update_bolt(d, t, dt);
 
+        // THE FLOURISH: loss of vertical sync. Advanced here, with everything else that reads dt, and
+        // applied to the composed frame at the end of `draw`.
+        let fired = self.flourish.update(&d.levels, d.dt_ms, theme.flourish);
+        let rolling = self.roll.update(fired, d.dt_ms, ROLL_MS);
+        if rolling > 0.001 {
+            self.roll_px += ROLL_PX_PER_FRAME * rolling * dt;
+            if !self.roll_px.is_finite() {
+                self.roll_px = 0.0;
+            }
+        } else {
+            // Snapped rather than eased back. At three pixels a frame the last frame of the roll is
+            // already a blur, so the return is not visible - and any alternative that eases the offset
+            // to zero has to decide what to do when the envelope expires mid-screen, which is how a
+            // scene ends up permanently displaced.
+            self.roll_px = 0.0;
+        }
+
         let before_scroll = self.scroll;
         let step = t.scroll * 0.010 * dt;
         // `rem_euclid` rather than `fract`: fract of a negative value is negative, which would send
@@ -559,6 +641,12 @@ impl Family for Vapor {
             glow.bloom(theme.bloom as i32, 0.5);
             c.draw_over(&glow);
         }
+        // The roll goes on the composed, bloomed frame and BEFORE the clip, so the displaced picture is
+        // still confined to the rounded panel. After the bezel it would roll the panel's own edge, which
+        // is the one part of this that is meant to be a physical object.
+        if self.roll_px.abs() >= 1.0 {
+            roll(c, 3, (h - 6).max(1), self.roll_px as i32);
+        }
         c.clip_to_rounded_rect(1, 2, w - 2, h - 4, 4);
 
         let e = Rgba::from_hex(&theme.edge, theme.edge_alpha);
@@ -570,6 +658,141 @@ impl Family for Vapor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Mean luminance of each row of the panel interior - the picture's vertical profile.
+    fn row_profile(c: &Canvas) -> Vec<f64> {
+        (3..(c.height() - 3))
+            .map(|y| {
+                let mut acc = 0.0;
+                for x in 0..c.width() {
+                    let p = c.get(x, y);
+                    acc += (0.2126 * p.r as f64 + 0.7152 * p.g as f64 + 0.0722 * p.b as f64)
+                        * (p.a as f64 / 255.0);
+                }
+                acc / c.width() as f64
+            })
+            .collect()
+    }
+
+    /// How far the picture has been displaced vertically between two frames, in pixels.
+    ///
+    /// The lag that best aligns the two row profiles, searched over the whole interior since a roll can
+    /// be anywhere in its cycle. Measured off the composed frame rather than from `roll_px`, because the
+    /// claim is that the PICTURE moves - reading back the field that drives it would assert that the
+    /// arithmetic equals itself.
+    fn roll_lag(a: &Canvas, b: &Canvas) -> i32 {
+        let (pa, pb) = (row_profile(a), row_profile(b));
+        let n = pa.len() as i32;
+        let mut best = (f64::MAX, 0i32);
+        for lag in 0..n {
+            let mut acc = 0.0;
+            for y in 0..n {
+                // Wrapped, because the effect wraps: comparing only the overlap would score a large
+                // displacement on fewer rows and make the metric prefer small ones.
+                acc += (pa[y as usize] - pb[((y + lag) % n) as usize]).abs();
+            }
+            if acc < best.0 {
+                best = (acc, lag);
+            }
+        }
+        // Reported as the shorter way round, so a roll of one pixel upward is 1 and not n-1.
+        let l = best.1;
+        if l > n / 2 {
+            l - n
+        } else {
+            l
+        }
+    }
+
+    /// Renders `frames` frames of steady audio, forcing the flourish on the first if asked.
+    fn roll_frames(fire: bool, frames: usize) -> Canvas {
+        let mut t = builtin::all()
+            .into_iter()
+            .find(|t| t.family == "vapor")
+            .expect("no vapor colourway");
+        // Zero, so the audio path cannot fire a second time; the trigger is forced instead. See the
+        // note in `Trigger::update` about `REQUEST` being process-global.
+        t.flourish = 0.0;
+        let mut v = Vapor::default();
+        let mut c = Canvas::new(190, 60);
+        let d = spectrum(0.35);
+        for _ in 0..30 {
+            v.draw(&mut c, &t, &d);
+        }
+        if fire {
+            v.flourish.force_next();
+        }
+        for _ in 0..frames {
+            v.draw(&mut c, &t, &d);
+        }
+        c
+    }
+
+    #[test]
+    fn the_flourish_rolls_the_picture_vertically() {
+        // SAMPLED AT SEVERAL FRAMES, because the displacement WRAPS and one sample can land anywhere in
+        // the cycle. The first version measured a single frame 20 in and read 3px: at 3.2px a frame with
+        // a decaying envelope that is about 57px of travel, which on a 54px interior is a full
+        // revolution plus three. It reported "the picture did not roll" about a picture that had rolled
+        // all the way round.
+        //
+        // Compared against the no-flourish frame at the SAME index, never against another rolled frame:
+        // this family scrolls its grid on purpose, so consecutive frames differ vertically whatever the
+        // flourish is doing, and only the same-index comparison isolates the effect.
+        let lags: Vec<i32> = [4usize, 8, 12, 16]
+            .iter()
+            .map(|f| roll_lag(&roll_frames(false, *f), &roll_frames(true, *f)))
+            .collect();
+        let worst = lags.iter().map(|l| l.abs()).max().unwrap();
+        assert!(
+            worst >= 12,
+            "the picture did not roll: best alignments {lags:?} across frames 4-16, so it is the same \
+             picture in the same place"
+        );
+        // Direction, judged at 4 frames only - about 12px, comfortably under half the interior, so the
+        // sign is unambiguous there. `roll` reads from BELOW the destination, which sends the picture
+        // upward, the way a vertical-sync fault rolls.
+        //
+        // A NEGATIVE lag is upward, and the convention is worth spelling out because I asserted it the
+        // wrong way round first: `roll_lag` finds the shift that makes `rolled[y + lag]` match
+        // `steady[y]`, so content sitting at y in the steady frame is found at y + lag in the rolled
+        // one. Content moving up means finding it at a SMALLER index, hence lag < 0.
+        //
+        // The measured series across the four samples is -12, -24, +18, +8 - monotone upward travel that
+        // wraps, since -36 and -46 on a 54px interior are +18 and +8.
+        assert!(lags[0] < 0, "the picture rolled the wrong way at 4 frames: {lags:?}");
+    }
+
+    #[test]
+    fn the_roll_leaves_a_dark_seam() {
+        // The seam is what makes it read as a roll rather than a pan, so it is asserted separately: the
+        // darkest row of the rolled frame must be markedly darker than the darkest row without it.
+        let rolled = row_profile(&roll_frames(true, 20));
+        let steady = row_profile(&roll_frames(false, 20));
+        let darkest = |v: &[f64]| v.iter().cloned().fold(f64::MAX, f64::min);
+        let (a, b) = (darkest(&rolled), darkest(&steady));
+        assert!(
+            a < b * 0.6 || a < 2.0,
+            "no blanking bar: darkest row {a:.1} against {b:.1} without the flourish"
+        );
+    }
+
+    #[test]
+    fn the_picture_comes_back_exactly_where_it_was() {
+        // The failure this exists to catch is a scene left PERMANENTLY displaced, which is what a purely
+        // accumulating offset does when the envelope expires mid-screen. 120 frames is 2s against a
+        // 1500ms envelope, so the roll is long over.
+        //
+        // Byte-identical, not merely realigned: this family's scroll phase and terrain history are
+        // stateful, and an effect that perturbed them would show up here and nowhere else.
+        let rolled = roll_frames(true, 120);
+        let steady = roll_frames(false, 120);
+        assert_eq!(
+            rolled.bits(),
+            steady.bits(),
+            "the picture did not return to where it started"
+        );
+    }
     use crate::themes::builtin;
 
     fn spectrum(level: f32) -> FrameData {
