@@ -3,7 +3,10 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** vapor now has a flourish (a vertical roll). Correction: the flourishes were
+**Last updated:** the FLAME ORGAN ships - a new family, 7 colourways, its own flourish. 100
+colourways across 14 families.
+
+Earlier: vapor now has a flourish (a vertical roll). Correction: the flourishes were
 NINE of THIRTEEN families, not all of them - radar, chroma and fluid still have none.
 
 Earlier: measured the leak for the first time. Two real per-call leaks found and reduced
@@ -52,11 +55,9 @@ closed; all nine flourishes done, review sheet written, README current.
       setting that does nothing on those three, which is the same "looks like a setting, is not" problem
       as the dead config fields. Planned: **radar** takes jamming or a chaff bloom, **chroma** starves an
       ink plate so a stripe drops out, **fluid** cavitates.
-- [ ] **New family on request: a flame organ (a Rubens' tube).** Pipes along the bottom, each emitting a
-      vertical plume whose HEIGHT is its band - a position cue, which is what this project prefers.
-      Cheap: a bottom-seeded heat-diffusion buffer, one pass over ~11,400 cells, the same cost class as
-      the spectrogram's history. Three colourways fall out of one buffer (flame, vapour, plasma).
-      Prototype and render FIRST, before any test machinery.
+- [ ] **Judge the seven flame colourways** - item 11 on the review sheet. Especially **Strontium**:
+      crimson wants to be dark, and dark is what you rejected, so it is held light by starting at a
+      bright rose. Say if it has drifted back toward heavy.
 
 ## Open, unresolved
 

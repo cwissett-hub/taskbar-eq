@@ -252,7 +252,7 @@ colourway files, which hot-reload on save and can replace a built-in by reusing 
 **Last updated: 2026-08-10.** Full test suite green (520 at the time of writing), release build
 warning-free. The colourway and family counts below are asserted by a test; the test count itself is
 a snapshot and can drift.
-**93 colourways across 13 families.**
+**100 colourways across 14 families.**
 
 | | Feature | State |
 |---|---|---|
@@ -334,6 +334,23 @@ is the interesting part — see RGB wave below.
 | Colourway | Character |
 |---|---|
 | Spectrum · Process (CMYK) · Barcode · Misregister · Halftone | Each leans on a different element of his vocabulary |
+
+**Flame organ** — a **Rubens' tube**: a perforated gas pipe driven by sound, where the flame height traces
+the wave inside. A manifold of nozzles along the bottom, each burning to a height set by its band, and the
+only family whose reading is carried by something that looks alive. Not a fluid simulation — a
+bottom-seeded heat-diffusion field, one pass over ~10,000 cells, the same cost class as the spectrogram's
+history buffer.
+
+The cooling **subtracts** rather than multiplies, and that is what makes it legible: a multiplicative
+decay would make plume height logarithmic in the band, so a loud burner would stand only slightly taller
+than a quiet one and the display would read as brightness. Subtracting a constant per row makes height
+linear, so the plumes are a profile you can compare across — the same position-over-intensity rule the
+nixie and valve families are built on. Faintness comes from **alpha**, not from a dark colour: the body is
+translucent throughout, which is what makes the flames read as ghostly rather than as solid shapes.
+
+| Colourway | Character |
+|---|---|
+| Sodium · Propane · Copper · Strontium · Potassium · Plasma · Rainbow flame | Flame tests, mostly: the ordinary warm gas flame, then what one looks like burning *correctly* (blue with a white core), copper-salt green, flare crimson, pale lilac, and a violet-to-cyan plasma. Rainbow sweeps hue across the manifold, which suits a rank of physically separate burners better than it suits a continuous display |
 
 **Chroma field** — Pantone's *geometry*, not just his surface. Hard-edged vertical stripes filling the
 whole panel in spectrum order, where each stripe's **width** is its band and the widths are
@@ -496,7 +513,7 @@ The app also writes that log on every normal launch, so a failure can be reporte
 
 ## Themes
 
-**93 colourways across 13 families.** A *family* is a renderer with fixed geometry — code. A
+**100 colourways across 14 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
 **Segmented VFD** — a smoked-glass panel with discrete stacked segments, a faint dormant grid,

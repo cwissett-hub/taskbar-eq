@@ -91,48 +91,28 @@ Regenerate any of these with <code>cargo test --release dump_flourishes -- --ign
   <p class="judge"><strong>What I want your eyes on:</strong> Whether the panel now reads as too slack. Pinning is 0% on every cable at both widths, but it cost about a quarter of the separation between cables. An intermediate value keeps more separation and leaves the bass cable pinned 29% of the time - say which trade you prefer.</p>
 </section>
 <section>
-  <h2><span class="n">11</span>NEW: a flame organ (a Rubens&rsquo; tube) &mdash; prototype</h2>
-  <p class="what">Your idea: pipes along the bottom emitting plumes that show the waveform. A manifold of
+  <h2><span class="n">11</span>NEW FAMILY: the flame organ (a Rubens&rsquo; tube)</h2>
+  <p class="what">Your idea, now a real family: seven colourways, selectable from the tray. A manifold of
   gas nozzles, each burning to a height set by its band. Not a fluid simulation &mdash; a bottom-seeded
-  heat-diffusion buffer, one pass over ~10,000 cells, the same cost class as the spectrogram's history.
-  The cooling SUBTRACTS rather than multiplies, which is what makes plume height linear in the band
-  rather than logarithmic &mdash; so it reads as a profile you can compare across, not as brightness.</p>
-  <figure><img src="flame-prototype.png" alt="flame organ prototype">
-  <figcaption>rows: quiet &middot; normal &middot; loud &middot; a comb (alternating loud and quiet band
-  groups), which is the row that shows whether the per-band reading is legible</figcaption></figure>
-  <p class="judge"><strong>What I want your eyes on:</strong> this is the <em>ghostly</em> pass. Faintness
-  now comes from ALPHA, not from a dark colour: the body is translucent throughout (0.34 rising to 0.80
-  with heat) and the ramp stays pale the whole way up, with the dark red at the cool end gone entirely. It
-  read as heavy and solid because a dark maroon <em>is</em> heavy - dimness and insubstantiality are not
-  the same thing.<br><br>
-  The distinction from the watercolour version three passes back is worth keeping hold of, because it is
-  easy to lose: that was soft EDGES plus a wide low-alpha fringe. This is a translucent BODY with the edge
-  still tight. Softness in the alpha, not in the falloff.<br><br>
-  <strong>Second file:</strong> <code>flame-actual-size.png</code> is 1x, which is what appears on the
-  taskbar. The 3x view here exaggerates everything.<br><br>
-  Earlier: the <em>warmth</em> pass on top of
-  the <em>less watercolour</em> one. Warmth comes from a fire lighting its surroundings, not from softening
-  its own edges, so it is three separate cues: a two-stage spill (a bright halo close in, a faint one
-  reaching much further), the manifold lit per-column by the plume standing on it, and an ember wash on the
-  panel scaled by how hard the whole rank is burning. All three are drawn BEFORE the opaque body, so they
-  cost no crispness &mdash; the ordering is doing the work.<br><br>
-  <strong>It costs the most of any family and I measured it rather than guessing:</strong> 2.81ms a frame
-  against 1.09ms with the glow removed, so the glow was 61% of it. The wide pass is now recomputed every
-  third frame and cached, which is a 20Hz ambient under a 60Hz flame and invisible &mdash; 2.06ms, level
-  with <code>segmented</code> at 1.84ms.<br><br>
-  Earlier passes, for the record: this is the <em>less watercolour</em> version.
-  The wash came from three things, all now changed: the whole field was bloomed rather than just the hot
-  core, the coolest zone was drawn as a broad low-alpha gradient, and the diffusion bled too far sideways.
-  The field is now posterised to five discrete levels drawn at full alpha, only the core blooms, and the
-  body goes straight onto the opaque panel &mdash; the arrangement the patchbay and valve families already
-  use.<br><br>
-  Overshooting it was instructive: raising the draw floor to get hard edges also killed the pilot flames,
-  so the quiet row rendered as bare nozzle stubs &mdash; a manifold that looks switched off. The pilot seed
-  is raised to clear the floor now.<br><br>
-  <strong>Still not right:</strong> one or two plumes spread into solid funnels rather than tapering
-  (clearest in the loud and comb rows, right of centre) &mdash; I think that is two neighbours merging.
-  Say the word and I will chase it. Otherwise the open question is the colourways: flame, vapour and plasma
-  all fall out of this same buffer with a different ramp, and a family needs five.</p>
+  heat-diffusion field, ~2ms a frame, level with the segmented VFD. The cooling SUBTRACTS rather than
+  multiplies, which is what makes height linear in the band rather than logarithmic, and faintness comes
+  from ALPHA rather than from a dark colour, which is what makes it ghostly rather than heavy.</p>
+  <figure><img src="flame-colourways.png" alt="the seven flame colourways">
+  <figcaption>Sodium &middot; Propane &middot; Copper &middot; Strontium &middot; Potassium &middot; Plasma
+  &middot; Rainbow flame. Flame tests, mostly &mdash; Propane is what a gas flame looks like burning
+  <em>correctly</em>. Each row is the same comb of loud and quiet bands, so tall and short plumes appear in
+  every one. <code>flame-actual-size.png</code> is the 1x view.</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> the seven ramps, and whether Strontium holds
+  up &mdash; crimson wants to be dark, and dark is what you rejected, so it is held light by starting at a
+  bright rose rather than a blood red.<br><br>
+  <strong>Two real bugs came out of testing this</strong>, both found by assertions rather than by looking:
+  the nozzle geometry was computed from the interior width in one place and the canvas width in another, so
+  the panel drew <em>thirteen</em> nozzle stubs and only <em>twelve</em> of them had a flame; and the ember
+  wash was driven by the audio level rather than by the fire, so during a flashback the panel stayed warm
+  while the flames were out.<br><br>
+  <strong>The flourish is a flashback:</strong> the pressure drops, every burner guts to its pilot, then an
+  ignition front runs along the manifold relighting each one with an overshoot flare. Both the fault and
+  the ritual, and it drives the seeding that was already there.</p>
 </section>
 <footer>
 Generated from the renderers themselves, not drawn by hand. Progress log:

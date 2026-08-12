@@ -35,6 +35,13 @@ pub fn all() -> Vec<Theme> {
         vu_hot_pink(),
         vu_lime(),
         vu_rgb_wave(),
+        flame_sodium(),
+        flame_propane(),
+        flame_copper(),
+        flame_strontium(),
+        flame_potassium(),
+        flame_plasma(),
+        flame_rainbow(),
         nixie_orange(),
         nixie_ice(),
         nixie_neon_green(),
@@ -2753,6 +2760,198 @@ pub fn fluid_pantone() -> Theme {
             ..FluidParams::default()
         },
         ..fluid_base()
+    }
+}
+
+
+// ---------------------------------------------------------------------------------------------------
+// Flame organ
+// ---------------------------------------------------------------------------------------------------
+
+/// Shared settings for the flame organ. See `render::flame`.
+///
+/// `bloom` is deliberately modest and is NOT what makes this family glow: the renderer builds its own
+/// two-stage spill from the heat field, because a flame is a volume of light and the colourway's bloom is
+/// tuned for point sources like a cathode or a lamp. What `bloom` still controls here is the hot core.
+fn flame_base() -> Theme {
+    Theme {
+        family: "flame".into(),
+        texture: Texture::None_,
+        ghost: 0.0,
+        bloom: 3.0,
+        glow_strength: 0.55,
+        // A flame has mass. Snapping to the band makes the plumes flicker as data rather than burn, and
+        // the diffusion field already adds its own liveliness on top of whatever arrives.
+        ballistics: Ballistics { attack: 0.55, decay: 0.14, peak_fall: 0.006 },
+        ..Theme::default()
+    }
+}
+
+/// The ramps are PALE ALL THE WAY DOWN, which is the family's one hard rule.
+///
+/// `render::flame` gets faintness from alpha - the body is translucent, 0.34 rising to 0.80 with heat -
+/// so a ramp does not need, and must not have, a dark cool end. An early sodium ramp started at #7a1500
+/// and the flames read as heavy and solid instead of ghostly; dimness and insubstantiality are not the
+/// same property. Every stop here is a colour a flame of that chemistry actually emits, at full
+/// luminance, and the alpha does the rest.
+///
+/// Sodium: the ordinary warm gas flame, and the one the renderer was tuned against.
+pub fn flame_sodium() -> Theme {
+    Theme {
+        id: "flame-sodium".into(),
+        name: "Sodium".into(),
+        lit: "#ffb070".into(),
+        hot: "#fff6ea".into(),
+        panel: "#0b0705".into(),
+        panel_alpha: 1.0,
+        edge: "#c9722f".into(),
+        edge_alpha: 0.18,
+        zones: vec![
+            Zone { upto: 0.30, lit: "#ff8a4a".into(), hot: "#ff8a4a".into() },
+            Zone { upto: 0.55, lit: "#ffb070".into(), hot: "#ffb070".into() },
+            Zone { upto: 0.78, lit: "#ffd9a8".into(), hot: "#ffd9a8".into() },
+            Zone { upto: 1.01, lit: "#fff6ea".into(), hot: "#fff6ea".into() },
+        ],
+        ..flame_base()
+    }
+}
+
+/// Propane: what a gas flame looks like when it is burning CORRECTLY - blue, with a white-hot core.
+///
+/// The most physically honest of the set and the least like anything else in the project.
+pub fn flame_propane() -> Theme {
+    Theme {
+        id: "flame-propane".into(),
+        name: "Propane".into(),
+        lit: "#6ec8ff".into(),
+        hot: "#f2fbff".into(),
+        panel: "#04070b".into(),
+        panel_alpha: 1.0,
+        edge: "#2f7ec9".into(),
+        edge_alpha: 0.18,
+        zones: vec![
+            Zone { upto: 0.30, lit: "#2f7ee0".into(), hot: "#2f7ee0".into() },
+            Zone { upto: 0.55, lit: "#6ec8ff".into(), hot: "#6ec8ff".into() },
+            Zone { upto: 0.78, lit: "#b8ecff".into(), hot: "#b8ecff".into() },
+            Zone { upto: 1.01, lit: "#f2fbff".into(), hot: "#f2fbff".into() },
+        ],
+        ..flame_base()
+    }
+}
+
+/// Copper: the flame test for copper salts, a green nothing else in this project goes near.
+pub fn flame_copper() -> Theme {
+    Theme {
+        id: "flame-copper".into(),
+        name: "Copper".into(),
+        lit: "#7cf0a8".into(),
+        hot: "#eeffee".into(),
+        panel: "#030805".into(),
+        panel_alpha: 1.0,
+        edge: "#2fa05e".into(),
+        edge_alpha: 0.18,
+        zones: vec![
+            Zone { upto: 0.30, lit: "#2fd07a".into(), hot: "#2fd07a".into() },
+            Zone { upto: 0.55, lit: "#7cf0a8".into(), hot: "#7cf0a8".into() },
+            Zone { upto: 0.78, lit: "#c2ffd6".into(), hot: "#c2ffd6".into() },
+            Zone { upto: 1.01, lit: "#eeffee".into(), hot: "#eeffee".into() },
+        ],
+        ..flame_base()
+    }
+}
+
+/// Strontium: the crimson of a distress flare.
+///
+/// The hardest of the seven to keep ghostly, because crimson wants to be dark. Held light by starting at
+/// a bright rose rather than a blood red - see the note on `flame_sodium` for what a dark cool end did.
+pub fn flame_strontium() -> Theme {
+    Theme {
+        id: "flame-strontium".into(),
+        name: "Strontium".into(),
+        lit: "#ff8fa8".into(),
+        hot: "#fff0f2".into(),
+        panel: "#0a0406".into(),
+        panel_alpha: 1.0,
+        edge: "#c9384f".into(),
+        edge_alpha: 0.18,
+        zones: vec![
+            Zone { upto: 0.30, lit: "#ff5a78".into(), hot: "#ff5a78".into() },
+            Zone { upto: 0.55, lit: "#ff8fa8".into(), hot: "#ff8fa8".into() },
+            Zone { upto: 0.78, lit: "#ffc6d2".into(), hot: "#ffc6d2".into() },
+            Zone { upto: 1.01, lit: "#fff0f2".into(), hot: "#fff0f2".into() },
+        ],
+        ..flame_base()
+    }
+}
+
+/// Potassium: pale lilac, the most delicate of the set.
+pub fn flame_potassium() -> Theme {
+    Theme {
+        id: "flame-potassium".into(),
+        name: "Potassium".into(),
+        lit: "#c9a8ff".into(),
+        hot: "#f6f0ff".into(),
+        panel: "#06040b".into(),
+        panel_alpha: 1.0,
+        edge: "#7a4fc9".into(),
+        edge_alpha: 0.18,
+        zones: vec![
+            Zone { upto: 0.30, lit: "#9a6eff".into(), hot: "#9a6eff".into() },
+            Zone { upto: 0.55, lit: "#c9a8ff".into(), hot: "#c9a8ff".into() },
+            Zone { upto: 0.78, lit: "#e4d6ff".into(), hot: "#e4d6ff".into() },
+            Zone { upto: 1.01, lit: "#f6f0ff".into(), hot: "#f6f0ff".into() },
+        ],
+        ..flame_base()
+    }
+}
+
+/// Plasma: the one entry that is not a chemistry - violet through cyan to white.
+pub fn flame_plasma() -> Theme {
+    Theme {
+        id: "flame-plasma".into(),
+        name: "Plasma".into(),
+        lit: "#8fd8ff".into(),
+        hot: "#ffffff".into(),
+        panel: "#05060c".into(),
+        panel_alpha: 1.0,
+        edge: "#6a3fd0".into(),
+        edge_alpha: 0.20,
+        zones: vec![
+            Zone { upto: 0.30, lit: "#b04aff".into(), hot: "#b04aff".into() },
+            Zone { upto: 0.55, lit: "#7a7cff".into(), hot: "#7a7cff".into() },
+            Zone { upto: 0.78, lit: "#8fd8ff".into(), hot: "#8fd8ff".into() },
+            Zone { upto: 1.01, lit: "#ffffff".into(), hot: "#ffffff".into() },
+        ],
+        ..flame_base()
+    }
+}
+
+/// Rainbow flame: hue sweeps across the manifold, so each burner is a different colour.
+///
+/// The `rainbow` machinery suits this family better than most: it colours by position along the row, and
+/// here the row is a rank of physically separate burners rather than one continuous display, so a hue per
+/// burner reads as deliberate rather than as a gradient laid over something.
+///
+/// `zones` are still authored, because the ramp is what carries HEAT - the rainbow re-tints it per column
+/// on top. Left as the pale neutral set so the hue is the colourway's own and not a tint of orange.
+pub fn flame_rainbow() -> Theme {
+    Theme {
+        id: "flame-rainbow".into(),
+        name: "Rainbow flame".into(),
+        lit: "#ffffff".into(),
+        hot: "#ffffff".into(),
+        panel: "#07070a".into(),
+        panel_alpha: 1.0,
+        edge: "#8a8a9a".into(),
+        edge_alpha: 0.18,
+        rainbow: 1.0,
+        zones: vec![
+            Zone { upto: 0.30, lit: "#b0b0b8".into(), hot: "#b0b0b8".into() },
+            Zone { upto: 0.55, lit: "#d8d8dd".into(), hot: "#d8d8dd".into() },
+            Zone { upto: 0.78, lit: "#f0f0f4".into(), hot: "#f0f0f4".into() },
+            Zone { upto: 1.01, lit: "#ffffff".into(), hot: "#ffffff".into() },
+        ],
+        ..flame_base()
     }
 }
 

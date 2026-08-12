@@ -45,13 +45,19 @@ const SEED_W: i32 = 5;
 
 /// Heat lost per row of rise.
 ///
-/// Sets the height scale directly: a seed of 1.0 climbs `1.0 / COOL` rows before it dies.
+/// Heat lost per row of rise, ON TOP of what diffusion already loses.
 ///
-/// 0.023 reaches about 43 rows against an interior of 51, which leaves the top eighth clear. 0.018 was
-/// tried and reached the ceiling: a plume that runs out of panel spreads sideways along the top row
-/// instead of tapering, and rendered, the loud case grew flat horizontal caps that read as a fault in the
-/// drawing rather than as fire.
-const COOL: f32 = 0.023;
+/// `1.0 / COOL` is NOT the plume height, and assuming it was cost this family most of its range. The
+/// three-tap average bleeds heat into the cold columns either side of a plume, so a narrow plume decays
+/// far faster than this constant alone implies - the two effects were being double-counted.
+///
+/// Measured at 0.023: the tip moved from row 50 at silence to row 41 at a 0.70 band, which is NINE rows
+/// of travel in a 51-row interior. The family's whole claim is that height is linear in the band and
+/// readable as a profile across the manifold, and nine pixels does not deliver it.
+///
+/// 0.007 lets the sideways bleed be the dominant decay, which is the honest model: it is what actually
+/// shapes the plume, and it tapers naturally because a plume's edges are always mixing with cold air.
+const COOL: f32 = 0.009;
 
 /// How much of each cell's heat comes from the cell directly below, against its two diagonal
 /// neighbours.
@@ -197,6 +203,28 @@ const EMBER_ALPHA: f32 = 0.20;
 /// manifold a second, redundant reading of the spectrum.
 const MANIFOLD_LIT: f32 = 0.85;
 
+/// The flourish: a flashback, then a relight that travels along the manifold.
+///
+/// The gas pressure drops, every plume guts down to its pilot, and then the flame front runs back along
+/// the pipe relighting each nozzle in turn with a brief overshoot before it settles. It is both the fault
+/// AND the ritual, which is the doubling the VFD self-test has - and it costs nothing extra per frame,
+/// because it drives the seeding that was already there rather than drawing anything new.
+///
+/// 1600ms in three parts. `SNUFF_FRAC` of it is the pressure loss, during which the burners are held at
+/// pilot height; the rest is the front travelling the full width. The front is what makes this read as a
+/// gas fault rather than as the audio dropping out - a simultaneous relight would look like a cut.
+///
+/// The overshoot is 1.6x, because a burner that has been starved of gas and then relit flares above its
+/// steady height for a moment. That flare is the part the eye actually catches.
+const FLASH_MS: f32 = 1600.0;
+const SNUFF_FRAC: f32 = 0.22;
+const RELIGHT_OVERSHOOT: f32 = 1.6;
+/// How wide the travelling front is, as a fraction of the manifold.
+///
+/// 0.18 - narrow enough to read as a front moving rather than as everything brightening, wide enough that
+/// it does not skip a nozzle at the panel's 12-burner resolution.
+const FRONT_W: f32 = 0.18;
+
 /// Response window, in band-level units. Matches the other families' convention - see `patchbay`'s
 /// `RESP_FLOOR` note for why this is placed on what the DSP actually produces rather than on 0..1.
 const RESP_FLOOR: f32 = 0.10;
@@ -240,6 +268,9 @@ fn hash01(x: i32, y: i32, f: u32) -> f32 {
 pub struct Flame {
     /// Heat field over the panel interior, row 0 at the TOP. `w * h` cells.
     heat: Vec<f32>,
+    /// The flourish: a flashback and a travelling relight. See `FLASH_MS`.
+    flourish: crate::dsp::flourish::Trigger,
+    flash: crate::dsp::flourish::Envelope,
     w: i32,
     h: i32,
     frame: u32,
@@ -305,7 +336,49 @@ impl Flame {
     /// row being read has not been written yet this frame, so every cell sees the previous frame's heat.
     /// Bottom-up would read cells it had already updated and the fire would shoot to the top in one
     /// frame.
-    fn advance(&mut self, d: &FrameData, sens: f32, dt: f32) {
+    /// The seed multiplier for nozzle `i` of `n` during the flourish, or 1.0 when it is not running.
+    ///
+    /// Pure, and separated from `advance` so it can be tested as a shape rather than inferred from
+    /// pixels: the interesting claims are that everything drops together, that the front crosses the
+    /// manifold once, and that it ends with every burner back at its own level.
+    ///
+    /// `flash` runs 1.0 -> 0.0, so `t` here is elapsed progress, 0.0 -> 1.0.
+    fn flash_gain(flash: f32, i: usize, n: usize) -> f32 {
+        if flash <= 0.0 {
+            return 1.0;
+        }
+        let t = 1.0 - flash.clamp(0.0, 1.0);
+        if t < SNUFF_FRAC {
+            // The pressure loss. Everything down to the pilot at once - a gas manifold does not lose
+            // pressure one burner at a time.
+            return 0.0;
+        }
+        // The front, sweeping left to right across the remainder.
+        let sweep = (t - SNUFF_FRAC) / (1.0 - SNUFF_FRAC);
+        let pos = (i as f32 + 0.5) / n.max(1) as f32;
+        if pos > sweep {
+            // Not reached yet: still out.
+            return 0.0;
+        }
+        // Lit. How long ago the front passed, in units of the front's own width.
+        let since = (sweep - pos) / FRONT_W;
+        if since >= 1.0 {
+            1.0
+        } else {
+            // The overshoot flare, decaying to the burner's steady height.
+            1.0 + (RELIGHT_OVERSHOOT - 1.0) * (1.0 - since)
+        }
+    }
+
+    /// `cw`/`ix` are the CANVAS width and the field's left inset, not the field's own width.
+    ///
+    /// The nozzle geometry has to be computed in canvas coordinates, because that is where the manifold
+    /// and its stubs are drawn. Seeding from the field's own width was a real misalignment bug: the
+    /// interior is 8px narrower than the canvas, and `nozzle_count` of 182 is TWELVE where
+    /// `nozzle_count` of 190 is THIRTEEN - so the panel drew thirteen nozzles and only twelve of them
+    /// had a flame, with the rest progressively offset from their stubs. Caught by a test asserting
+    /// every burner is lit, which found burner 6 with zero heat at its mouth.
+    fn advance(&mut self, d: &FrameData, sens: f32, dt: f32, cw: i32, ix: i32) {
         let (w, h) = (self.w, self.h);
         let cool = COOL * dt.clamp(0.25, 4.0);
         self.frame = self.frame.wrapping_add(1);
@@ -341,12 +414,12 @@ impl Flame {
             }
         }
         // Seed the bottom row from the bands.
-        let n = nozzle_count(w);
+        let n = nozzle_count(cw);
         for cell in self.heat[((h - 1) * w) as usize..].iter_mut() {
             *cell = 0.0;
         }
         for i in 0..n {
-            let cx = nozzle_x(w, n, i) - 4; // interior coordinates
+            let cx = nozzle_x(cw, n, i) - ix; // canvas geometry, converted to interior coordinates
             let lvl = response(Self::level_for(d, i, n), sens);
             // A floor, so a lit burner never goes out: an unlit nozzle on a gas manifold reads as
             // broken, which is the same reason the valve row keeps a heater floor and the reel keeps
@@ -355,7 +428,7 @@ impl Flame {
             // nothing and the manifold reads as switched off. Posterising the field made this a real
             // regression rather than a theoretical one: at a 0.06 floor the quiet case rendered as bare
             // nozzle stubs, because 0.06 seeded heat never reaches the 0.16 that gets drawn.
-            let seed = 0.20 + 0.80 * lvl;
+            let seed = (0.20 + 0.80 * lvl) * Self::flash_gain(self.flash.level(), i, n);
             for k in 0..SEED_W {
                 let x = cx - SEED_W / 2 + k;
                 if x >= 0 && x < w {
@@ -394,7 +467,10 @@ impl Family for Flame {
         }
 
         let dt = if d.dt_ms.is_finite() { (d.dt_ms / 16.7).clamp(0.25, 4.0) } else { 1.0 };
-        self.advance(d, t.sensitivity, dt);
+        // THE FLOURISH, advanced before the field so this frame's seeding sees it. See `FLASH_MS`.
+        let fired = self.flourish.update(&d.levels, d.dt_ms, t.flourish);
+        self.flash.update(fired, d.dt_ms, FLASH_MS);
+        self.advance(d, t.sensitivity, dt, cw, ix);
 
         // TWO LAYERS, and the split is what keeps this from looking like watercolour. The cooler zones
         // are the flame's BODY and go straight onto the opaque panel at full alpha, so they have hard
@@ -409,9 +485,14 @@ impl Family for Flame {
         // vu, tube and waterfall.
         // THE EMBER WASH: the panel itself warmed by how hard the manifold is burning. Drawn first, so
         // everything else sits on top of it. See `EMBER_ALPHA`.
+        // Driven by the FIELD, not by the audio, and that distinction is a bug fix rather than a
+        // refinement. Keyed on the band levels, the panel stayed warm all through a flashback - the
+        // flames were out but the audio was still loud, so the wash never dropped and the flourish's own
+        // ink never fell below 56% of normal. The panel is warmed by the FIRE; if there is no fire there
+        // is no warmth.
         let drive: f32 = {
-            let n = nozzle_count(cw);
-            (0..n).map(|i| response(Self::level_for(d, i, n), t.sensitivity)).sum::<f32>() / n as f32
+            let n = (iw * ih) as f32;
+            self.heat.iter().filter(|v| v.is_finite()).sum::<f32>() / n.max(1.0) * 3.2
         };
         if drive > 0.02 {
             let a = (drive * EMBER_ALPHA).clamp(0.0, 1.0);
@@ -588,6 +669,266 @@ mod tests {
         d
     }
 
+    /// Total light in the panel interior. The family's reading is plume HEIGHT, so this is a proxy used
+    /// only where the claim really is "more or less fire", never where it is "taller or shorter".
+    fn ink(c: &Canvas) -> f64 {
+        let mut acc = 0.0;
+        for y in 0..c.height() {
+            for x in 0..c.width() {
+                let p = c.get(x, y);
+                acc += (0.2126 * p.r as f64 + 0.7152 * p.g as f64 + 0.0722 * p.b as f64)
+                    * (p.a as f64 / 255.0);
+            }
+        }
+        acc
+    }
+
+    fn lum(p: Rgba) -> f64 {
+        0.2126 * p.r as f64 + 0.7152 * p.g as f64 + 0.0722 * p.b as f64
+    }
+
+    /// The topmost row above nozzle `i` that is brighter than the same pixel with no fire at all.
+    ///
+    /// DIFFERENTIAL, against a silence baseline, and two simpler instruments had to be discarded first:
+    ///
+    /// - **alpha** is useless on this family. `panel_alpha` is 1.0, so every in-bounds pixel has alpha
+    ///   255 - a threshold on `.a` matched row 2 at every drive level, including silence. `scope.rs`
+    ///   documents this exact trap for the same reason.
+    /// - an ABSOLUTE luminance threshold under-reads a translucent flame. At `a > 40 && sum > 150` the
+    ///   measured tip plateaued at row 42 across both 0.45 and 0.55 and then jumped to 24 at 0.70, which
+    ///   looked like a physics problem and was not: the field's own height over those three levels is a
+    ///   clean 26, 18, 7. The faint upper body simply sat under the threshold until it brightened.
+    ///
+    /// Comparing against silence removes the panel, the ember wash and the bezel in one step, because all
+    /// three are in both frames.
+    fn tip(c: &Canvas, silence: &Canvas, i: usize) -> Option<i32> {
+        let n = nozzle_count(c.width());
+        let cx = nozzle_x(c.width(), n, i);
+        (0..c.height()).find(|y| {
+            (cx - 3..=cx + 3).any(|x| lum(c.get(x, *y)) > lum(silence.get(x, *y)) + 14.0)
+        })
+    }
+
+    fn settled(t: &Theme, d: &FrameData, frames: usize) -> (Flame, Canvas) {
+        let mut f = Flame::default();
+        let mut c = Canvas::new(190, 60);
+        for _ in 0..frames {
+            f.draw(&mut c, t, d);
+        }
+        (f, c)
+    }
+
+    /// Run: cargo test --release probe_flame_heights -- --ignored --nocapture
+    ///
+    /// The height curve and the flashback's drain, on the two measures that survived scrutiny: the heat
+    /// field's own top row, and a pixel tip taken as a DIFFERENCE against silence. Absolute-luminance and
+    /// alpha thresholds were both tried and are recorded as failures on `tip` - alpha in particular is
+    /// vacuous here, because an opaque panel makes every in-bounds pixel alpha 255.
+    #[test]
+    #[ignore]
+    fn probe_flame_heights() {
+        let t = builtin::flame_sodium();
+        let silence = settled(&t, &flat(0.0), 120).1;
+        println!("  level   field top   tip vs silence   ink");
+        for lvl in [0.0f32, 0.12, 0.18, 0.30, 0.45, 0.55, 0.70] {
+            let (f, c) = settled(&t, &flat(lvl), 120);
+            let fld = (0..f.h).find(|y| (0..f.w).any(|x| f.at(x, *y) >= FLOOR));
+            println!(
+                "  {lvl:5.2}   {:>9?}   {:>14?}   {:>6.0}",
+                fld,
+                tip(&c, &silence, 5),
+                ink(&c)
+            );
+        }
+        let mut t2 = builtin::flame_sodium();
+        t2.flourish = 0.0;
+        let d = flat(0.45);
+        let mut f = Flame::default();
+        let mut c = Canvas::new(190, 60);
+        for _ in 0..120 {
+            f.draw(&mut c, &t2, &d);
+        }
+        let before = ink(&c);
+        f.flourish.force_next();
+        print!("  flashback ink/before:");
+        for k in 1..=30 {
+            f.draw(&mut c, &t2, &d);
+            if k % 3 == 0 {
+                print!(" f{k}={:.2}", ink(&c) / before);
+            }
+        }
+        println!();
+    }
+
+    #[test]
+    fn a_louder_band_burns_a_taller_plume() {
+        // The family's whole reason to exist, and the reason the cooling subtracts rather than multiplies:
+        // height has to be readable as a profile. Measured as the tip ROW, not as brightness - the same
+        // position-over-intensity rule the nixie family is built on.
+        let t = builtin::flame_sodium();
+        let silence = settled(&t, &flat(0.0), 120).1;
+        // Monotone across the range the DSP actually produces - 0.15 to 0.65 per active band - and not
+        // merely different at the two ends. A plateau in the middle is where a height cue dies, and the
+        // middle is where music lives.
+        let mut tips = Vec::new();
+        for lvl in [0.12f32, 0.20, 0.30, 0.42, 0.55, 0.68] {
+            let c = settled(&t, &flat(lvl), 120).1;
+            tips.push(tip(&c, &silence, 5).unwrap_or(59));
+        }
+        for w in tips.windows(2) {
+            assert!(w[1] <= w[0], "the plume got SHORTER as the band got louder: {tips:?}");
+        }
+        assert!(
+            tips[0] - tips[tips.len() - 1] >= 18,
+            "the height cue is too compressed to read as a profile: {tips:?} - only {} rows of travel",
+            tips[0] - tips[tips.len() - 1]
+        );
+    }
+
+    #[test]
+    fn every_burner_stays_lit_at_silence() {
+        // A gas manifold with a burner out reads as broken, not as quiet - the same reason the valve row
+        // keeps a heater floor and the reel keeps turning. This regressed once for real: raising the draw
+        // floor to sharpen the edges left the pilot seed below it, and the quiet case rendered as bare
+        // nozzle stubs.
+        let t = builtin::flame_sodium();
+        // ASSERTED ON THE HEAT FIELD, not on pixels, and three pixel-level instruments were tried and
+        // discarded first - each defeated by something the family does deliberately:
+        //
+        // - a difference against a fire-free reference frame: there is no such frame. Zeroing the field
+        //   and drawing again re-seeds it on that very draw, because seeding is part of `advance`, so it
+        //   compared fire against fire and called every burner out.
+        // - a difference against the GAP beside each nozzle: the spill fills the gaps with warmth on
+        //   purpose, so the contrast is tiny, and for burner 3 of 13 the gap measured BRIGHTER than the
+        //   nozzle (11.1 against 10.4) because both neighbours' plumes reach into it.
+        // - a difference against the TOP of the same column: the ember wash is a bottom-bright gradient,
+        //   so it would report a lit burner over an unlit one.
+        //
+        // A pilot flame IS the seed floor, so the field is where the claim lives. That the field reaches
+        // the screen at all is covered by `a_louder_band_burns_a_taller_plume`, which measures pixels
+        // against a silence baseline and passes.
+        // MEASURED OVER A WINDOW, because a pilot flame flickers. Asserting a minimum plume height in one
+        // settled frame failed on burner 3 of 13 with 2 rows against the others' 3 or more - not a dead
+        // burner, but that nozzle's lick phase shearing a plume only three rows tall at the moment the
+        // frame was taken. "Lit" for a flickering flame means it produces a plume across a span of
+        // frames, not in every single one.
+        let (mut f, mut c) = settled(&t, &flat(0.0), 120);
+        let n = nozzle_count(190);
+        let mut best = vec![0usize; n];
+        let mut mouth = vec![0.0f32; n];
+        for _ in 0..24 {
+            f.draw(&mut c, &t, &flat(0.0));
+            for i in 0..n {
+                let cx = nozzle_x(190, n, i) - 4;
+                mouth[i] = mouth[i].max(f.at(cx, f.h - 1));
+                best[i] = best[i].max((0..f.h).filter(|y| f.at(cx, *y) >= FLOOR).count());
+            }
+        }
+        for i in 0..n {
+            assert!(
+                mouth[i] >= FLOOR,
+                "burner {i} of {n} is out at silence: {:.3} of heat at the mouth, below the {FLOOR} that                  gets drawn. A manifold with a burner out reads as broken, not as quiet",
+                mouth[i]
+            );
+            assert!(
+                best[i] >= 3,
+                "burner {i} of {n} has heat but never a plume: {} rows above FLOOR at its tallest over 24                  frames",
+                best[i]
+            );
+        }
+    }
+
+    #[test]
+    fn the_flourish_snuffs_every_burner_then_relights_them_left_to_right() {
+        // Asserted on `flash_gain` directly, because the claims are about a SHAPE in time and pixels would
+        // only blur them: everything drops together, the front crosses once, and it ends with every burner
+        // back at its own level. The pixel-level consequence is covered by the two tests above plus the
+        // "comes back" test below.
+        const N: usize = 12;
+        // Not firing: no effect at all.
+        for i in 0..N {
+            assert_eq!(Flame::flash_gain(0.0, i, N), 1.0, "no flourish must not touch the seeding");
+        }
+        // The pressure loss: everything out at once, whatever its position.
+        let early = 1.0 - SNUFF_FRAC * 0.5;
+        for i in 0..N {
+            assert_eq!(
+                Flame::flash_gain(early, i, N),
+                0.0,
+                "burner {i} must go out during the pressure loss - a manifold does not lose pressure one \
+                 burner at a time"
+            );
+        }
+        // Mid-sweep: a prefix is lit and the rest is not, and the boundary moves monotonically.
+        let lit_count = |flash: f32| (0..N).filter(|i| Flame::flash_gain(flash, *i, N) > 0.0).count();
+        let mut prev = 0;
+        for step in 0..=20 {
+            let t = SNUFF_FRAC + (1.0 - SNUFF_FRAC) * step as f32 / 20.0;
+            let k = lit_count(1.0 - t);
+            assert!(k >= prev, "the relight front went BACKWARDS at t={t:.2}: {prev} lit, then {k}");
+            prev = k;
+        }
+        assert_eq!(prev, N, "the front must reach the last burner");
+        // And the flare: a burner just reached is brighter than its steady self.
+        let just_lit = 1.0 - (SNUFF_FRAC + (1.0 - SNUFF_FRAC) * 0.5);
+        let i = (N as f32 * 0.5) as usize - 1;
+        assert!(
+            Flame::flash_gain(just_lit, i, N) > 1.0,
+            "a burner relighting must overshoot its steady height - the flare is the part the eye catches"
+        );
+    }
+
+    #[test]
+    fn the_manifold_comes_back_to_normal_after_the_flourish() {
+        // Byte-identical, which also proves the flourish leaves no residue in the heat field.
+        let mut t = builtin::flame_sodium();
+        t.flourish = 0.0;
+        let d = flat(0.4);
+        let mut a = Flame::default();
+        let mut ca = Canvas::new(190, 60);
+        let mut b = Flame::default();
+        let mut cb = Canvas::new(190, 60);
+        for _ in 0..120 {
+            a.draw(&mut ca, &t, &d);
+            b.draw(&mut cb, &t, &d);
+        }
+        b.flourish.force_next();
+        // 1600ms is 96 frames; 200 is comfortably past it plus the field settling again.
+        for _ in 0..200 {
+            a.draw(&mut ca, &t, &d);
+            b.draw(&mut cb, &t, &d);
+        }
+        assert_eq!(ca.bits(), cb.bits(), "the manifold did not return to its steady state");
+    }
+
+    #[test]
+    fn the_flourish_visibly_takes_the_fire_away_and_gives_it_back() {
+        // The end-to-end check, on total light rather than height: during the pressure loss there is
+        // genuinely LESS fire, which is the one moment where an ink measure is the right instrument.
+        let mut t = builtin::flame_sodium();
+        t.flourish = 0.0;
+        let d = flat(0.45);
+        let mut f = Flame::default();
+        let mut c = Canvas::new(190, 60);
+        for _ in 0..120 {
+            f.draw(&mut c, &t, &d);
+        }
+        let before = ink(&c);
+        f.flourish.force_next();
+        // ~10 frames in is inside the 22% snuff, and the field takes a few frames to drain.
+        // 18 frames in, which is inside the 22% snuff window (352ms = 21 frames) and past the few frames
+        // the field takes to drain - heat already aloft keeps rising, which is correct behaviour and the
+        // reason 12 frames was too early. Measured curve: 0.89 at 3 frames, 0.66 at 9, 0.42 at 18.
+        for _ in 0..18 {
+            f.draw(&mut c, &t, &d);
+        }
+        let during = ink(&c);
+        assert!(
+            during < before * 0.55,
+            "the flashback did not take the fire away: {during:.0} against {before:.0} before"
+        );
+    }
+
     /// Run: cargo test --release probe_flame_cost -- --ignored --nocapture
     ///
     /// What a frame of this costs, against families that already ship. Worth measuring rather than
@@ -649,39 +990,23 @@ mod tests {
     fn dump_flame() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
         std::fs::create_dir_all(&dir).unwrap();
-        // Three drive levels, and a comb so the per-band reading can be judged as well as the look.
-        let cases: [(&str, Box<dyn Fn(usize) -> f32>); 4] = [
-            ("quiet", Box::new(|_| 0.16)),
-            ("normal", Box::new(|_| 0.34)),
-            ("loud", Box::new(|_| 0.62)),
-            ("comb", Box::new(|i| if (i / 6) % 2 == 0 { 0.60 } else { 0.14 })),
-        ];
-        // A sodium-flame ramp, authored here because the colourways do not exist yet. Deep red at the
-        // cool tips through orange and yellow to white at the base, which is the luminance progression a
-        // real flame has and the thing the posterised version could not express.
-        let mut t = builtin::tube_soviet();
-        // NO DARK END. The previous ramp started at #7a1500, a very dark red, and read as heavy and
-        // solid; faintness now comes from the body alpha instead, which leaves the ramp free to stay pale
-        // the whole way up. That is what makes it ghostly rather than merely dim.
-        t.zones = vec![
-            crate::themes::Zone { upto: 0.30, lit: "#ff8a4a".into(), hot: "#ff8a4a".into() },
-            crate::themes::Zone { upto: 0.55, lit: "#ffb070".into(), hot: "#ffb070".into() },
-            crate::themes::Zone { upto: 0.78, lit: "#ffd9a8".into(), hot: "#ffd9a8".into() },
-            crate::themes::Zone { upto: 1.00, lit: "#fff6ea".into(), hot: "#fff6ea".into() },
-        ];
+        // One row per colourway, all at the same drive, so the seven can be compared directly - which is
+        // the question now that the shape is settled.
+        let themes: Vec<Theme> = builtin::all().into_iter().filter(|t| t.family == "flame").collect();
+        assert!(themes.len() >= 5, "the family needs five colourways, has {}", themes.len());
         let (w, h) = (190i32, 60i32);
         let mut rows = Vec::new();
-        for (_label, f) in &cases {
-            let mut fl = Flame::default();
+        let mut d = flat(0.0);
+        // A comb, so both a tall plume and a short one appear in every row.
+        for (i, v) in d.levels.iter_mut().enumerate() {
+            *v = if (i / 5) % 2 == 0 { 0.58 } else { 0.20 };
+        }
+        d.peaks = d.levels;
+        for t in &themes {
+            let mut f = Flame::default();
             let mut c = Canvas::new(w, h);
-            let mut d = flat(0.0);
-            for (i, v) in d.levels.iter_mut().enumerate() {
-                *v = f(i);
-            }
-            d.peaks = d.levels;
-            // 90 frames, so the field has filled and is in steady state rather than still climbing.
-            for _ in 0..90 {
-                fl.draw(&mut c, &t, &d);
+            for _ in 0..120 {
+                f.draw(&mut c, t, &d);
             }
             rows.push(c);
         }
@@ -702,6 +1027,8 @@ mod tests {
         }
         let path = dir.join(format!("flame-{ow}x{oh}.rgba"));
         std::fs::write(&path, &out).unwrap();
-        println!("wrote {} ({ow}x{oh}) - rows: quiet, normal, loud, comb", path.display());
+        let names: Vec<&str> = themes.iter().map(|t| t.name.as_str()).collect();
+        println!("wrote {} ({ow}x{oh}) - rows: {}", path.display(), names.join(", "));
     }
+
 }
