@@ -56,10 +56,18 @@ const COOL: f32 = 0.023;
 /// How much of each cell's heat comes from the cell directly below, against its two diagonal
 /// neighbours.
 ///
-/// 0.55 to the centre keeps a plume narrow enough to stay separable from its neighbour; nearer 0.33
+/// 0.68 to the centre keeps a plume narrow enough to stay separable from its neighbour; nearer 0.33
 /// (a flat average) and it spreads into a dome within a dozen rows. This is the knob that decides
 /// whether the display reads as twelve flames or as one fire.
-const CENTRE_BIAS: f32 = 0.55;
+///
+/// Raised from 0.55 to sharpen the edges. Side bleed is what turns a plume's boundary into a gradient,
+/// and a gradient at this size reads as watercolour rather than as fire - the same reason `ZONES` below
+/// posterises the field instead of drawing it continuously.
+///
+/// 0.62 rather than the 0.68 first tried: with the field posterised as well, that much centre bias made
+/// the plumes solid wedges. Sharpening the edges and thickening the body are different things, and only
+/// the first was wanted.
+const CENTRE_BIAS: f32 = 0.62;
 
 /// Peak sideways lick, in pixels of sampling offset.
 ///
@@ -77,6 +85,29 @@ const CENTRE_BIAS: f32 = 0.55;
 /// across the whole manifold rather than as twelve independent flames, which is a different and much
 /// less interesting picture.
 const LICK: f32 = 0.95;
+
+/// Heat levels the field is quantised to before it is drawn, and the heat below which nothing is drawn
+/// at all.
+///
+/// THIS IS WHAT STOPS IT LOOKING LIKE WATERCOLOUR. A continuous heat-to-alpha ramp gives every plume a
+/// soft translucent halo that fades to nothing, and at 60px that reads as a wash rather than as
+/// combustion. Snapping the field to five discrete levels, each drawn at FULL alpha, gives the plume hard
+/// contour edges - the same graphic, banded look the segmented, nixie and Pantone families get from
+/// having discrete elements in the first place.
+///
+/// `FLOOR` is the other half of it. The first version drew anything above 0.02 at a 10% alpha minimum,
+/// which painted a faint envelope two or three pixels beyond the plume on every side. Nothing below 0.16
+/// is drawn now, so the plume has an edge instead of a fringe.
+const ZONES: f32 = 5.0;
+const FLOOR: f32 = 0.16;
+
+/// Heat at or above which a cell is treated as the flame's core, and blooms.
+///
+/// Only the core goes on the bloomed layer. Blooming the whole field - which is what the first version
+/// did - haloes the cool outer zones too, and a halo around an already-soft edge is precisely the
+/// watercolour effect. The pattern here is the one `patchbay` uses for its cables and `tube` for its
+/// cathodes: the opaque body goes straight onto the panel, and only the light blooms.
+const CORE_HEAT: f32 = 0.62;
 
 /// Response window, in band-level units. Matches the other families' convention - see `patchbay`'s
 /// `RESP_FLOOR` note for why this is placed on what the DSP actually produces rather than on 0..1.
@@ -207,7 +238,11 @@ impl Flame {
             // A floor, so a lit burner never goes out: an unlit nozzle on a gas manifold reads as
             // broken, which is the same reason the valve row keeps a heater floor and the reel keeps
             // turning at silence.
-            let seed = 0.06 + 0.94 * lvl;
+            // The 0.20 floor is a PILOT FLAME and it has to clear `FLOOR`, or a quiet burner draws
+            // nothing and the manifold reads as switched off. Posterising the field made this a real
+            // regression rather than a theoretical one: at a 0.06 floor the quiet case rendered as bare
+            // nozzle stubs, because 0.06 seeded heat never reaches the 0.16 that gets drawn.
+            let seed = 0.20 + 0.80 * lvl;
             for k in 0..SEED_W {
                 let x = cx - SEED_W / 2 + k;
                 if x >= 0 && x < w {
@@ -248,38 +283,64 @@ impl Family for Flame {
         let dt = if d.dt_ms.is_finite() { (d.dt_ms / 16.7).clamp(0.25, 4.0) } else { 1.0 };
         self.advance(d, t.sensitivity, dt);
 
-        // Everything that emits light goes on its own transparent layer to be bloomed once and
-        // composited - `Canvas::bloom` puts its halo UNDER existing content, so blooming a canvas that
-        // already carries the opaque panel hides it completely. The trap documented in segmented,
-        // scope, vu, tube and waterfall.
-        let mut lit = Canvas::new(cw, ch);
+        // TWO LAYERS, and the split is what keeps this from looking like watercolour. The cooler zones
+        // are the flame's BODY and go straight onto the opaque panel at full alpha, so they have hard
+        // edges. Only the core goes on the transparent layer that gets bloomed.
+        //
+        // Blooming everything - which the first version did - puts a halo around the soft outer zones as
+        // well, and a halo on an already-soft edge is the wash itself. This is the same arrangement
+        // `patchbay` uses for its cables and `tube` for its cathodes.
+        //
+        // `Canvas::bloom` also puts its halo UNDER existing content, so blooming a canvas that already
+        // carries the opaque panel would hide it completely - the trap documented in segmented, scope,
+        // vu, tube and waterfall.
+        let mut core = Canvas::new(cw, ch);
         for y in 0..ih {
             for x in 0..iw {
                 let v = self.at(x, y);
-                if v <= 0.02 {
+                if v < FLOOR {
                     continue;
                 }
-                // Three zones, which is what makes it read as combustion rather than as a gradient: a
-                // cool translucent envelope, the body in the colourway's own lit colour, and a white
-                // core only where it is truly hot.
+                // Posterised: snapped to one of `ZONES` levels and drawn at FULL alpha, so the plume has
+                // contour edges rather than a gradient. `z` is 1..=ZONES.
+                let z = ((v * ZONES).floor() + 1.0).min(ZONES);
                 let frac = x as f32 / iw as f32;
-                let col = if v > 0.72 {
-                    Rgba::from_hex(&t.hot, 1.0)
-                } else if v > 0.34 {
-                    super::tint(t, frac, d.time_s, false, &t.lit, 1.0)
+                if v >= CORE_HEAT {
+                    // The hottest band is the colourway's `hot`; the one below it is a blend, so the core
+                    // is not a single flat blob at high drive.
+                    let a = if z >= ZONES { 1.0 } else { 0.82 };
+                    core.fill_rect(ix + x, iy + y, 1, 1, Rgba::from_hex(&t.hot, a));
                 } else {
-                    super::tint(t, frac, d.time_s, false, &t.lit, (v * 2.2).clamp(0.10, 0.85))
-                };
-                lit.fill_rect(ix + x, iy + y, 1, 1, col);
+                    // Body zones, opaque, dimmed by zone so the banding reads as depth. 0.34 to 1.0
+                    // rather than 0.55 to 1.0: the narrower range made the whole plume one flat orange,
+                    // which is crisp but not fiery. The outermost band is still clearly present - a band
+                    // that fades to nothing is the gradient this exists to replace.
+                    let k = 0.34 + 0.66 * (z / ZONES);
+                    let col = super::tint(t, frac, d.time_s, false, &t.lit, 1.0);
+                    c.fill_rect(
+                        ix + x,
+                        iy + y,
+                        1,
+                        1,
+                        Rgba::new(
+                            (col.r as f32 * k) as u8,
+                            (col.g as f32 * k) as u8,
+                            (col.b as f32 * k) as u8,
+                            255,
+                        ),
+                    );
+                }
             }
         }
 
         if t.bloom > 0.0 {
-            let mut glow = lit.clone();
-            glow.bloom(t.bloom.max(0.0) as i32, t.glow_strength.clamp(0.0, 1.0));
+            let mut glow = core.clone();
+            // Half the colourway's bloom. At full radius the core's halo reaches back over the crisp body
+            // and undoes the whole point of separating them.
+            glow.bloom((t.bloom * 0.5).max(0.0) as i32, t.glow_strength.clamp(0.0, 1.0));
             c.draw_over(&glow);
         }
-        c.draw_over(&lit);
+        c.draw_over(&core);
 
         // The manifold, over the flames' feet so the plumes read as leaving it. Drawn from the valve
         // row's chassis colours for the same reason the patchbay borrows them: a gas pipe and a valve

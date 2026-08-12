@@ -100,12 +100,19 @@ Regenerate any of these with <code>cargo test --release dump_flourishes -- --ign
   <figure><img src="flame-prototype.png" alt="flame organ prototype">
   <figcaption>rows: quiet &middot; normal &middot; loud &middot; a comb (alternating loud and quiet band
   groups), which is the row that shows whether the per-band reading is legible</figcaption></figure>
-  <p class="judge"><strong>What I want your eyes on:</strong> is this the thing you pictured? Two rounds
-  of iteration got here &mdash; the first looked like scattered embers (a 3px core bled its heat away),
-  the second had every plume leaning in unison like a gust of wind. What I would still change: some
-  plumes pile into flat-topped wedges where the lean shears them, and it is chunky at 60px. Tell me
-  whether to push on the taper, and what the colourways should be &mdash; flame, vapour and plasma all
-  fall out of the same buffer with a different ramp.</p>
+  <p class="judge"><strong>What I want your eyes on:</strong> this is the <em>less watercolour</em> pass.
+  The wash came from three things, all now changed: the whole field was bloomed rather than just the hot
+  core, the coolest zone was drawn as a broad low-alpha gradient, and the diffusion bled too far sideways.
+  The field is now posterised to five discrete levels drawn at full alpha, only the core blooms, and the
+  body goes straight onto the opaque panel &mdash; the arrangement the patchbay and valve families already
+  use.<br><br>
+  Overshooting it was instructive: raising the draw floor to get hard edges also killed the pilot flames,
+  so the quiet row rendered as bare nozzle stubs &mdash; a manifold that looks switched off. The pilot seed
+  is raised to clear the floor now.<br><br>
+  <strong>Still not right:</strong> one or two plumes spread into solid funnels rather than tapering
+  (clearest in the loud and comb rows, right of centre) &mdash; I think that is two neighbours merging.
+  Say the word and I will chase it. Otherwise the open question is the colourways: flame, vapour and plasma
+  all fall out of this same buffer with a different ramp, and a family needs five.</p>
 </section>
 <footer>
 Generated from the renderers themselves, not drawn by hand. Progress log:
