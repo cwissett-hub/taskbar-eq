@@ -107,6 +107,33 @@ const GLITCH_DECAY: f32 = 0.13;
 /// Nominal frame interval the decay above is expressed against.
 const NOMINAL_DT_MS: f32 = 16.7;
 
+/// The flourish: an ink plate starves, and the dry patch travels.
+///
+/// The fault that belongs to a printing press rather than to a display: the screen runs dry, so the
+/// stripes it should be inking come out as bare paper. It travels, because ink starves progressively as
+/// the roller turns rather than everywhere at once - and a travelling dry patch is also what makes it
+/// read as a press rather than as a rendering bug.
+///
+/// THE GEOMETRY IS UNTOUCHED, which is the point worth stating. This family's whole constraint is that
+/// the stripe widths are zero-sum and always fill the interior exactly, so the starve removes INK and not
+/// WIDTH: the missing stripe still occupies its place in the spectrum, showing paper. Taking its width
+/// instead would make every other stripe swell to compensate, which is the family's own reading of the
+/// audio being corrupted rather than a plate failing.
+///
+/// 1500ms, and the patch crosses the panel once in that time. Two stripes wide plus soft shoulders: one
+/// stripe reads as a colour change in the ramp rather than as a failure, and much more than two starts
+/// looking like the display has simply gone blank.
+const STARVE_MS: f32 = 1500.0;
+const STARVE_STRIPES: f32 = 2.0;
+
+/// How dry the worst-affected stripe gets, 1.0 being bare paper.
+///
+/// 0.88 rather than 1.0. A trace of ink survives even where a screen has starved, and holding a little
+/// back keeps the stripe distinguishable from the keyline gaps beside it - at a full 1.0 the dry stripe
+/// and the paper between stripes became one continuous white block, and the stripe stopped reading as a
+/// stripe that had failed.
+const STARVE_DEPTH: f32 = 0.88;
+
 /// How much a driven stripe lightens its own halftone.
 ///
 /// Tone in print means ink coverage, so a loud stripe must carry LESS ink to read as fuller
@@ -293,9 +320,35 @@ pub struct Chroma {
     glitch: f32,
     /// Advanced on every strike so consecutive glitches pick different slices.
     seed: u32,
+    /// The flourish: an ink plate starves. See `STARVE_MS`.
+    flourish: crate::dsp::flourish::Trigger,
+    starve: crate::dsp::flourish::Envelope,
 }
 
 impl Chroma {
+    /// How starved of ink stripe `i` of `n` is, 0..1, given the flourish's progress.
+    ///
+    /// Pure and separate from `draw` so the shape can be tested directly: that the patch crosses the whole
+    /// panel exactly once, that it is narrow, and that it ends with every stripe inked again. Judging any
+    /// of those from pixels would mean re-deriving the sweep from the colours it produced.
+    ///
+    /// `starve` runs 1.0 -> 0.0, so progress is `1.0 - starve`.
+    fn starve_at(starve: f32, i: usize, n: usize) -> f32 {
+        if starve <= 0.0 {
+            return 0.0;
+        }
+        let progress = (1.0 - starve.clamp(0.0, 1.0)) * (n as f32 + STARVE_STRIPES * 2.0)
+            - STARVE_STRIPES;
+        let dist = (i as f32 - progress).abs() / STARVE_STRIPES.max(0.5);
+        if dist >= 1.0 {
+            return 0.0;
+        }
+        // Smooth shoulders, so the edge of the dry patch is a gradient across a stripe or two rather
+        // than a hard boundary - ink thins before it stops.
+        let f = 1.0 - dist;
+        STARVE_DEPTH * f * f * (3.0 - 2.0 * f)
+    }
+
     /// Blend of a stripe's mean and its loudest band - see `GROUP_MAX_BIAS`.
     fn level_for(d: &FrameData, i: usize, stripes: usize) -> f32 {
         let n = d.levels.len();
@@ -468,6 +521,10 @@ impl Family for Chroma {
             .collect();
         let widths = stripe_widths(&resp, fw, p.swell);
 
+        // THE FLOURISH, advanced here so the stripe loop can read it. See `STARVE_MS`.
+        let fired = self.flourish.update(&d.levels, d.dt_ms, t.flourish);
+        let starve = self.starve.update(fired, d.dt_ms, STARVE_MS);
+
         // The accent stripe: the loudest group, used only by the colourways that withhold
         // chroma. It makes the one coloured stripe in a monochrome field a POSITION cue for
         // where the energy is, rather than decoration.
@@ -508,7 +565,18 @@ impl Family for Chroma {
             if sw <= 0 {
                 continue;
             }
-            let col = Self::stripe_colour(t, i, n, accent);
+            let mut col = Self::stripe_colour(t, i, n, accent);
+            // THE FLOURISH: the plate has starved here, so this stripe prints paper instead of ink. See
+            // `STARVE_MS`. Blended toward the paper colour rather than skipping the stripe, so the
+            // geometry - which this family guarantees is zero-sum - is untouched.
+            let dry = Self::starve_at(starve, i, n);
+            if dry > 0.001 {
+                let paper = Rgba::from_hex(&t.panel, 1.0);
+                let mix = |a: u8, b: u8| -> u8 {
+                    (a as f32 + (b as f32 - a as f32) * dry).round() as u8
+                };
+                col = Rgba::new(mix(col.r, paper.r), mix(col.g, paper.g), mix(col.b, paper.b), 255);
+            }
             for row in 0..fh {
                 // Halftone: a printed tone RAMP down the band, not a flat screen. Coverage
                 // grows with depth into the band, and a driven stripe carries less ink - see
@@ -647,6 +715,189 @@ impl Family for Chroma {
 mod tests {
     use super::*;
     use crate::themes::builtin;
+
+    /// Run: cargo test --release dump_chroma_starve -- --ignored --nocapture
+    ///
+    /// Four points across the sweep, because the shared flourish dump samples eight frames after the hit -
+    /// by which time the dry patch has only reached the left edge, which badly undersells it. The travel is
+    /// the effect.
+    #[test]
+    #[ignore]
+    fn dump_chroma_starve() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut t = builtin::all().into_iter().find(|t| t.family == "chroma").unwrap();
+        t.flourish = 0.0;
+        let d = flat(0.4);
+        // 1500ms is ~90 frames, so these are roughly a fifth, two fifths, three fifths and four fifths of
+        // the way across.
+        let picks = [18usize, 36, 54, 72];
+        let mut ch = Chroma::default();
+        let mut c = Canvas::new(190, 60);
+        for _ in 0..30 {
+            ch.draw(&mut c, &t, &d);
+        }
+        ch.flourish.force_next();
+        let mut rows = Vec::new();
+        for f in 1..=*picks.last().unwrap() {
+            ch.draw(&mut c, &t, &d);
+            if picks.contains(&f) {
+                rows.push(c.clone());
+            }
+        }
+        let (ow, oh) = (190i32, 60 * rows.len() as i32 + 4 * (rows.len() as i32 - 1));
+        let mut out = vec![22u8; (ow * oh * 4) as usize];
+        for (ri, shot) in rows.iter().enumerate() {
+            for y in 0..60 {
+                for x in 0..190 {
+                    let px = shot.get(x, y);
+                    let a = px.a as f32 / 255.0;
+                    let o = (((ri as i32 * 64 + y) * ow + x) * 4) as usize;
+                    for (k, ch8) in [px.r, px.g, px.b].iter().enumerate() {
+                        out[o + k] = (*ch8 as f32 + 22.0 * (1.0 - a)).min(255.0) as u8;
+                    }
+                    out[o + 3] = 255;
+                }
+            }
+        }
+        let path = dir.join(format!("chroma-starve-{ow}x{oh}.rgba"));
+        std::fs::write(&path, &out).unwrap();
+        println!("wrote {} ({ow}x{oh}) - frames {picks:?} of the sweep", path.display());
+    }
+
+    #[test]
+    fn the_starve_crosses_the_panel_once_and_stays_narrow() {
+        // Asserted on `starve_at` directly, because these are claims about a SHAPE in time. Judging them
+        // from pixels would mean re-deriving the sweep from the colours it produced, which is a test of my
+        // own arithmetic against itself.
+        const N: usize = 12;
+        // Not firing: nothing is dry.
+        for i in 0..N {
+            assert_eq!(Chroma::starve_at(0.0, i, N), 0.0, "no flourish must leave every stripe inked");
+        }
+        // Across the whole envelope: every stripe must starve at some point, and never more than a few at
+        // a time.
+        let mut ever = vec![false; N];
+        let mut worst_at_once = 0usize;
+        for step in 0..=200 {
+            let starve = 1.0 - step as f32 / 200.0;
+            let dry: Vec<f32> = (0..N).map(|i| Chroma::starve_at(starve, i, N)).collect();
+            let at_once = dry.iter().filter(|v| **v > 0.25).count();
+            worst_at_once = worst_at_once.max(at_once);
+            for (i, v) in dry.iter().enumerate() {
+                if *v > 0.5 {
+                    ever[i] = true;
+                }
+            }
+        }
+        assert!(
+            ever.iter().all(|v| *v),
+            "the dry patch never reached some stripes: {ever:?} - it has to cross the whole panel"
+        );
+        assert!(
+            worst_at_once <= 5,
+            "{worst_at_once} stripes starved at once, which reads as the display going blank rather than \
+             as a plate failing"
+        );
+        // And the patch MOVES monotonically, rather than appearing in several places.
+        let centre = |starve: f32| -> f32 {
+            let (mut num, mut den) = (0.0f32, 0.0f32);
+            for i in 0..N {
+                let w = Chroma::starve_at(starve, i, N);
+                num += i as f32 * w;
+                den += w;
+            }
+            if den > 0.0 { num / den } else { f32::NAN }
+        };
+        let mut prev = f32::MIN;
+        for step in 10..=190 {
+            let cse = centre(1.0 - step as f32 / 200.0);
+            if cse.is_nan() {
+                continue;
+            }
+            assert!(
+                cse >= prev - 0.01,
+                "the dry patch went backwards at step {step}: centre {cse:.2} after {prev:.2}"
+            );
+            prev = cse;
+        }
+    }
+
+    #[test]
+    fn a_starved_stripe_prints_paper_but_keeps_its_width() {
+        // The family's constraint is that the stripe widths are zero-sum and fill the interior exactly, so
+        // the flourish must remove INK and not WIDTH. Taking the width instead would make every other
+        // stripe swell to compensate, corrupting the audio reading rather than showing a plate failing.
+        //
+        // Measured as the KEYLINE POSITIONS - the boundaries between stripes - which are exactly what a
+        // width change would move and a colour change cannot.
+        let mut t = builtin::all()
+            .into_iter()
+            .find(|t| t.family == "chroma")
+            .expect("no chroma colourway");
+        t.flourish = 0.0;
+        let d = flat(0.4);
+        let boundaries = |c: &Canvas| -> Vec<i32> {
+            // A boundary is a column whose colour differs from its neighbour's, sampled on one row well
+            // clear of the halftone band at the bottom.
+            let y = 8;
+            (6..(c.width() - 6))
+                .filter(|x| {
+                    let (a, b) = (c.get(*x, y), c.get(x + 1, y));
+                    (a.r as i32 - b.r as i32).abs()
+                        + (a.g as i32 - b.g as i32).abs()
+                        + (a.b as i32 - b.b as i32).abs()
+                        > 40
+                })
+                .collect()
+        };
+        let mut calm = Chroma::default();
+        let mut cc = Canvas::new(190, 60);
+        let mut dry_run = Chroma::default();
+        let mut cd = Canvas::new(190, 60);
+        for _ in 0..30 {
+            calm.draw(&mut cc, &t, &d);
+            dry_run.draw(&mut cd, &t, &d);
+        }
+        let before = boundaries(&cc);
+        dry_run.flourish.force_next();
+        // Mid-sweep, where the patch is over the middle of the panel.
+        for _ in 0..45 {
+            calm.draw(&mut cc, &t, &d);
+            dry_run.draw(&mut cd, &t, &d);
+        }
+        assert_ne!(cc.bits(), cd.bits(), "the flourish changed nothing");
+        // Every boundary the calm frame has must still be a boundary in the dry one. A starved stripe can
+        // ADD boundaries where paper meets ink, so this is a subset test, not equality.
+        let after = boundaries(&cd);
+        let missing: Vec<i32> = before.iter().copied().filter(|x| !after.contains(x)).collect();
+        assert!(
+            missing.len() <= 2,
+            "the starve moved the stripe geometry: boundaries {missing:?} disappeared. The widths are \
+             zero-sum, so ink must be removed without taking width"
+        );
+    }
+
+    #[test]
+    fn the_plate_inks_up_again() {
+        // 120 frames is 2s against a 1500ms envelope. Byte-identical, which also proves the flourish left
+        // nothing behind in the glitch state or the seed.
+        let mut t = builtin::all().into_iter().find(|t| t.family == "chroma").unwrap();
+        t.flourish = 0.0;
+        let d = flat(0.4);
+        let (mut a, mut ca) = (Chroma::default(), Canvas::new(190, 60));
+        let (mut b, mut cb) = (Chroma::default(), Canvas::new(190, 60));
+        for _ in 0..30 {
+            a.draw(&mut ca, &t, &d);
+            b.draw(&mut cb, &t, &d);
+        }
+        b.flourish.force_next();
+        for _ in 0..120 {
+            a.draw(&mut ca, &t, &d);
+            b.draw(&mut cb, &t, &d);
+        }
+        assert_eq!(ca.bits(), cb.bits(), "the plate never inked up again");
+    }
 
     fn flat(level: f32) -> FrameData {
         let mut d = FrameData::default();
