@@ -376,11 +376,40 @@ fn publish(title: &str) {
     }
 }
 
-/// How often the media thread looks for a track change while idle.
+/// How often the media thread looks for a track change while a track is actually playing.
 ///
 /// 400ms is well inside the time it takes to notice a new track starting, and the poll is one cheap
 /// cross-process read - measured at well under a millisecond once the session is resolved.
 const POLL_MS: u64 = 400;
+
+/// How often it looks when nothing is playing, or when the overlay is suspended.
+///
+/// The poll LEAKS, and `--stress` is the first thing to measure it: **+22 handles and +3 threads per
+/// 1,000 real session round trips**. At 400ms that is 216,000 polls a day, or about 4,750 handles a day -
+/// on its own comparable to the UIA walk, and between them enough to reach the watchdog's fatal
+/// threshold in under a week of uptime.
+///
+/// 2s when nothing is playing costs nothing anyone can see. The banner only appears on a track CHANGE,
+/// and the meter itself is driven by WASAPI audio and is not affected at all - so the whole visible
+/// consequence is that the first banner after starting playback from silence can be up to 1.6s later
+/// than before, by which time the meter has already been on screen for a second.
+///
+/// Suspended is included for the same reason and more strongly: with a fullscreen game up, nobody can
+/// see a banner, and every cross-process call is one more thing competing with the game.
+const IDLE_POLL_MS: u64 = 2_000;
+
+/// How long to wait before the next look for a track change.
+///
+/// Split out and named so it can be tested without a media session: the interesting property is that it
+/// never slows down while something is actually playing, which is the only case where the delay would be
+/// visible.
+fn poll_interval_ms(playing: bool, suspended: bool) -> u64 {
+    if playing && !suspended {
+        POLL_MS
+    } else {
+        IDLE_POLL_MS
+    }
+}
 
 /// A handle for asking the media thread to do something. Cheap to clone.
 #[derive(Clone)]
@@ -433,11 +462,15 @@ pub fn start() -> Handle {
         {
             log::write(&format!("media: CoInitializeEx failed: {e}"));
         }
+        // Whether a track was playing at the last look. Seeded true, so the very first wait is the
+        // short one and a track already playing at startup is picked up promptly.
+        let mut playing = true;
         loop {
             // `recv_timeout`, not `recv`: the thread also has to NOTICE things, not only be told
             // them. Without a timeout it slept until the next hotkey, so a track change was invisible
             // until the user pressed something.
-            match rx.recv_timeout(std::time::Duration::from_millis(POLL_MS)) {
+            let wait = poll_interval_ms(playing, crate::win::shell_state::suspended());
+            match rx.recv_timeout(std::time::Duration::from_millis(wait)) {
                 Ok((action, backend)) => {
                     let t0 = std::time::Instant::now();
                     match send(action, backend) {
@@ -452,14 +485,25 @@ pub fn start() -> Handle {
                     if let Ok(Some((_, s))) = find_session() {
                         publish(&title_and_artist(&s));
                     }
+                    // Somebody just pressed a key, so they are listening: back to the fast rate
+                    // immediately rather than waiting for a poll to notice.
+                    playing = true;
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                     match find_session() {
-                        Ok(Some((_, s))) => publish(&title_and_artist(&s)),
+                        Ok(Some((_, s))) => {
+                            publish(&title_and_artist(&s));
+                            // Drives the next wait. A failed status read counts as not playing, which
+                            // errs toward polling less - the safe direction for a call that leaks.
+                            playing = matches!(status_of(&s), Ok(Status::Playing));
+                        }
                         // Nothing playing: clear it, so a banner cannot be re-shown for a track that
                         // stopped ages ago when playback resumes.
-                        Ok(None) => publish(""),
-                        Err(_) => {}
+                        Ok(None) => {
+                            publish("");
+                            playing = false;
+                        }
+                        Err(_) => playing = false,
                     }
                 }
                 // The sender is gone, i.e. the app is shutting down.
@@ -531,6 +575,25 @@ mod tests {
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted.len(), 3, "two actions share a virtual key: {vks:?}");
+    }
+
+    #[test]
+    fn the_poll_only_runs_fast_while_something_is_actually_playing() {
+        // The poll leaks - +22 handles per 1,000 round trips, measured by `--stress` - and at 400ms it
+        // runs 216,000 times a day. Backing off while nothing is playing is free, because the banner it
+        // feeds only appears on a track CHANGE and the meter itself is driven by WASAPI, not by this.
+        assert_eq!(poll_interval_ms(true, false), POLL_MS, "playing must stay responsive");
+        assert_eq!(poll_interval_ms(false, false), IDLE_POLL_MS, "paused or stopped must back off");
+        assert_eq!(poll_interval_ms(false, true), IDLE_POLL_MS, "suspended must back off");
+        // Suspended wins even over playing: with a fullscreen game up nobody can see a banner, and
+        // every cross-process call competes with the game. This is the case the whole suspend feature
+        // exists for, so the poll must not be the one thing that carries on regardless.
+        assert_eq!(
+            poll_interval_ms(true, true),
+            IDLE_POLL_MS,
+            "a fullscreen game must slow the poll even while music plays"
+        );
+        assert!(IDLE_POLL_MS > POLL_MS * 2, "the backoff has to be worth having");
     }
 
     #[test]

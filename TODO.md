@@ -3,8 +3,8 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** found and fixed why the overlay draws over fullscreen games - borderless
-fullscreen was invisible to every signal the suspend logic had. Both documented open defects are now
+**Last updated:** measured the leak for the first time. Two real per-call leaks found and reduced
+4.4x - and the arithmetic says neither of them is the fault you reported. Both documented open defects are now
 closed; all nine flourishes done, review sheet written, README current.
 
 ---
@@ -44,14 +44,34 @@ closed; all nine flourishes done, review sheet written, README current.
 
 ## Open, unresolved
 
-- [ ] **How much of the leak the fullscreen fix explains is INFERENCE, not measurement.** Confirmed:
-      borderless fullscreen was invisible to every signal, so the overlay never suspended on that
-      machine, and it kept drawing a topmost layered window over the game and kept making UIA calls into
-      the shell. Inferred: that this is why the handles and threads climbed. The chain is plausible -
-      UIA calls into an `explorer.exe` starved by a game block for far longer, and RPC worker threads
-      accumulate while they do - but I have NOT reproduced 19,000 threads, and the `--stress` harness
-      that hammers each suspect path is in the tree unmeasured, because the priority changed mid-run.
-      Do not let me call this fixed until the gaming machine says so.
+- [ ] **THE LEAK IS MEASURED NOW, AND IT IS NOT THE FAULT YOU REPORTED.** `--stress` hammers each
+      suspect path and counts this process's own handles and threads. Two of six leak:
+
+      | suspect | handles/1k calls | threads/1k |
+      |---|---|---|
+      | UIA `taskbar_elements` (the taskbar tree walk) | **+107** | +2 |
+      | media session poll (the real GSMTC round trip) | **+22** | +3 |
+      | `CoCreateInstance(CUIAutomation)` on its own | 0.0 | 0.0 |
+      | `taskbar_rect`, `notification_state`, `foreground_window` | 0.0 | 0.0 |
+
+      So it is not COM object creation and not talking to the shell - it is walking the accessibility
+      tree, and the WinRT session read. Both are real defects and both are now reduced (below).
+
+      **But the arithmetic rules them out as your fault.** At those rates, 45 minutes of running - when
+      you saw the stutter - predicts **293 handles and 23 threads**. What was measured on the bad
+      instance was **131,454 and 18,962**, about 450x and 800x more. Even three days only predicts
+      28,123 and 2,203. Whatever did that is far faster than this and conditional on something this
+      laptop never does, which keeps the borderless-fullscreen gap as the leading candidate: a UIA call
+      into an `explorer.exe` that a game is monopolising blocks for far longer, and RPC worker threads
+      pile up while it does. **Still inference. Your retest is what settles it.**
+
+- [ ] **The leak is reduced 4.4x, not eliminated.** 391 -> 90 handles an hour, which moves the
+      watchdog's fatal threshold from 3.2 days of uptime to 13.9. It still climbs, so a machine left
+      running for a fortnight will still see the watchdog restart the app. The real fixes are a
+      `SetWinEventHook` on `EVENT_OBJECT_LOCATIONCHANGE` for the taskbar's process instead of polling
+      the tree at all, and a GSMTC event subscription instead of polling the session. Both are larger
+      changes with their own risks, and I would rather do them after your retest than pile more
+      speculative work on top.
 
 - [ ] **A rare test flake, understood but not fully fixed.** Five family flourish tests (VFD, VU,
       waterfall, valve, nixie) fire via the audio path, which consults the process-global `ENABLED`

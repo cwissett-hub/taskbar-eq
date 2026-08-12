@@ -204,13 +204,20 @@ A watchdog checks the process handle count every 30 seconds, warns in the log at
 30,000. That is not theoretical: an instance was measured at 18,962 threads and 131,454 handles, and took
 a fullscreen game from 160 fps to 30 with dropped input.
 
-That was originally thought to need days of uptime. It does not - it was later reported after **30 to 45
+That was originally thought to need days of uptime. It does not — it was later reported after **30 to 45
 minutes**, on a machine that plays games in borderless fullscreen, and never on one that does no
-fullscreen rendering at all. The borderless-fullscreen gap above is the leading explanation for both
-halves: no suspend, so the overlay keeps drawing over the game and keeps calling UI Automation into an
-`explorer.exe` the game has starved, and those calls block for longer and longer.
-**[TODO.md](TODO.md) records what is confirmed and what is still inference.** The watchdog stays either
-way, and bounds the damage while autostart brings it back clean.
+fullscreen rendering at all.
+
+`--stress` now measures each suspect path directly, and found two real per-call leaks: the UI Automation
+tree walk (**+107 handles per 1,000 calls**) and the media session poll (**+22**). Creating the UIA client
+on its own leaks nothing, so it is walking the tree that does. Both are now backed off while nothing is
+moving — 4.4x less, which moves the watchdog's fatal threshold from 3.2 days of uptime to 13.9.
+
+**Neither of them is big enough to be the reported fault**, and the arithmetic is what says so: at those
+rates, 45 minutes predicts 293 handles, against the 131,454 measured. The borderless-fullscreen gap above
+remains the leading explanation, because a UIA call into an `explorer.exe` that a game is monopolising
+blocks for far longer than one into an idle shell. **[TODO.md](TODO.md) records what is measured and what
+is still inference.** The watchdog stays either way.
 
 ---
 

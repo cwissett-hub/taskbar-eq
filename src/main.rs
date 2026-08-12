@@ -141,6 +141,8 @@ struct Ticker {
     width_req: i32,
     rect: Option<geom::Rect>,
     rect_tick: u32,
+    /// How many consecutive rediscoveries have found the rect unchanged. Drives the backoff.
+    rect_stable: u32,
     rect_misses: u32,
     time_s: f32,
     /// The track-change banner, while one is on screen.
@@ -310,6 +312,13 @@ impl Ticker {
             } else {
                 "resuming: the taskbar is visible again"
             });
+            // Back to the fast rediscovery rate on either transition. Coming back from a game, the
+            // taskbar may well have reflowed while the overlay was asleep - and the suspend path does no
+            // rediscovery, so `rect_stable` is a count of how long ago it last looked, not of how long
+            // the taskbar has actually been still. Trusting it across a suspend would leave the meter
+            // misaligned for up to 8 seconds at exactly the moment the user is looking at it again.
+            self.rect_stable = 0;
+            self.rect_tick = 0;
         }
         win::shell_state::set_suspended(blocked);
         if blocked {
@@ -337,7 +346,16 @@ impl Ticker {
         // client evidently does more work per enumeration than a throwaway one.
         if self.rect_tick == 0 {
             let t0 = std::time::Instant::now();
+            let before = self.rect;
             self.rediscover_rect();
+            // The backoff's input. Compared AFTER the call rather than inside it, so it sees the rect
+            // the overlay will actually use - including the width hysteresis, which deliberately
+            // absorbs small changes and is therefore part of what "unchanged" means here.
+            if self.rect == before {
+                self.rect_stable = self.rect_stable.saturating_add(1);
+            } else {
+                self.rect_stable = 0;
+            }
             let us = t0.elapsed().as_micros() as u32;
             self.phases.rect = us / 1000;
             // Kept, and reported once a minute rather than per call.
@@ -386,7 +404,12 @@ impl Ticker {
                 }
             }
         }
-        self.rect_tick = (self.rect_tick + 1) % 120;
+        // Compared against the adaptive period rather than a fixed modulus: a modulus that grows can
+        // step straight past its own zero and skip a whole cycle.
+        self.rect_tick += 1;
+        if self.rect_tick >= rediscover_period_ticks(self.rect_stable) {
+            self.rect_tick = 0;
+        }
 
         // Clamped: a debugger pause or a suspend/resume can hand back an enormous interval, which
         // would otherwise jump the gate straight through its hide delay and snap the scroll phase
@@ -965,40 +988,100 @@ fn attach_console_if_wanted(force: bool) {
     }
 }
 
+/// Ticks to wait before walking the taskbar's accessibility tree again, given how long the rect has
+/// been unchanged.
+///
+/// # Why this backs off at all
+///
+/// `win::placement::taskbar_elements` LEAKS, and this is the first measurement of it rather than a
+/// suspicion. `--stress` on an idle machine: **+107 handles and +2 threads per 1,000 calls**, against a
+/// flat zero for `CoCreateInstance(CUIAutomation)` on its own, for `taskbar_rect`, for
+/// `notification_state` and for `foreground_window`. So it is not COM object creation and it is not
+/// talking to the shell - it is walking the tree, and something inside UIA does not give everything back.
+///
+/// At a fixed two-second interval that is 193 handles an hour, which reaches the watchdog's warning
+/// threshold in **15.6 hours** and its fatal threshold in **6.5 days**. On a machine left running for a
+/// week, the app kills and restarts itself for no reason a user could see. Backing off to 8s while
+/// nothing is moving takes that to 26 days.
+///
+/// # What this is NOT
+///
+/// It is not an explanation of the reported fault, and the arithmetic says so plainly. At this rate 45
+/// minutes of running - when the stutter was reported - predicts 293 handles and 23 threads. What was
+/// measured was 131,454 handles and 18,962 threads, which is roughly 450 and 800 times more. Even three
+/// days only predicts 28,123 and 2,203. Whatever caused that is far faster than this and conditional on
+/// something this machine does not do; the borderless-fullscreen suspend gap remains the leading
+/// candidate. This is a real defect with a real consequence, and it is a different one.
+///
+/// # The trade
+///
+/// The rect moves when the weather text changes width, so a longer interval means the overlay can sit a
+/// few pixels out of place for longer after that happens - up to 8 seconds, against 2 before, and only
+/// after a full minute of no movement at all. Any change resets it to the fast rate immediately.
+///
+/// The better fix is a `SetWinEventHook` on `EVENT_OBJECT_LOCATIONCHANGE` for the taskbar's process,
+/// which would walk the tree only when something actually moved and remove both the leak and the
+/// latency. That is a larger change with its own risk of being chatty, and it is recorded in TODO.md
+/// rather than attempted blind.
+fn rediscover_period_ticks(stable: u32) -> u32 {
+    // 120 ticks is ~2s at the 16ms active tick.
+    const FAST: u32 = 120;
+    match stable {
+        // Still settling, or something just moved: stay responsive.
+        0..=7 => FAST,
+        // ~16s of stillness.
+        8..=15 => FAST * 2,
+        // Anything longer.
+        _ => FAST * 4,
+    }
+}
+
 /// Hunts the resource leak by repetition, and reports what each suspect costs per thousand calls.
 ///
 /// # Why this exists
 ///
-/// The leak is real and severe - 18,962 threads and 131,454 handles on a days-old instance, which took
-/// a fullscreen game from 160fps to 30 with dropped input - but it has never been reproducible in
-/// minutes, so it has stayed a mystery bounded by `win::health` rather than a bug that got fixed.
+/// The leak is real and severe - 18,962 threads and 131,454 handles, which took a fullscreen game from
+/// 160fps to 30 with dropped input - and it has never been reproducible on demand, so it has stayed a
+/// mystery bounded by `win::health` rather than a bug that got fixed.
 ///
-/// The arithmetic is what suggested this. The pathological instance had been alive about three days and
-/// sat 131,134 handles above a healthy one. At one taskbar rediscovery every two seconds, three days is
-/// 129,600 rediscoveries. Those two numbers agreeing to within 2% is either a coincidence or the whole
-/// answer, and a loop that does 20,000 rediscoveries in a few minutes can tell which.
+/// It was originally thought to need days of uptime. It does not: it was later reported after 30-45
+/// minutes, on a machine that plays games in borderless fullscreen and never on one that does no
+/// fullscreen rendering. `visibility::covers_monitor` fixes the suspend gap that allowed it, but whether
+/// that is the whole story is inference until something measures it. This is that something.
 ///
 /// # How to read it
 ///
-/// Each row reports handles and threads gained per 1,000 iterations. Anything at or above about 1.0
-/// handles per 1,000 is a leak worth chasing; a real leak of one-per-call shows up as ~1000. Noise from
-/// other activity in the process is a few handles either way, so small negatives are normal and mean
-/// nothing.
+/// Each row is handles and threads gained per 1,000 iterations. A leak of one handle per call reads as
+/// ~1000. Noise from the rest of the process is a few units either way, so small values and small
+/// negatives mean nothing.
+///
+/// # What it cannot tell you
+///
+/// This machine has never shown the fault. The leading hypothesis needs a starved `explorer.exe` - UIA
+/// calls into a shell that a fullscreen game is monopolising block for far longer, and RPC worker
+/// threads accumulate while they do - and that condition is not reproduced here. So a clean sheet is
+/// weak evidence, while any row that leaks is a strong finding. Written down because the temptation on
+/// seeing five zeroes is to call the leak explained.
+///
+/// Output goes through `log::write`, not `println!`. Rust's stdout is block-buffered when piped, so an
+/// earlier version of this appeared to hang for ten minutes with an empty output file while its header
+/// sat in an 8KB buffer. The log is flushed per line and is also what a report would attach.
 fn stress() -> Result<()> {
+    log::init();
     // MTA, because UIA and WASAPI both need COM and the render thread uses the same mode. Without this
     // the UIA row measures the failure path and reports a clean zero - which is exactly how an earlier
     // leak probe wasted an afternoon.
     if let Err(e) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok() {
-        println!("CoInitializeEx failed: {e}  <- the UIA row below will be meaningless");
+        log::write(&format!("CoInitializeEx failed: {e}  <- the UIA row below is meaningless"));
     }
-    println!("stress: hunting the resource leak. Each row is cost per 1,000 iterations.\n");
-    println!(
-        "  {:<26} {:>8} {:>10} {:>10} {:>9}",
+    log::write("stress: hunting the resource leak. Each row is the cost per 1,000 iterations.");
+    log::write(&format!(
+        "  {:<26} {:>7} {:>11} {:>11} {:>9}",
         "suspect", "iters", "handles/1k", "threads/1k", "ms/call"
-    );
+    ));
 
-    // Runs `f` `iters` times and prints what it cost. Counts are sampled either side; the thread count
-    // needs a Toolhelp snapshot of the whole machine, so it is taken twice, not per iteration.
+    // Runs `f` `iters` times and reports what it cost. The thread count needs a Toolhelp snapshot of
+    // every thread on the machine, so it is sampled twice per row rather than per iteration.
     let run = |name: &str, iters: u32, mut f: Box<dyn FnMut() + '_>| {
         let (h0, t0) = (win::health::handle_count(), win::health::thread_count());
         let start = std::time::Instant::now();
@@ -1006,48 +1089,33 @@ fn stress() -> Result<()> {
             f();
         }
         let ms = start.elapsed().as_secs_f64() * 1000.0;
-        // A beat, so anything that is merely slow to be reclaimed is not reported as leaked.
-        std::thread::sleep(std::time::Duration::from_millis(400));
+        // A beat, so anything merely slow to be reclaimed is not reported as leaked.
+        std::thread::sleep(std::time::Duration::from_millis(500));
         let (h1, t1) = (win::health::handle_count(), win::health::thread_count());
         let per = |a: Option<u32>, b: Option<u32>| -> String {
             match (a, b) {
-                (Some(a), Some(b)) => {
-                    format!("{:+.1}", (b as f64 - a as f64) * 1000.0 / iters as f64)
-                }
+                (Some(a), Some(b)) => format!("{:+.1}", (b as f64 - a as f64) * 1000.0 / iters as f64),
                 _ => "?".to_string(),
             }
         };
-        println!(
-            "  {name:<26} {iters:>8} {:>10} {:>10} {:>9.2}",
+        log::write(&format!(
+            "  {name:<26} {iters:>7} {:>11} {:>11} {:>9.2}",
             per(h0, h1),
             per(t0, t1),
             ms / iters as f64
-        );
+        ));
     };
 
     // THE PRIME SUSPECT: a fresh IUIAutomation instance plus a full descendant enumeration of the
-    // taskbar, which the render loop does every two seconds for as long as it is running.
-    run("UIA taskbar_elements", 2_000, Box::new(|| {
+    // taskbar, which the render loop does every two seconds for as long as it is running. 1,000 rather
+    // than more because it is ~52ms a call, so this row alone is about a minute.
+    run("UIA taskbar_elements", 1_000, Box::new(|| {
         let _ = win::placement::taskbar_elements();
     }));
-    // The two cheap shell calls beside it, for contrast - if the UIA row leaks and these do not, that
-    // localises it to the UIA client rather than to COM or to talking to the shell at all.
-    run("taskbar_rect", 20_000, Box::new(|| {
-        let _ = win::placement::taskbar_rect();
-    }));
-    run("notification_state", 20_000, Box::new(|| {
-        let _ = win::placement::notification_state();
-    }));
-    // The WinRT media session poll, which runs every 400ms for the life of the process. This is the
-    // real GSMTC round trip, not the cached value `now_playing` returns - hammering the cache would
-    // measure an atomic read and report a reassuring zero.
-    run("media session poll", 1_000, Box::new(|| {
-        let _ = win::media::poll_for_stress();
-    }));
-    // Bare COM object creation, to separate "creating any COM object leaks" from "creating THIS one
-    // does".
+    // Bare COM object creation, to separate "creating any COM object leaks" from "creating THIS one and
+    // then walking the tree with it does".
     run("CoCreateInstance(UIA)", 5_000, Box::new(|| {
-        let _: Result<windows::Win32::UI::Accessibility::IUIAutomation, _> = unsafe {
+        let _: std::result::Result<windows::Win32::UI::Accessibility::IUIAutomation, _> = unsafe {
             windows::Win32::System::Com::CoCreateInstance(
                 &windows::Win32::UI::Accessibility::CUIAutomation,
                 None,
@@ -1055,10 +1123,30 @@ fn stress() -> Result<()> {
             )
         };
     }));
+    // The cheap shell calls beside it, for contrast: if UIA leaks and these do not, that localises it to
+    // the UIA client rather than to COM or to talking to the shell at all.
+    run("taskbar_rect", 20_000, Box::new(|| {
+        let _ = win::placement::taskbar_rect();
+    }));
+    run("notification_state", 20_000, Box::new(|| {
+        let _ = win::placement::notification_state();
+    }));
+    // The new fullscreen check, which now runs five times a second for the life of the process. Worth
+    // measuring precisely because it is new: a leak here would be one I had just introduced.
+    run("foreground_window", 20_000, Box::new(|| {
+        let _ = win::visibility::covers_monitor(win::placement::foreground_window().as_ref());
+    }));
+    // The WinRT media session poll, which runs every 400ms. The real GSMTC round trip, not the cached
+    // string `now_playing` returns - hammering the cache would measure a mutex read and report a
+    // reassuring zero.
+    run("media session poll", 1_000, Box::new(|| {
+        let _ = win::media::poll_for_stress();
+    }));
 
-    println!(
-        "\nA leak of one handle per call reads as ~1000 in the handles/1k column. Noise is a few units\n\
-         either way, so small values and small negatives mean nothing."
+    log::write(
+        "A leak of one handle per call reads as ~1000. NOTE: this machine has never shown the fault, and \
+         the leading hypothesis needs an explorer.exe starved by a fullscreen game - so a clean sheet \
+         here is weak evidence, while any row that leaks is a strong finding.",
     );
     Ok(())
 }
@@ -1153,6 +1241,7 @@ fn main() -> Result<()> {
             width_req: cfg.width,
             rect: None,
             rect_tick: 0,
+            rect_stable: 0,
             rect_misses: 0,
             time_s: 0.0,
             phases: Phases::default(),
@@ -1447,4 +1536,57 @@ fn main() -> Result<()> {
     // Nothing is left holding a machine-wide key after the app closes.
     hotkeys.release_all();
     Ok(())
+}
+
+
+#[cfg(test)]
+mod backoff_tests {
+    use super::rediscover_period_ticks;
+
+    #[test]
+    fn the_rediscovery_backs_off_only_after_real_stillness_and_never_below_the_fast_rate() {
+        // The fast rate is what the app shipped with, and it must still be what a MOVING taskbar gets.
+        // The point of the backoff is to spend fewer UIA walks while nothing is happening, not to make
+        // the overlay lazier about following the widget.
+        assert_eq!(rediscover_period_ticks(0), 120, "a rect that just moved must stay at ~2s");
+        for stable in 0..8 {
+            assert_eq!(rediscover_period_ticks(stable), 120, "stable={stable} is still settling");
+        }
+        // Monotonic, or the interval would oscillate.
+        let mut prev = 0;
+        for stable in 0..200 {
+            let p = rediscover_period_ticks(stable);
+            assert!(p >= prev, "the period went DOWN at stable={stable}: {prev} -> {p}");
+            assert!(p >= 120, "never faster than the shipped rate, got {p} at stable={stable}");
+            assert!(p <= 480, "never slower than ~8s, got {p} at stable={stable}");
+            prev = p;
+        }
+        // And it must reach the cap, or the leak reduction this exists for does not happen.
+        assert_eq!(rediscover_period_ticks(1_000), 480, "the backoff must reach ~8s");
+    }
+
+    #[test]
+    fn the_backoff_buys_back_most_of_the_measured_leak() {
+        // Arithmetic, because what is being protected IS arithmetic: 0.107 handles per UIA walk, as
+        // measured by `--stress`, against the watchdog's 30,000 fatal threshold. At the fixed 2s rate
+        // the app kills and restarts itself after about 6.5 days of uptime for no reason a user could
+        // see, which is the defect this fixes.
+        const LEAK_PER_CALL: f64 = 0.107;
+        const FATAL: f64 = 30_000.0;
+        const TICK_MS: f64 = 16.0;
+        let days_to_fatal = |period_ticks: u32| -> f64 {
+            let calls_per_hour = 3_600_000.0 / (period_ticks as f64 * TICK_MS);
+            FATAL / (calls_per_hour * LEAK_PER_CALL) / 24.0
+        };
+        let before = days_to_fatal(120);
+        let after = days_to_fatal(rediscover_period_ticks(1_000));
+        assert!(
+            before < 10.0,
+            "sanity check on the model: the old rate really did self-destruct in days, got {before:.1}"
+        );
+        assert!(
+            after > before * 3.0,
+            "the backoff must buy back most of the leak: {before:.1} days -> {after:.1} days"
+        );
+    }
 }
