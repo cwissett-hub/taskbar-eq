@@ -90,6 +90,23 @@ Regenerate any of these with <code>cargo test --release dump_flourishes -- --ign
   <figure><img src="patchbay-window.png" alt="Patchbay: the response window, before and after"><figcaption>top: the old window &middot; bottom: the new one. Same real-music frames, same code - only the window differs</figcaption></figure>
   <p class="judge"><strong>What I want your eyes on:</strong> Whether the panel now reads as too slack. Pinning is 0% on every cable at both widths, but it cost about a quarter of the separation between cables. An intermediate value keeps more separation and leaves the bass cable pinned 29% of the time - say which trade you prefer.</p>
 </section>
+<section>
+  <h2><span class="n">11</span>NEW: a flame organ (a Rubens&rsquo; tube) &mdash; prototype</h2>
+  <p class="what">Your idea: pipes along the bottom emitting plumes that show the waveform. A manifold of
+  gas nozzles, each burning to a height set by its band. Not a fluid simulation &mdash; a bottom-seeded
+  heat-diffusion buffer, one pass over ~10,000 cells, the same cost class as the spectrogram's history.
+  The cooling SUBTRACTS rather than multiplies, which is what makes plume height linear in the band
+  rather than logarithmic &mdash; so it reads as a profile you can compare across, not as brightness.</p>
+  <figure><img src="flame-prototype.png" alt="flame organ prototype">
+  <figcaption>rows: quiet &middot; normal &middot; loud &middot; a comb (alternating loud and quiet band
+  groups), which is the row that shows whether the per-band reading is legible</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> is this the thing you pictured? Two rounds
+  of iteration got here &mdash; the first looked like scattered embers (a 3px core bled its heat away),
+  the second had every plume leaning in unison like a gust of wind. What I would still change: some
+  plumes pile into flat-topped wedges where the lean shears them, and it is chunky at 60px. Tell me
+  whether to push on the taper, and what the colourways should be &mdash; flame, vapour and plasma all
+  fall out of the same buffer with a different ramp.</p>
+</section>
 <footer>
 Generated from the renderers themselves, not drawn by hand. Progress log:
 <code>TODO.md</code>. Source of these images: <code>cargo test --release dump_flourishes</code>,

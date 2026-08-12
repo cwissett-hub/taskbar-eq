@@ -17,6 +17,7 @@ pub mod scope;
 pub mod nixie;
 pub mod patchbay;
 pub mod chroma;
+pub mod flame;
 pub mod fluid;
 pub mod pantone;
 pub mod banner;

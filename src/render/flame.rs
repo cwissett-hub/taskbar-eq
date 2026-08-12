@@ -1,0 +1,372 @@
+//! A flame organ: a manifold of gas nozzles along the bottom, each burning to a height set by its band.
+//!
+//! # What it is pretending to be
+//!
+//! A Rubens' tube - a perforated pipe fed with gas and driven by sound, where the flame height traces
+//! the standing wave inside. It is a real instrument, which is the bar every family here has to clear,
+//! and it is the only one whose reading is carried by something that looks alive.
+//!
+//! # Why this is cheap
+//!
+//! It is not a fluid simulation and does not need to be. The whole effect is the classic bottom-seeded
+//! heat-diffusion buffer: every cell takes a weighted average of the three cells below it, loses a fixed
+//! amount to cooling, and the bottom row is seeded from the band levels. One pass over the panel
+//! interior is about 10,000 cells of a handful of float operations - the same cost class as the
+//! spectrogram's history buffer, which already ships. Navier-Stokes would buy nothing a 60px-tall panel
+//! could show.
+//!
+//! # Why the cooling SUBTRACTS rather than multiplies
+//!
+//! This is the one decision the family's legibility rests on. A multiplicative decay makes plume height
+//! logarithmic in the seed, so a band at 1.0 would stand only a little taller than one at 0.2 and the
+//! display would read as brightness rather than as height. Subtracting a constant per row makes height
+//! LINEAR in the seed - `rows = seed / COOL` - so the plumes are a profile you can read across, which is
+//! the same position-over-intensity rule the nixie and valve families are built on.
+
+use super::canvas::{Canvas, Rgba};
+use super::{Family, FrameData};
+use crate::themes::Theme;
+
+/// Horizontal pitch of the nozzles, in pixels.
+///
+/// 14 gives 12 plumes at 190px and 26 at 380px. Wider and the panel reads as a handful of separate
+/// fires rather than an instrument with a scale; narrower and the plumes merge into one sheet, which
+/// loses the per-band reading entirely.
+const NOZZLE_PITCH: i32 = 14;
+
+/// Width of the seeded core under each nozzle, in pixels.
+///
+/// 5, and the first attempt at 3 is why. A 3px core plus a sideways sampling offset means most cells
+/// sample the empty columns beside the plume, so it bleeds its heat away and dies within a dozen rows -
+/// rendered, that read as scattered embers rather than as flames. 5 gives the column enough body to
+/// survive both the diffusion and the lick, and is still far narrower than the 14px pitch, which is what
+/// keeps the plumes separable.
+const SEED_W: i32 = 5;
+
+/// Heat lost per row of rise.
+///
+/// Sets the height scale directly: a seed of 1.0 climbs `1.0 / COOL` rows before it dies.
+///
+/// 0.023 reaches about 43 rows against an interior of 51, which leaves the top eighth clear. 0.018 was
+/// tried and reached the ceiling: a plume that runs out of panel spreads sideways along the top row
+/// instead of tapering, and rendered, the loud case grew flat horizontal caps that read as a fault in the
+/// drawing rather than as fire.
+const COOL: f32 = 0.023;
+
+/// How much of each cell's heat comes from the cell directly below, against its two diagonal
+/// neighbours.
+///
+/// 0.55 to the centre keeps a plume narrow enough to stay separable from its neighbour; nearer 0.33
+/// (a flat average) and it spreads into a dome within a dozen rows. This is the knob that decides
+/// whether the display reads as twelve flames or as one fire.
+const CENTRE_BIAS: f32 = 0.55;
+
+/// Peak sideways lick, in pixels of sampling offset.
+///
+/// What stops the plumes being static triangles - but it has to be COHERENT. The first version drew the
+/// offset from a per-cell hash, which is not a lick at all: neighbouring cells sampled in different
+/// directions, so the plume scattered its own heat sideways instead of leaning. Rendered, that gave
+/// embers rather than flames.
+///
+/// Two smooth waves instead, one travelling up the plume and one slower and wider, so the column bends
+/// as a body and the bends themselves drift. 0.95px of peak offset, which at a 5px core keeps most of the
+/// sampling inside it.
+///
+/// The waves are phased PER NOZZLE. Without that they are functions of height and time alone, so every
+/// plume on the panel leans the same way at the same moment - rendered, that read as a gust of wind
+/// across the whole manifold rather than as twelve independent flames, which is a different and much
+/// less interesting picture.
+const LICK: f32 = 0.95;
+
+/// Response window, in band-level units. Matches the other families' convention - see `patchbay`'s
+/// `RESP_FLOOR` note for why this is placed on what the DSP actually produces rather than on 0..1.
+const RESP_FLOOR: f32 = 0.10;
+const RESP_SPAN: f32 = 0.62;
+
+/// Nozzles at a given panel width.
+fn nozzle_count(w: i32) -> usize {
+    (((w - 8) / NOZZLE_PITCH).max(2) as usize).min(32)
+}
+
+/// Centre x of nozzle `i` of `n`.
+fn nozzle_x(w: i32, n: usize, i: usize) -> i32 {
+    let span = (w - 8) as f32 / n.max(1) as f32;
+    4 + (span * (i as f32 + 0.5)) as i32
+}
+
+/// Maps a band level onto 0..=1 of plume height.
+fn response(level: f32, sensitivity: f32) -> f32 {
+    if !level.is_finite() {
+        return 0.0;
+    }
+    (((level - RESP_FLOOR) / RESP_SPAN) * sensitivity.max(0.0)).clamp(0.0, 1.0)
+}
+
+/// Deterministic 0..1 from three integers, for the flicker and the lick.
+///
+/// Keyed on the frame as well as the position, unlike the patchbay's brushed-metal grain which must
+/// NOT crawl. Here crawling is the entire point: a fire that does not move is a triangle.
+fn hash01(x: i32, y: i32, f: u32) -> f32 {
+    let mut h = (x as u32)
+        .wrapping_mul(0x9E37_79B9)
+        .wrapping_add((y as u32).wrapping_mul(0x85EB_CA6B))
+        .wrapping_add(f.wrapping_mul(0xC2B2_AE35));
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x2C1B_3C6D);
+    h ^= h >> 13;
+    (h >> 8) as f32 / 16_777_216.0
+}
+
+#[derive(Default)]
+pub struct Flame {
+    /// Heat field over the panel interior, row 0 at the TOP. `w * h` cells.
+    heat: Vec<f32>,
+    w: i32,
+    h: i32,
+    frame: u32,
+}
+
+impl Flame {
+    /// The band level driving nozzle `i`, biased toward the group's peak so one loud band in the group
+    /// still lifts the plume - the same reduction the patchbay and Pantone families use.
+    fn level_for(d: &FrameData, i: usize, n: usize) -> f32 {
+        let len = d.levels.len();
+        let n = n.max(1);
+        let lo = i * len / n;
+        let hi = (((i + 1) * len / n).max(lo + 1)).min(len);
+        let (mut acc, mut cnt, mut peak) = (0.0f32, 0.0f32, 0.0f32);
+        for v in &d.levels[lo..hi] {
+            // is_finite BEFORE anything accumulates: f32::clamp does not sanitise NaN, and one poisoned
+            // band would otherwise reach the heat field and stay there for the life of the process.
+            if v.is_finite() {
+                acc += *v;
+                cnt += 1.0;
+                peak = peak.max(*v);
+            }
+        }
+        if cnt <= 0.0 {
+            return 0.0;
+        }
+        (acc / cnt * 0.35 + peak * 0.65).clamp(0.0, 1.0)
+    }
+
+    fn at(&self, x: i32, y: i32) -> f32 {
+        if x < 0 || y < 0 || x >= self.w || y >= self.h {
+            return 0.0;
+        }
+        self.heat[(y * self.w + x) as usize]
+    }
+
+    /// One diffusion pass, then the seeding.
+    ///
+    /// Iterated from the TOP down, reading the row below. That order is what makes it safe in place: the
+    /// row being read has not been written yet this frame, so every cell sees the previous frame's heat.
+    /// Bottom-up would read cells it had already updated and the fire would shoot to the top in one
+    /// frame.
+    fn advance(&mut self, d: &FrameData, sens: f32, dt: f32) {
+        let (w, h) = (self.w, self.h);
+        let cool = COOL * dt.clamp(0.25, 4.0);
+        self.frame = self.frame.wrapping_add(1);
+        for y in 0..(h - 1) {
+            for x in 0..w {
+                // The lick: two smooth waves, so the plume bends as a body, PHASED PER NOZZLE so the
+                // plumes do not all lean together. Coherent in x and y by construction - see `LICK` for
+                // what the incoherent version looked like, and for what the unphased one did.
+                let fy = y as f32;
+                let ft = self.frame as f32;
+                // A phase per nozzle, from an irrational-ish multiple of its index so neighbours are
+                // never close to in step.
+                let ph = (x / NOZZLE_PITCH.max(1)) as f32 * 2.399;
+                let lick = LICK
+                    * ((fy * 0.28 - ft * 0.13 + ph).sin() * 0.7
+                        + (fy * 0.09 + ft * 0.05 + ph * 1.7).sin() * 0.5);
+                let sx = x + lick.round() as i32;
+                let below = self.at(sx, y + 1);
+                let l = self.at(sx - 1, y + 1);
+                let r = self.at(sx + 1, y + 1);
+                let side = (1.0 - CENTRE_BIAS) * 0.5;
+                let mixed = below * CENTRE_BIAS + l * side + r * side;
+                // Flicker in the COOLING rather than in the heat: cooling more on some cells eats holes
+                // in the plume the way a real flame breaks up, where adding heat would only make it
+                // sparkle.
+                // Gently. 0.65-1.35 per cell per frame punched the plume full of holes on its own, which
+                // is most of why the first render looked like sparks rather than fire.
+                let flick = 0.88 + 0.24 * hash01(x, y, self.frame ^ 0x5BF0_3635);
+                let v = mixed - cool * flick;
+                self.heat[(y * w + x) as usize] = if v.is_finite() { v.max(0.0) } else { 0.0 };
+            }
+        }
+        // Seed the bottom row from the bands.
+        let n = nozzle_count(w);
+        for cell in self.heat[((h - 1) * w) as usize..].iter_mut() {
+            *cell = 0.0;
+        }
+        for i in 0..n {
+            let cx = nozzle_x(w, n, i) - 4; // interior coordinates
+            let lvl = response(Self::level_for(d, i, n), sens);
+            // A floor, so a lit burner never goes out: an unlit nozzle on a gas manifold reads as
+            // broken, which is the same reason the valve row keeps a heater floor and the reel keeps
+            // turning at silence.
+            let seed = 0.06 + 0.94 * lvl;
+            for k in 0..SEED_W {
+                let x = cx - SEED_W / 2 + k;
+                if x >= 0 && x < w {
+                    self.heat[((h - 1) * w + x) as usize] = seed;
+                }
+            }
+        }
+    }
+}
+
+impl Family for Flame {
+    fn id(&self) -> &'static str {
+        "flame"
+    }
+
+    fn draw(&mut self, c: &mut Canvas, t: &Theme, d: &FrameData) {
+        let (cw, ch) = (c.width(), c.height());
+        c.clear();
+        let panel = Rgba::from_hex(&t.panel, t.panel_alpha);
+        c.rounded_rect(1, 2, (cw - 2).max(1), (ch - 4).max(1), 3, panel);
+        if cw < 40 || ch < 24 {
+            return;
+        }
+
+        // The interior the heat field covers: inside the panel, and above the manifold at the bottom.
+        let manifold_h = 4;
+        let (ix, iy) = (4, 3);
+        let (iw, ih) = (cw - 8, ch - 6 - manifold_h);
+        if iw < 8 || ih < 6 {
+            return;
+        }
+        if self.w != iw || self.h != ih {
+            self.w = iw;
+            self.h = ih;
+            self.heat = vec![0.0; (iw * ih) as usize];
+        }
+
+        let dt = if d.dt_ms.is_finite() { (d.dt_ms / 16.7).clamp(0.25, 4.0) } else { 1.0 };
+        self.advance(d, t.sensitivity, dt);
+
+        // Everything that emits light goes on its own transparent layer to be bloomed once and
+        // composited - `Canvas::bloom` puts its halo UNDER existing content, so blooming a canvas that
+        // already carries the opaque panel hides it completely. The trap documented in segmented,
+        // scope, vu, tube and waterfall.
+        let mut lit = Canvas::new(cw, ch);
+        for y in 0..ih {
+            for x in 0..iw {
+                let v = self.at(x, y);
+                if v <= 0.02 {
+                    continue;
+                }
+                // Three zones, which is what makes it read as combustion rather than as a gradient: a
+                // cool translucent envelope, the body in the colourway's own lit colour, and a white
+                // core only where it is truly hot.
+                let frac = x as f32 / iw as f32;
+                let col = if v > 0.72 {
+                    Rgba::from_hex(&t.hot, 1.0)
+                } else if v > 0.34 {
+                    super::tint(t, frac, d.time_s, false, &t.lit, 1.0)
+                } else {
+                    super::tint(t, frac, d.time_s, false, &t.lit, (v * 2.2).clamp(0.10, 0.85))
+                };
+                lit.fill_rect(ix + x, iy + y, 1, 1, col);
+            }
+        }
+
+        if t.bloom > 0.0 {
+            let mut glow = lit.clone();
+            glow.bloom(t.bloom.max(0.0) as i32, t.glow_strength.clamp(0.0, 1.0));
+            c.draw_over(&glow);
+        }
+        c.draw_over(&lit);
+
+        // The manifold, over the flames' feet so the plumes read as leaving it. Drawn from the valve
+        // row's chassis colours for the same reason the patchbay borrows them: a gas pipe and a valve
+        // chassis are the same milled metal, and reusing them keeps this family off the theme schema.
+        let my = ch - 3 - manifold_h;
+        c.fill_rect(2, my, cw - 4, manifold_h, Rgba::from_hex(&t.tube.chassis_bottom, 0.95));
+        c.fill_rect(2, my, cw - 4, 1, Rgba::from_hex(&t.tube.glass, 0.16));
+        let n = nozzle_count(cw);
+        let collar = Rgba::from_hex(&t.tube.collar, 0.85);
+        for i in 0..n {
+            let x = nozzle_x(cw, n, i);
+            // A stub standing proud of the pipe, so the row reads as nozzles rather than as perforations.
+            c.fill_rect(x - 1, my - 1, 3, 2, collar);
+        }
+
+        c.clip_to_rounded_rect(1, 2, cw - 2, ch - 4, 3);
+        let e = Rgba::from_hex(&t.edge, t.edge_alpha);
+        c.fill_rect(1, 2, cw - 2, 1, e);
+        c.fill_rect(1, ch - 3, cw - 2, 1, e);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::themes::builtin;
+
+    fn flat(level: f32) -> FrameData {
+        let mut d = FrameData { dt_ms: 16.7, ..FrameData::default() };
+        for v in d.levels.iter_mut() {
+            *v = level;
+        }
+        d.peaks = d.levels;
+        d
+    }
+
+    /// Run: cargo test --release dump_flame -- --ignored --nocapture
+    ///
+    /// A prototype dump, written before any assertions, because "does this look like fire" is not a
+    /// question a test can answer and building verification machinery around a look nobody has approved
+    /// yet is how effort gets wasted.
+    #[test]
+    #[ignore]
+    fn dump_flame() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
+        std::fs::create_dir_all(&dir).unwrap();
+        // Three drive levels, and a comb so the per-band reading can be judged as well as the look.
+        let cases: [(&str, Box<dyn Fn(usize) -> f32>); 4] = [
+            ("quiet", Box::new(|_| 0.16)),
+            ("normal", Box::new(|_| 0.34)),
+            ("loud", Box::new(|_| 0.62)),
+            ("comb", Box::new(|i| if (i / 6) % 2 == 0 { 0.60 } else { 0.14 })),
+        ];
+        let t = builtin::tube_soviet();
+        let (w, h) = (190i32, 60i32);
+        let mut rows = Vec::new();
+        for (_label, f) in &cases {
+            let mut fl = Flame::default();
+            let mut c = Canvas::new(w, h);
+            let mut d = flat(0.0);
+            for (i, v) in d.levels.iter_mut().enumerate() {
+                *v = f(i);
+            }
+            d.peaks = d.levels;
+            // 90 frames, so the field has filled and is in steady state rather than still climbing.
+            for _ in 0..90 {
+                fl.draw(&mut c, &t, &d);
+            }
+            rows.push(c);
+        }
+        let (ow, oh) = (w, h * rows.len() as i32 + 4 * (rows.len() as i32 - 1));
+        let mut out = vec![22u8; (ow * oh * 4) as usize];
+        for (ri, shot) in rows.iter().enumerate() {
+            for y in 0..h {
+                for x in 0..w {
+                    let px = shot.get(x, y);
+                    let a = px.a as f32 / 255.0;
+                    let o = (((ri as i32 * (h + 4) + y) * ow + x) * 4) as usize;
+                    for (k, ch8) in [px.r, px.g, px.b].iter().enumerate() {
+                        out[o + k] = (*ch8 as f32 + 22.0 * (1.0 - a)).min(255.0) as u8;
+                    }
+                    out[o + 3] = 255;
+                }
+            }
+        }
+        let path = dir.join(format!("flame-{ow}x{oh}.rgba"));
+        std::fs::write(&path, &out).unwrap();
+        println!("wrote {} ({ow}x{oh}) - rows: quiet, normal, loud, comb", path.display());
+    }
+}
