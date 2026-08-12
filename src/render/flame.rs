@@ -115,8 +115,25 @@ const LICK: f32 = 0.95;
 /// Neither extreme is what a flame looks like. A real edge is continuous but NARROW, so this is a
 /// smoothstep over `EDGE` of heat - about two pixels of falloff at this cooling rate. Continuous enough
 /// to be smooth, tight enough not to be a wash.
-const FLOOR: f32 = 0.13;
-const EDGE: f32 = 0.085;
+const FLOOR: f32 = 0.11;
+const EDGE: f32 = 0.10;
+
+/// Opacity of the flame body, from its coolest visible heat to its hottest.
+///
+/// NEVER 1.0, and that is the difference between "a flame" and "a ghostly flame". A gas flame is a
+/// luminous volume you can see through, not a solid shape - so faintness comes from ALPHA here, and the
+/// ramp is free to stay pale. The previous version made faintness come from COLOUR instead, with a very
+/// dark red at the cool end, which read as heavy and solid rather than insubstantial.
+///
+/// The distinction from the watercolour version two passes ago matters and is easy to lose: that was soft
+/// EDGES plus a wide low-alpha fringe. This is a translucent BODY with the edge still tight. Softness in
+/// the alpha, not in the falloff.
+const BODY_ALPHA_LOW: f32 = 0.34;
+const BODY_ALPHA_HIGH: f32 = 0.80;
+
+/// Opacity of the core. Also short of 1.0, for the same reason - a fully opaque core is a hole punched in
+/// the glow behind it, and the glow is most of what makes this read as light.
+const CORE_ALPHA: f32 = 0.88;
 
 /// Heat at or above which a cell is treated as the flame's core, and blooms.
 ///
@@ -472,15 +489,25 @@ impl Family for Flame {
                 // needs nothing new in the schema. The builder is shared with that family rather than
                 // copied, for the reason the two onset detectors were merged.
                 let col = super::waterfall::ramp_at(&ramp, v.clamp(0.0, 1.0));
-                // Smoothstep alpha over a narrow band, so the edge is anti-aliased rather than either
-                // banded or washed. See `EDGE`.
+                // Two alphas multiplied, and they do different jobs. The smoothstep is the EDGE - a tight
+                // anti-aliased boundary over `EDGE` of heat. The body term is the TRANSLUCENCY, rising
+                // with heat across the whole range so the flame is a luminous volume rather than a solid
+                // shape. See `BODY_ALPHA_LOW`.
                 let e = ((v - FLOOR) / EDGE).clamp(0.0, 1.0);
-                let a = e * e * (3.0 - 2.0 * e);
+                let edge = e * e * (3.0 - 2.0 * e);
+                let body = BODY_ALPHA_LOW + (BODY_ALPHA_HIGH - BODY_ALPHA_LOW) * v.clamp(0.0, 1.0);
+                let a = edge * body;
                 if v >= CORE_HEAT {
                     // The core goes on the bloomed layer, so the hottest part of the flame is what throws
                     // light. Held at the ramp's top rather than a flat `hot`, so a colourway whose stops
                     // run to white gets white and one running to pale blue gets that.
-                    core.fill_rect(ix + x, iy + y, 1, 1, Rgba::new(col.r, col.g, col.b, 255));
+                    core.fill_rect(
+                        ix + x,
+                        iy + y,
+                        1,
+                        1,
+                        Rgba::new(col.r, col.g, col.b, (CORE_ALPHA * 255.0) as u8),
+                    );
                 } else {
                     c.fill_rect(
                         ix + x,
@@ -633,12 +660,14 @@ mod tests {
         // cool tips through orange and yellow to white at the base, which is the luminance progression a
         // real flame has and the thing the posterised version could not express.
         let mut t = builtin::tube_soviet();
+        // NO DARK END. The previous ramp started at #7a1500, a very dark red, and read as heavy and
+        // solid; faintness now comes from the body alpha instead, which leaves the ramp free to stay pale
+        // the whole way up. That is what makes it ghostly rather than merely dim.
         t.zones = vec![
-            crate::themes::Zone { upto: 0.28, lit: "#7a1500".into(), hot: "#7a1500".into() },
-            crate::themes::Zone { upto: 0.52, lit: "#e04a06".into(), hot: "#e04a06".into() },
-            crate::themes::Zone { upto: 0.74, lit: "#ff9a1f".into(), hot: "#ff9a1f".into() },
-            crate::themes::Zone { upto: 0.90, lit: "#ffd76a".into(), hot: "#ffd76a".into() },
-            crate::themes::Zone { upto: 1.00, lit: "#fff6e0".into(), hot: "#fff6e0".into() },
+            crate::themes::Zone { upto: 0.30, lit: "#ff8a4a".into(), hot: "#ff8a4a".into() },
+            crate::themes::Zone { upto: 0.55, lit: "#ffb070".into(), hot: "#ffb070".into() },
+            crate::themes::Zone { upto: 0.78, lit: "#ffd9a8".into(), hot: "#ffd9a8".into() },
+            crate::themes::Zone { upto: 1.00, lit: "#fff6ea".into(), hot: "#fff6ea".into() },
         ];
         let (w, h) = (190i32, 60i32);
         let mut rows = Vec::new();
