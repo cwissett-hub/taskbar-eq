@@ -57,7 +57,7 @@ const SEED_W: i32 = 5;
 ///
 /// 0.007 lets the sideways bleed be the dominant decay, which is the honest model: it is what actually
 /// shapes the plume, and it tapers naturally because a plume's edges are always mixing with cold air.
-const COOL: f32 = 0.009;
+const COOL: f32 = 0.011;
 
 /// How much of each cell's heat comes from the cell directly below, against its two diagonal
 /// neighbours.
@@ -75,24 +75,32 @@ const COOL: f32 = 0.009;
 /// the first was wanted.
 const CENTRE_BIAS: f32 = 0.62;
 
-/// TWO ATTEMPTS AT THE BULBOUS TIPS, BOTH REVERTED, recorded so they are not repeated.
+/// ADVECTION: how many rows of field a cell's heat rises per frame, at the burner and at the top.
 ///
-/// The plumes swell into a bulb near their tops rather than tapering to a wisp. It appeared as soon as
-/// fractional sampling stopped the diffusion leaking heat sideways into the staircase - the heat it had
-/// been losing was suddenly being kept, and it piles up where the rise stalls.
+/// THIS IS THE FIX FOR THE BULBOUS TIPS, and it took three attempts to get to the right mechanism, so
+/// the two dead ends are recorded here rather than rediscovered:
 ///
 /// 1. **Extra cooling with height.** At 1.4 it truncated the plumes with hard flat tops, which is worse
-///    than the bulbs; at 0.45 it was indistinguishable from doing nothing. Cooling decides where a plume
+///    than a bulb; at 0.45 it was indistinguishable from doing nothing. Cooling decides where a plume
 ///    ENDS and says nothing about its shape on the way there.
-/// 2. **More sideways spread with height** (falling centre bias), which is the entrainment a real flame
-///    has. At 0.24 - taking the bias from 0.62 to 0.38 at the tip - it made no visible difference either.
+/// 2. **More sideways spread with height** - the entrainment a real flame has. No visible difference at
+///    a setting that took the centre bias from 0.62 to 0.38 at the tip.
 ///
-/// Both were removed rather than left in at a setting that does nothing, which is the same fault as the
-/// inert `brightness` and `saturation` config fields this project documents.
+/// Both were tuning a diffusion that had no velocity in it, which is why neither could work. Every cell
+/// took its heat from the row DIRECTLY below, so heat moved up exactly one row per frame while spreading
+/// sideways the whole time - it could never outrun its own spreading, and a plume that spreads as fast as
+/// it climbs is a dome by construction.
 ///
-/// The likely real cause is that there is no VELOCITY here: heat only diffuses, so it cannot outrun its
-/// own spreading, and a genuine taper needs the gas to rise faster than it mixes. That is an advection
-/// term, a bigger change, and worth doing deliberately rather than by tuning a constant.
+/// A real flame stretches because the gas rises faster than it mixes, and buoyancy means it ACCELERATES
+/// as it goes. So a cell now takes its heat from `RISE` rows below, growing to `RISE + RISE_GAIN` at the
+/// top of the panel. The sideways mixing is unchanged; what changes is how much height it is spread over,
+/// which is the taper.
+///
+/// 1.0 at the burner, so the base behaves as it always did and the pilot flames are unaffected. 1.9 more
+/// at the top, so the tip is stretched almost three times as far as the root - enough to pull a bulb into
+/// a wisp without the plume detaching into separate blobs, which is what happened past about 3.
+const RISE: f32 = 1.0;
+const RISE_GAIN: f32 = 1.9;
 
 /// Peak sideways lick, in pixels of sampling offset.
 ///
@@ -316,18 +324,32 @@ impl Flame {
     /// moves in discrete one-pixel jumps and manufactures a staircase along both its edges. Nothing about
     /// the physics is stepped; the rounding was.
     ///
-    /// Linear in x only, not bilinear. The vertical neighbour is always the row directly below, which is
-    /// exactly what the diffusion means, and interpolating vertically as well would blur the plume along
-    /// the axis it is travelling - the one direction where the sharpness is real.
-    fn at_frac(&self, x: f32, y: i32) -> f32 {
-        if !x.is_finite() {
+    /// Bilinear, in both axes.
+    ///
+    /// It was linear in x only while the source row was always the one directly below - interpolating
+    /// vertically then would have blurred the plume along the axis it travels, for no gain. With
+    /// advection the source row is fractional and several rows down (see `RISE`), so vertical
+    /// interpolation is resampling a moving field rather than blurring a static one. Without it the
+    /// stretch quantises to whole rows and reintroduces exactly the banding that fractional sampling in x
+    /// was added to remove.
+    fn at_frac(&self, x: f32, y: f32) -> f32 {
+        if !x.is_finite() || !y.is_finite() {
             return 0.0;
         }
-        let x0 = x.floor();
-        let f = x - x0;
-        let a = self.at(x0 as i32, y);
-        let b = self.at(x0 as i32 + 1, y);
-        a + (b - a) * f
+        let (x0, y0) = (x.floor(), y.floor());
+        let (fx, fy) = (x - x0, y - y0);
+        let (xi, yi) = (x0 as i32, y0 as i32);
+        let top = {
+            let a = self.at(xi, yi);
+            let b = self.at(xi + 1, yi);
+            a + (b - a) * fx
+        };
+        let bot = {
+            let a = self.at(xi, yi + 1);
+            let b = self.at(xi + 1, yi + 1);
+            a + (b - a) * fx
+        };
+        top + (bot - top) * fy
     }
 
     /// One diffusion pass, then the seeding.
@@ -398,9 +420,14 @@ impl Flame {
                 // Sampled at the FRACTIONAL offset - see `at_frac` for why rounding it was the main
                 // source of the stepped look.
                 let sx = x as f32 + lick;
-                let below = self.at_frac(sx, y + 1);
-                let l = self.at_frac(sx - 1.0, y + 1);
-                let r = self.at_frac(sx + 1.0, y + 1);
+                // ADVECTION. The source row is `rise` below, not one below, and `rise` grows toward the
+                // top because buoyant gas accelerates. See `RISE`.
+                let high = 1.0 - y as f32 / (h - 1).max(1) as f32;
+                let rise = RISE + RISE_GAIN * high;
+                let sy = y as f32 + rise;
+                let below = self.at_frac(sx, sy);
+                let l = self.at_frac(sx - 1.0, sy);
+                let r = self.at_frac(sx + 1.0, sy);
                 let side = (1.0 - CENTRE_BIAS) * 0.5;
                 let mixed = below * CENTRE_BIAS + l * side + r * side;
                 // Flicker in the COOLING rather than in the heat: cooling more on some cells eats holes
@@ -409,7 +436,11 @@ impl Flame {
                 // Gently. 0.65-1.35 per cell per frame punched the plume full of holes on its own, which
                 // is most of why the first render looked like sparks rather than fire.
                 let flick = 0.88 + 0.24 * hash01(x, y, self.frame ^ 0x5BF0_3635);
-                let v = mixed - cool * flick;
+                // Cooling scales with the distance RISEN, not with the frame. A cell that has just
+                // travelled three rows has lost three rows' worth of heat, and without this the height
+                // scale would depend on the advection rate - `seed / COOL` would stop meaning rows, which
+                // is the property the whole family is built on.
+                let v = mixed - cool * flick * rise;
                 self.heat[(y * w + x) as usize] = if v.is_finite() { v.max(0.0) } else { 0.0 };
             }
         }
@@ -717,11 +748,17 @@ mod tests {
     ///
     /// Comparing against silence removes the panel, the ember wash and the bezel in one step, because all
     /// three are in both frames.
+    ///
+    /// The margin is 6 luminance, lowered from 14 when advection landed. Not to make a test pass: the
+    /// stretch makes a plume's upper half genuinely fainter, so at 14 the measure reported 13 rows of
+    /// travel where the field had 36 - it was drawing the line partway up a plume that carries on. 6 is
+    /// still a difference the eye finds on a dark panel, and silence measures as no plume at all, which is
+    /// the check that stops it becoming a noise detector.
     fn tip(c: &Canvas, silence: &Canvas, i: usize) -> Option<i32> {
         let n = nozzle_count(c.width());
         let cx = nozzle_x(c.width(), n, i);
         (0..c.height()).find(|y| {
-            (cx - 3..=cx + 3).any(|x| lum(c.get(x, *y)) > lum(silence.get(x, *y)) + 14.0)
+            (cx - 3..=cx + 3).any(|x| lum(c.get(x, *y)) > lum(silence.get(x, *y)) + 6.0)
         })
     }
 
