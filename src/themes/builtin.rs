@@ -2800,17 +2800,17 @@ pub fn flame_sodium() -> Theme {
     Theme {
         id: "flame-sodium".into(),
         name: "Sodium".into(),
-        lit: "#ffb070".into(),
-        hot: "#fff6ea".into(),
+        lit: "#ff7a00".into(),
+        hot: "#ffe6a8".into(),
         panel: "#0b0705".into(),
         panel_alpha: 1.0,
         edge: "#c9722f".into(),
         edge_alpha: 0.18,
         zones: vec![
-            Zone { upto: 0.30, lit: "#ff8a4a".into(), hot: "#ff8a4a".into() },
-            Zone { upto: 0.55, lit: "#ffb070".into(), hot: "#ffb070".into() },
-            Zone { upto: 0.78, lit: "#ffd9a8".into(), hot: "#ffd9a8".into() },
-            Zone { upto: 1.01, lit: "#fff6ea".into(), hot: "#fff6ea".into() },
+            Zone { upto: 0.30, lit: "#ff4a00".into(), hot: "#ff4a00".into() },
+            Zone { upto: 0.55, lit: "#ff7a00".into(), hot: "#ff7a00".into() },
+            Zone { upto: 0.78, lit: "#ffab1f".into(), hot: "#ffab1f".into() },
+            Zone { upto: 1.01, lit: "#ffe6a8".into(), hot: "#ffe6a8".into() },
         ],
         ..flame_base()
     }
@@ -2823,17 +2823,17 @@ pub fn flame_propane() -> Theme {
     Theme {
         id: "flame-propane".into(),
         name: "Propane".into(),
-        lit: "#6ec8ff".into(),
-        hot: "#f2fbff".into(),
+        lit: "#1f8cff".into(),
+        hot: "#d8f2ff".into(),
         panel: "#04070b".into(),
         panel_alpha: 1.0,
         edge: "#2f7ec9".into(),
         edge_alpha: 0.18,
         zones: vec![
-            Zone { upto: 0.30, lit: "#2f7ee0".into(), hot: "#2f7ee0".into() },
-            Zone { upto: 0.55, lit: "#6ec8ff".into(), hot: "#6ec8ff".into() },
-            Zone { upto: 0.78, lit: "#b8ecff".into(), hot: "#b8ecff".into() },
-            Zone { upto: 1.01, lit: "#f2fbff".into(), hot: "#f2fbff".into() },
+            Zone { upto: 0.30, lit: "#0a5cff".into(), hot: "#0a5cff".into() },
+            Zone { upto: 0.55, lit: "#1f8cff".into(), hot: "#1f8cff".into() },
+            Zone { upto: 0.78, lit: "#4fc2ff".into(), hot: "#4fc2ff".into() },
+            Zone { upto: 1.01, lit: "#d8f2ff".into(), hot: "#d8f2ff".into() },
         ],
         ..flame_base()
     }
@@ -2844,17 +2844,17 @@ pub fn flame_copper() -> Theme {
     Theme {
         id: "flame-copper".into(),
         name: "Copper".into(),
-        lit: "#7cf0a8".into(),
-        hot: "#eeffee".into(),
+        lit: "#1fe07a".into(),
+        hot: "#d4ffe2".into(),
         panel: "#030805".into(),
         panel_alpha: 1.0,
         edge: "#2fa05e".into(),
         edge_alpha: 0.18,
         zones: vec![
-            Zone { upto: 0.30, lit: "#2fd07a".into(), hot: "#2fd07a".into() },
-            Zone { upto: 0.55, lit: "#7cf0a8".into(), hot: "#7cf0a8".into() },
-            Zone { upto: 0.78, lit: "#c2ffd6".into(), hot: "#c2ffd6".into() },
-            Zone { upto: 1.01, lit: "#eeffee".into(), hot: "#eeffee".into() },
+            Zone { upto: 0.30, lit: "#00c24a".into(), hot: "#00c24a".into() },
+            Zone { upto: 0.55, lit: "#1fe07a".into(), hot: "#1fe07a".into() },
+            Zone { upto: 0.78, lit: "#5cf5a8".into(), hot: "#5cf5a8".into() },
+            Zone { upto: 1.01, lit: "#d4ffe2".into(), hot: "#d4ffe2".into() },
         ],
         ..flame_base()
     }
@@ -2868,17 +2868,17 @@ pub fn flame_strontium() -> Theme {
     Theme {
         id: "flame-strontium".into(),
         name: "Strontium".into(),
-        lit: "#ff8fa8".into(),
-        hot: "#fff0f2".into(),
+        lit: "#ff3d6e".into(),
+        hot: "#ffd8e2".into(),
         panel: "#0a0406".into(),
         panel_alpha: 1.0,
         edge: "#c9384f".into(),
         edge_alpha: 0.18,
         zones: vec![
-            Zone { upto: 0.30, lit: "#ff5a78".into(), hot: "#ff5a78".into() },
-            Zone { upto: 0.55, lit: "#ff8fa8".into(), hot: "#ff8fa8".into() },
-            Zone { upto: 0.78, lit: "#ffc6d2".into(), hot: "#ffc6d2".into() },
-            Zone { upto: 1.01, lit: "#fff0f2".into(), hot: "#fff0f2".into() },
+            Zone { upto: 0.30, lit: "#ff0a4a".into(), hot: "#ff0a4a".into() },
+            Zone { upto: 0.55, lit: "#ff3d6e".into(), hot: "#ff3d6e".into() },
+            Zone { upto: 0.78, lit: "#ff7a9c".into(), hot: "#ff7a9c".into() },
+            Zone { upto: 1.01, lit: "#ffd8e2".into(), hot: "#ffd8e2".into() },
         ],
         ..flame_base()
     }
@@ -2889,17 +2889,17 @@ pub fn flame_potassium() -> Theme {
     Theme {
         id: "flame-potassium".into(),
         name: "Potassium".into(),
-        lit: "#c9a8ff".into(),
-        hot: "#f6f0ff".into(),
+        lit: "#a34fff".into(),
+        hot: "#ecdcff".into(),
         panel: "#06040b".into(),
         panel_alpha: 1.0,
         edge: "#7a4fc9".into(),
         edge_alpha: 0.18,
         zones: vec![
-            Zone { upto: 0.30, lit: "#9a6eff".into(), hot: "#9a6eff".into() },
-            Zone { upto: 0.55, lit: "#c9a8ff".into(), hot: "#c9a8ff".into() },
-            Zone { upto: 0.78, lit: "#e4d6ff".into(), hot: "#e4d6ff".into() },
-            Zone { upto: 1.01, lit: "#f6f0ff".into(), hot: "#f6f0ff".into() },
+            Zone { upto: 0.30, lit: "#7a1fff".into(), hot: "#7a1fff".into() },
+            Zone { upto: 0.55, lit: "#a34fff".into(), hot: "#a34fff".into() },
+            Zone { upto: 0.78, lit: "#c98cff".into(), hot: "#c98cff".into() },
+            Zone { upto: 1.01, lit: "#ecdcff".into(), hot: "#ecdcff".into() },
         ],
         ..flame_base()
     }
@@ -2910,17 +2910,17 @@ pub fn flame_plasma() -> Theme {
     Theme {
         id: "flame-plasma".into(),
         name: "Plasma".into(),
-        lit: "#8fd8ff".into(),
-        hot: "#ffffff".into(),
+        lit: "#7a3dff".into(),
+        hot: "#e8f8ff".into(),
         panel: "#05060c".into(),
         panel_alpha: 1.0,
         edge: "#6a3fd0".into(),
         edge_alpha: 0.20,
         zones: vec![
-            Zone { upto: 0.30, lit: "#b04aff".into(), hot: "#b04aff".into() },
-            Zone { upto: 0.55, lit: "#7a7cff".into(), hot: "#7a7cff".into() },
-            Zone { upto: 0.78, lit: "#8fd8ff".into(), hot: "#8fd8ff".into() },
-            Zone { upto: 1.01, lit: "#ffffff".into(), hot: "#ffffff".into() },
+            Zone { upto: 0.30, lit: "#c400ff".into(), hot: "#c400ff".into() },
+            Zone { upto: 0.55, lit: "#7a3dff".into(), hot: "#7a3dff".into() },
+            Zone { upto: 0.78, lit: "#2fb8ff".into(), hot: "#2fb8ff".into() },
+            Zone { upto: 1.01, lit: "#e8f8ff".into(), hot: "#e8f8ff".into() },
         ],
         ..flame_base()
     }
@@ -3037,6 +3037,48 @@ mod tests {
             "every theme must belong to a known family; {} theme(s) have an unknown one",
             all.len() - counted
         );
+    }
+
+    #[test]
+    fn the_flame_ramps_keep_real_chroma() {
+        // TRANSLUCENCY AND PALLOR ARE DIFFERENT THINGS, and confusing them cost this family its colour
+        // once already. `render::flame` takes faintness from ALPHA - the body is translucent throughout -
+        // so the ramp does not need to be pale, and making it pale as well washed the flames out. The
+        // feedback was "the colours could be more saturated", and the fix was to put the chroma back
+        // without touching a single alpha.
+        //
+        // Measured in OKLab, so this is perceptual chroma rather than an sRGB ratio. A mid orange sits
+        // near 0.11 and the most saturated colours sRGB can express reach about 0.32.
+        use crate::render::canvas::Rgba;
+        for t in all().into_iter().filter(|t| t.family == "flame") {
+            // Rainbow is exempt BY DESIGN: its hue comes from the per-column rainbow tint, so a chromatic
+            // ramp underneath would fight it. Named explicitly rather than skipped by a chroma test that
+            // silently tolerates grey.
+            if t.id == "flame-rainbow" {
+                continue;
+            }
+            assert_eq!(t.zones.len(), 4, "{}: expected four ramp stops", t.id);
+            // The hottest stop is allowed to be pale - a real flame does go white at its base, and forcing
+            // chroma there would make the core look tinted rather than hot.
+            for (i, z) in t.zones.iter().enumerate().take(3) {
+                let c = Rgba::oklab_chroma_of(Rgba::from_hex(&z.lit, 1.0));
+                assert!(
+                    c > 0.085,
+                    "{} stop {i} ({}) has chroma {c:.3}, which is washed out. Faintness in this family                      comes from alpha, not from pale colour - see render::flame's body alpha",
+                    t.id,
+                    z.lit
+                );
+            }
+            // And the coolest stop must be the most saturated of the three, because that is what a flame
+            // does: chroma falls away as it approaches white-hot.
+            let cool = Rgba::oklab_chroma_of(Rgba::from_hex(&t.zones[0].lit, 1.0));
+            let warm = Rgba::oklab_chroma_of(Rgba::from_hex(&t.zones[2].lit, 1.0));
+            assert!(
+                cool > warm,
+                "{}: chroma should fall toward the hot end, got {cool:.3} at the cool stop and                  {warm:.3} nearer the core",
+                t.id
+            );
+        }
     }
 
     #[test]

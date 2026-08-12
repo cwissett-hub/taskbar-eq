@@ -569,7 +569,23 @@ impl Family for Flame {
                 // way, so a flame colourway declares its stops - deep red, orange, yellow, white - and
                 // needs nothing new in the schema. The builder is shared with that family rather than
                 // copied, for the reason the two onset detectors were merged.
-                let col = super::waterfall::ramp_at(&ramp, v.clamp(0.0, 1.0));
+                let mut col = super::waterfall::ramp_at(&ramp, v.clamp(0.0, 1.0));
+                // A rainbow colourway takes its hue from POSITION, so the ramp cannot supply the colour -
+                // it only supplies how hot the cell is. Without this the body was drawn from the neutral
+                // ramp and only the spill was tinted, which left the rainbow colourway looking washed out
+                // beside the other six while its glow was correctly coloured.
+                //
+                // The hue comes from the tint; the ramp's own lightness still decides how far toward white
+                // the cell has burned, so a rainbow flame still goes white-hot at its base.
+                if t.rainbow > 0.0 {
+                    let frac = x as f32 / iw.max(1) as f32;
+                    let hue = super::tint(t, frac, d.time_s, false, &t.lit, 1.0);
+                    let toward_white = v.clamp(0.0, 1.0).powf(1.6);
+                    let mix = |h: u8, w: u8| -> u8 {
+                        (h as f32 + (w as f32 - h as f32) * toward_white).round() as u8
+                    };
+                    col = Rgba::new(mix(hue.r, 255), mix(hue.g, 255), mix(hue.b, 255), col.a);
+                }
                 // Two alphas multiplied, and they do different jobs. The smoothstep is the EDGE - a tight
                 // anti-aliased boundary over `EDGE` of heat. The body term is the TRANSLUCENCY, rising
                 // with heat across the whole range so the flame is a luminous volume rather than a solid

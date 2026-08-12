@@ -148,6 +148,33 @@ impl Rgba {
         0.210_454_26 * l + 0.793_617_8 * m - 0.004_072_047 * s
     }
 
+    /// OKLab chroma of an sRGB colour - how saturated it is, perceptually.
+    ///
+    /// The same forward transform as `oklab_l_of`, returning `hypot(a, b)` instead of L. It exists so a
+    /// colourway's saturation can be ASSERTED: the flame family's ramps were washed out once by making
+    /// them pale in pursuit of translucency, when translucency comes from alpha and pallor was the
+    /// redundant half. A test on this stops that happening again.
+    ///
+    /// Roughly 0.0 for any grey, about 0.11 for a mid orange, and up to ~0.32 for the most saturated
+    /// colours sRGB can express.
+    pub fn oklab_chroma_of(c: Rgba) -> f32 {
+        let d = |v: u8| {
+            let v = v as f32 / 255.0;
+            if v <= 0.040_45 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let (r, g, b) = (d(c.r), d(c.g), d(c.b));
+        let l = (0.412_221_47 * r + 0.536_332_54 * g + 0.051_445_995 * b).cbrt();
+        let m = (0.211_903_5 * r + 0.680_699_5 * g + 0.107_396_96 * b).cbrt();
+        let s = (0.088_302_46 * r + 0.281_718_84 * g + 0.629_978_5 * b).cbrt();
+        let a = 1.977_998_5 * l - 2.428_592_2 * m + 0.450_593_7 * s;
+        let bb = 0.025_904_037 * l + 0.782_771_77 * m - 0.808_675_77 * s;
+        (a * a + bb * bb).sqrt()
+    }
+
     /// Linear light to an 8-bit sRGB channel.
     fn encode_srgb(v: f32) -> u8 {
         let v = v.clamp(0.0, 1.0);
