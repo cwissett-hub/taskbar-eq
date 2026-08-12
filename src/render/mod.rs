@@ -540,6 +540,7 @@ mod newest_dump {
             ("scope", "scope-amber"),
             ("pantone", "pantone-spectrum"),
             ("vapor", "vapor-sunset"),
+            ("radar", "radar-p1"),
         ];
 
         // A waveform, for the families that read one. The phase WALKS between frames, which the scope

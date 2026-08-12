@@ -3,7 +3,10 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** the FLAME ORGAN ships - a new family, 7 colourways, its own flourish. 100
+**Last updated:** radar now has a flourish (barrage jamming). TWO families left without one:
+chroma and fluid.
+
+Earlier: the FLAME ORGAN ships - a new family, 7 colourways, its own flourish. 100
 colourways across 14 families.
 
 Earlier: vapor now has a flourish (a vertical roll). Correction: the flourishes were
@@ -50,7 +53,7 @@ closed; all nine flourishes done, review sheet written, README current.
 
 ## In progress
 
-- [ ] **Three families still have no flourish: radar, chroma, fluid.** I had been saying "all nine
+- [ ] **Two families still have no flourish: chroma and fluid.** Radar is done - barrage jamming. I had been saying "all nine
       families", which was wrong - there are thirteen. A colourway's `flourish` rate is a documented
       setting that does nothing on those three, which is the same "looks like a setting, is not" problem
       as the dead config fields. Planned: **radar** takes jamming or a chaff bloom, **chroma** starves an

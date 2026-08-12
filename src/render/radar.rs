@@ -206,6 +206,44 @@ const GRID_PX: f32 = 23.0;
 /// an unmasked probe reported the middle range line's position instead of the blip's.
 const RANGE_LINES: [f32; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
 
+/// The flourish: barrage jamming.
+///
+/// The one fault that belongs to a radar rather than to a display, and it maps straight onto what this
+/// family already stores. The sweep writes a RANGE and a BRIGHTNESS per column; jamming saturates the
+/// receiver, so returns appear at every range at once. Overriding those two values with noise is not an
+/// approximation of jamming, it is what jamming does to a PPI.
+///
+/// Applied to EVERY column each frame, not only the swept one. A jammer floods the receiver whatever the
+/// antenna happens to be pointing at, and confining the noise to the beam would read as the sweep
+/// painting a mess rather than as the set being blinded.
+///
+/// 1200ms. Long enough to be unmistakable and short enough that the display's actual reading is not gone
+/// for so long that the meter stops being a meter - which is the constraint every flourish here works
+/// under, and the one this family is most exposed to because jamming by definition destroys the reading.
+const JAM_MS: f32 = 1200.0;
+
+/// How bright the noise is, and how deep the range scatter goes.
+///
+/// 0.92 brightness, because a jammed return is a saturated one - a dim scatter reads as a fault in the
+/// drawing. The range spans the full RANGE_MIN..RANGE_MAX so the noise fills the display top to bottom,
+/// which is the whole visual signature: on a jammed PPI you cannot tell near from far.
+const JAM_GLOW: f32 = 0.92;
+
+/// Deterministic 0..1 from a column and a frame.
+///
+/// Keyed on the frame so the noise BOILS - a static scatter looks like a fault in the renderer, where a
+/// boiling one is unmistakably a live signal. That is the opposite of the patchbay's brushed metal, which
+/// must not crawl, and the two are worth contrasting: noise moves, surfaces do not.
+fn jam_noise(ci: usize, frame: u32) -> f32 {
+    let mut h = (ci as u32)
+        .wrapping_mul(0x9E37_79B9)
+        .wrapping_add(frame.wrapping_mul(0x85EB_CA6B));
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x2C1B_3C6D);
+    h ^= h >> 13;
+    (h >> 8) as f32 / 16_777_216.0
+}
+
 /// The rectangular search field, in pixels: `x`/`y` is its top-left, `y + h` is the datum row.
 ///
 /// Note `h` is a SPAN, not a row count - the field occupies rows `y ..= y + h`, so range 0.0 lands
@@ -319,6 +357,11 @@ pub struct Radar {
     /// The shared low-band onset detector - see `dsp::onset`. It reports the MAGNITUDE of the rise,
     /// which the warning receiver needs to judge whether a hit is exceptional for the material.
     bass: crate::dsp::onset::BassRise,
+    /// The flourish: barrage jamming. See `JAM_MS`.
+    flourish: crate::dsp::flourish::Trigger,
+    jam: crate::dsp::flourish::Envelope,
+    /// Frame counter, so the jamming noise boils rather than standing still.
+    jam_frame: u32,
     /// Live transient contact: strength, and the column it was fired on. It stays where it was
     /// fired rather than following the sweep - a return does not move because the antenna did.
     hit: f32,
@@ -564,6 +607,23 @@ impl Family for Radar {
             self.glow[ci] = BLIP_FLOOR + (1.0 - BLIP_FLOOR) * resp;
         }
 
+        // THE FLOURISH: barrage jamming. Written AFTER the sweep's own painting, so it overrides the
+        // true return rather than being overwritten by it, and across every column rather than only the
+        // swept one. See `JAM_MS`.
+        let fired = self.flourish.update(&d.levels, d.dt_ms, t.flourish);
+        let jam = self.jam.update(fired, d.dt_ms, JAM_MS);
+        if jam > 0.01 {
+            self.jam_frame = self.jam_frame.wrapping_add(1);
+            for ci in 0..cols {
+                let n = jam_noise(ci, self.jam_frame);
+                // Mixed toward the noise by the envelope, so the jamming fades out rather than being
+                // switched off - a jammer going quiet is the aircraft leaving, not a relay opening.
+                let target_e = RANGE_MIN + (RANGE_MAX - RANGE_MIN) * n;
+                self.echo[ci] += (target_e - self.echo[ci]) * jam;
+                self.glow[ci] += (JAM_GLOW - self.glow[ci]) * jam;
+            }
+        }
+
         // Transient detector. The slew-limited average is what the rise is measured against, so a
         // sustained bass line settles and stops firing while a kick still spikes above it.
         self.hit = (self.hit - dt / BASS_FALL_MS).max(0.0);
@@ -770,6 +830,120 @@ mod tests {
 
     fn lum(p: Rgba) -> f64 {
         0.2126 * p.r as f64 + 0.7152 * p.g as f64 + 0.0722 * p.b as f64
+    }
+
+    /// The column count for the colourway the jamming tests use.
+    ///
+    /// Taken from the theme's own `rwr` flag rather than hard-coded, because whether the warning receiver
+    /// is on decides how wide the sweep field is and therefore how many columns it has - guessing it would
+    /// index past the end of `echo` or measure only part of the display.
+    fn radar_cols() -> usize {
+        let t = builtin::all().into_iter().find(|t| t.family == "radar").unwrap();
+        column_count(190, 60, t.radar.rwr)
+    }
+
+    /// Spread of the per-column RANGES the display is currently showing, as a fraction of the range band.
+    ///
+    /// This is the measure jamming is visible in, and it is chosen because CONSTANT audio makes it
+    /// near-zero: every column reads the same level, so every blip sits at the same range and they form a
+    /// horizontal line. A jammed set scatters them from the near edge to the far one. Nothing else about
+    /// the display distinguishes the two states so plainly - total brightness rises too, but so does it
+    /// when the music simply gets louder.
+    fn range_spread(r: &Radar, cols: usize) -> f32 {
+        let (lo, hi) = r.echo[..cols]
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(l, h), v| (l.min(*v), h.max(*v)));
+        (hi - lo) / (RANGE_MAX - RANGE_MIN)
+    }
+
+    /// Settles the display on steady audio, then optionally jams it, and returns the radar and canvas.
+    fn jam_state(fire: bool, after: usize) -> (Radar, Canvas) {
+        let mut t = builtin::all()
+            .into_iter()
+            .find(|t| t.family == "radar")
+            .expect("no radar colourway");
+        // Zero, so the audio path cannot fire; the trigger is forced instead. `flourish::request()` is a
+        // process-global atomic every family's draw consumes - see the note in `Trigger::update`.
+        t.flourish = 0.0;
+        let mut r = Radar::default();
+        let mut c = Canvas::new(190, 60);
+        let d = flat(0.42);
+        // Long enough for the sweep to have crossed the whole field, so every column holds a real echo
+        // rather than its initial zero - otherwise the spread would be large before the flourish and the
+        // measurement would say nothing.
+        for _ in 0..200 {
+            r.draw(&mut c, &t, &d);
+        }
+        if fire {
+            r.flourish.force_next();
+        }
+        for _ in 0..after {
+            r.draw(&mut c, &t, &d);
+        }
+        (r, c)
+    }
+
+    #[test]
+    fn the_flourish_fills_every_range_with_noise() {
+        let cols = radar_cols();
+        // The fixture has to be flat first, or "the ranges scattered" means nothing.
+        let (calm, _) = jam_state(false, 4);
+        let calm_spread = range_spread(&calm, cols);
+        assert!(
+            calm_spread < 0.06,
+            "steady audio should put every blip at the same range, got {calm_spread:.3} of spread"
+        );
+
+        // Jammed: returns at every range at once, which is the signature.
+        let (jammed, _) = jam_state(true, 4);
+        let jam_spread = range_spread(&jammed, cols);
+        assert!(
+            jam_spread > 0.55,
+            "jamming must fill the display top to bottom: {jam_spread:.3} of the range band against \
+             {calm_spread:.3} calm"
+        );
+    }
+
+    #[test]
+    fn the_jamming_boils_rather_than_standing_still() {
+        // A static scatter reads as a fault in the renderer; a moving one reads as a live signal. Measured
+        // as the mean change in each column's range between consecutive frames, which is zero on steady
+        // audio because the sweep only rewrites the column it is crossing.
+        let cols = radar_cols();
+        let (mut r, mut c) = jam_state(true, 2);
+        let t = builtin::all().into_iter().find(|t| t.family == "radar").unwrap();
+        let d = flat(0.42);
+        let before: Vec<f32> = r.echo[..cols].to_vec();
+        r.draw(&mut c, &t, &d);
+        let moved = r.echo[..cols]
+            .iter()
+            .zip(&before)
+            .filter(|(a, b)| (*a - *b).abs() > 0.02)
+            .count();
+        assert!(
+            moved > cols / 2,
+            "the noise is not boiling: only {moved} of {cols} columns changed between frames"
+        );
+    }
+
+    #[test]
+    fn the_display_returns_to_reading_the_audio() {
+        // The constraint every flourish here works under, and this family is the most exposed to it:
+        // jamming destroys the reading by definition, so it has to give it back.
+        //
+        // THE RECOVERY OUTLASTS THE ENVELOPE, and that is correct rather than a bug. A PPI holds whatever
+        // the beam last painted, so a jammed column keeps its false return until the sweep next crosses
+        // it - the display clears at the sweep's pace, not the jammer's. Measured: 0.65 of range spread 20
+        // frames after the jam, 0.18 at 100, and 0.00 by 400. The gate is at 400 frames for that reason,
+        // and it still has teeth: a display that never repainted would sit at 0.65 for ever.
+        let cols = radar_cols();
+        let (after, _) = jam_state(true, 400);
+        let spread = range_spread(&after, cols);
+        assert!(
+            spread < 0.06,
+            "the display never went back to reading the audio: {spread:.3} of range spread on steady \
+             audio, where a calm set shows almost none"
+        );
     }
 
     fn flat(level: f32) -> FrameData {
