@@ -970,6 +970,15 @@ mod tests {
     }
 
     /// The capture ran at about 99 frames per second, so this is the fixture's frame interval.
+    /// Milliseconds per fixture row. EMPIRICAL, and correct - do not "derive" it.
+    ///
+    /// `main::measure_levels` captures for exactly `Duration::from_secs(8)` and the three fixtures hold 790
+    /// to 793 rows, so the interval is 10.09 to 10.13ms and 1000/99 is within 0.3% of all three.
+    ///
+    /// I replaced this with `HOP / 48kHz` in `dsp::onset` on the reasoning that a fixture row is one DSP
+    /// frame, and it was wrong: that gives 10.67ms, which would make an 8-second capture 750 rows rather
+    /// than 792. The capture loop does not emit exactly one frame per hop - it processes whatever the device
+    /// hands it per iteration - so this rate is measured, not calculated.
     const FIXTURE_DT_MS: f32 = 1000.0 / 99.0;
 
     /// Reconstruction of `rms_l`/`rms_r` from a fixture frame, and it needs stating plainly:

@@ -163,14 +163,24 @@ mod tests {
     /// The render loop's interval, which is how often a family actually asks a detector anything.
     const DT: f32 = 16.7;
 
-    /// Milliseconds between fixture ROWS, which is not the same thing at all.
+    /// How long each fixture recording is, in seconds.
     ///
-    /// The fixtures are one row per DSP frame, and a DSP frame is `HOP` samples: 512 at 48kHz is
-    /// **10.67ms**, or 93.75 rows a second. The test used to drive them at `DT` and compute their duration
-    /// from `DT`, which was wrong twice over:
+    /// KNOWN BY CONSTRUCTION rather than derived: `main::measure_levels` captures for exactly
+    /// `Duration::from_secs(8)`, so every fixture is 8.0s of audio whatever its row count. That makes the
+    /// duration exact and the row interval a consequence of it - 790 to 793 rows across the three
+    /// fixtures, so 10.09 to 10.13ms a row.
     ///
-    /// - it claimed each fixture was **1.57x longer** than it is, so every rate it printed and asserted
-    ///   was 1.57x too LOW. A detector firing at 2.5/s was reported as 1.6/s.
+    /// DERIVING THE INTERVAL FROM `HOP` IS WRONG, and I shipped that error before catching it. 512 samples
+    /// at 48kHz is 10.67ms, or 93.75 rows a second, which would make an 8-second capture 750 rows. The
+    /// fixtures have 792. The capture loop plainly does not emit exactly one frame per hop - it processes
+    /// whatever the device hands it per iteration - so the row rate is an empirical 99/s and not a
+    /// derivable one. The original `1000.0 / 99.0` in the fluid family was right and my "fix" was 5.6% out.
+    ///
+    /// The test used to drive the rows at `DT` and compute their duration from `DT`, which was wrong twice
+    /// over:
+    ///
+    /// - it claimed each fixture was **1.65x longer** than it is, so every rate it printed and asserted
+    ///   was 1.65x too LOW. A detector firing at 2.5/s was reported as 1.5/s.
     /// - it fed the detector every row as though the render loop saw all of them. It does not: the loop
     ///   runs at ~60fps against a 93.75/s capture, so it sees roughly two rows in every three. Feeding all
     ///   of them hands the detector more chances to fire than it will ever get, which is the wrong
@@ -178,7 +188,7 @@ mod tests {
     ///
     /// 48kHz is assumed because that is what the capture device on the machine these were recorded on
     /// runs at. A different rate would change the durations but not the shape of the argument.
-    const FIXTURE_ROW_MS: f32 = 1000.0 * crate::dsp::bands::HOP as f32 / 48_000.0;
+    const FIXTURE_CAPTURE_S: f32 = 8.0;
     const N: usize = 64;
 
     /// Every band at one level.
@@ -377,8 +387,10 @@ mod tests {
         // every-frame threshold fails.
         for (name, frames) in fixtures() {
             assert!(frames.len() > 500, "{name}: fixture looks truncated, {} frames", frames.len());
-            // The recording's REAL duration, from the row interval - not from the render interval.
-            let secs = frames.len() as f32 * FIXTURE_ROW_MS / 1000.0;
+            // The recording's REAL duration: 8 seconds by construction, not a figure derived from any
+            // interval. The row interval follows from it.
+            let secs = FIXTURE_CAPTURE_S;
+            let row_ms = secs * 1000.0 / frames.len() as f32;
 
             let mut f = Flux::default();
             let mut flux_hits = 0u32;
@@ -388,10 +400,10 @@ mod tests {
             // current at that moment. At 60fps against a 93.75/s capture that means about two rows in
             // every three are never seen by a detector at all, which is exactly the behaviour a guard
             // against "cannot fire" has to reproduce.
-            let total_ms = frames.len() as f32 * FIXTURE_ROW_MS;
+            let total_ms = secs * 1000.0;
             let mut t = 0.0f32;
             while t < total_ms {
-                let idx = ((t / FIXTURE_ROW_MS) as usize).min(frames.len() - 1);
+                let idx = ((t / row_ms) as usize).min(frames.len() - 1);
                 let row = &frames[idx];
                 // 2.8 and 200ms are the vaporwave lightning's shipped settings; 0.055 is the radar's.
                 if f.update(row, DT, 2.8, 200.0) {
