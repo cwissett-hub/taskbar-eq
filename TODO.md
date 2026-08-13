@@ -3,7 +3,10 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** chroma done, inert config fields removed. FLUID cavitation ATTEMPTED AND REVERTED -
+**Last updated:** the vaporwave roll is GONE, replaced by a lightning storm. Display-off suspend
+shipped - we were the machine's second largest energy consumer.
+
+Earlier: chroma done, inert config fields removed. FLUID cavitation ATTEMPTED AND REVERTED -
 see below. Everything in the tree is committed, green and pushed.
 
 Earlier: the FLAME ORGAN ships - a new family, 7 colourways, its own flourish. 100

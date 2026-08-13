@@ -99,73 +99,43 @@ const TERRAIN_SPAN_LEVEL: f32 = 0.456;
 /// Below 1 to expand the low half of the distribution, where most band-frames actually live.
 const TERRAIN_GAMMA: f32 = 0.6;
 
-/// The flourish: the picture loses vertical sync and rolls.
+/// The flourish: a lightning STORM, which is what the vertical-sync roll was replaced by.
 ///
-/// Of every fault a CRT can have, this is the one that needs no explaining - the image slides upward
-/// and wraps, with the blanking interval showing as a dark bar travelling with the seam. It is also the
-/// only one of the nine that is a fault of the DISPLAY rather than of the signal, which suits the one
-/// family here that is pretending to be a screen rather than an instrument.
+/// The roll was removed on the plainest possible evidence - "the new one looks terrible" - and lightning
+/// put in its place because this family already had the best effect in the project and it was only firing
+/// on ordinary bass hits. A storm is the same effect at the scale a flourish deserves.
 ///
-/// 1500ms, and the roll DECELERATES with the envelope, so it reads as sync being lost and then pulled
-/// back rather than as a fixed-speed pan.
+/// It reuses `draw_bolt` rather than drawing anything new. That function already derives a bolt's
+/// horizontal position from its seed - `x0 = w/2 + hash_signed(seed, 0) * w * 0.28` - so five calls with
+/// five seeds are five strikes scattered across the sky for free, each with its own jitter and fork.
 ///
-/// 3.2px per frame at full envelope is about 190px a second - a little over three screen heights on a
-/// 60px panel. Fast, deliberately: a slow roll reads as the scene scrolling, which is what this family
-/// already does on purpose with `scroll`, and the whole point is that it should look broken.
-const ROLL_MS: f32 = 1500.0;
-const ROLL_PX_PER_FRAME: f32 = 3.2;
+/// 1800ms for five strikes, staggered rather than simultaneous: a real storm is a sequence, and five bolts
+/// at once is a white panel. `STORM_BOLTS` and the stagger together mean roughly one strike every 360ms,
+/// which is fast enough to read as a single event rather than as five unrelated hits.
+const STORM_MS: f32 = 1800.0;
+const STORM_BOLTS: usize = 5;
 
-/// Height of the dark blanking bar drawn at the wrap seam.
+/// Half-width of each strike's window, as a fraction of its own slot.
 ///
-/// Without it the effect reads as a pan rather than a roll, because nothing marks where the picture
-/// ends and begins again. 3px at a 60px panel - one is invisible against the grid, and much more eats
-/// the scene it is supposed to be interrupting.
-const ROLL_SEAM_PX: i32 = 3;
+/// 0.55 rather than 0.5, so consecutive strikes overlap slightly at their tails. At exactly 0.5 they abut
+/// and the storm reads as a metronome; a little overlap is what makes it read as weather.
+const STORM_SLOT_HALF: f32 = 0.55;
 
-/// Rolls the panel interior vertically by `offset` pixels, wrapping, and marks the seam.
+/// Peak alpha of the sheet flash - the sky lighting up behind the strike.
 ///
-/// Operates on the composed frame rather than on the scene's geometry, and that is the point: a real
-/// vertical-sync fault displaces the raster, not the thing being drawn. Shifting the horizon and the
-/// grid separately would produce a scene drawn from a different viewpoint, which is not the same
-/// picture moved.
+/// This is the half that makes it a STORM rather than five bolts. It is driven by the strongest bolt
+/// rather than by its own envelope, which is the physically honest arrangement: the sheet IS the strike
+/// illuminating the cloud, so it cannot lead or outlast it.
 ///
-/// The rows outside `top..top + span` are left alone, so the bezel and the panel edge stay put - they
-/// are the physical frame the picture is rolling inside.
-fn roll(c: &mut Canvas, top: i32, span: i32, offset: i32) {
-    if span <= 1 || offset.rem_euclid(span) == 0 {
-        return;
-    }
-    let off = offset.rem_euclid(span);
-    let src = c.clone();
-    let w = c.width();
-    for y in 0..span {
-        // Reading from BELOW the destination sends the picture upward, which is the direction a
-        // vertical-sync fault rolls on every set I have seen described.
-        let sy = top + (y + off).rem_euclid(span);
-        for x in 0..w {
-            let p = src.get(x, sy);
-            c.punch_rect(x, top + y, 1, 1);
-            if p.a > 0 {
-                c.fill_rect(x, top + y, 1, 1, p);
-            }
-        }
-    }
-    // The blanking bar sits at the seam - the row where the bottom of the picture meets its own top.
-    let seam = top + (span - off).rem_euclid(span);
-    for k in 0..ROLL_SEAM_PX {
-        let y = top + (seam - top + k).rem_euclid(span);
-        c.fill_rect(0, y, w, 1, Rgba::new(0, 0, 0, 210));
-    }
-}
+/// 0.34 - clearly present against the sky gradient, and well short of washing the sun out. At 0.6 the
+/// panel whited out and the scene stopped being a scene.
+const STORM_SHEET: f32 = 0.34;
 
 #[derive(Default)]
 pub struct Vapor {
-    /// The flourish: the picture loses vertical sync. See `ROLL_MS`.
+    /// The flourish: a lightning storm. See `STORM_MS`.
     flourish: crate::dsp::flourish::Trigger,
-    roll: crate::dsp::flourish::Envelope,
-    /// Accumulated roll offset in pixels. Reset to zero the moment the envelope expires, so the scene
-    /// cannot be left permanently displaced - which is what a purely accumulating offset would do.
-    roll_px: f32,
+    storm: crate::dsp::flourish::Envelope,
     /// Grid scroll phase, wrapping 0->1.
     scroll: f32,
     /// The shared spectral-flux onset detector - see `dsp::onset`. The fluid tank uses the same
@@ -276,6 +246,42 @@ impl Vapor {
     /// gradient that has to be *clipped* to a circle - there is no clip-to-circle
     /// primitive, so the gradient is drawn over the bounding box and the corners are
     /// punched out per row, which would erase the sky if done in place.
+    /// Brightness of storm strike `k` of `n`, given the envelope's remaining level.
+    ///
+    /// Pure, and separated from `draw` so the storm's shape in time can be asserted directly: that every
+    /// strike fires, that they arrive in order, and that no more than a couple overlap. Judging any of
+    /// that from pixels would mean recovering the schedule from the picture it produced, which is a test
+    /// of the arithmetic against itself.
+    ///
+    /// `storm` runs 1.0 -> 0.0, so elapsed progress is `1.0 - storm`.
+    fn storm_bolt(storm: f32, k: usize, n: usize) -> f32 {
+        if storm <= 0.0 || n == 0 {
+            return 0.0;
+        }
+        let t = 1.0 - storm.clamp(0.0, 1.0);
+        let centre = (k as f32 + 0.5) / n as f32;
+        let half = STORM_SLOT_HALF / n as f32;
+        let d = ((t - centre) / half).abs();
+        if d >= 1.0 {
+            return 0.0;
+        }
+        // Squared, so each strike snaps on and decays rather than fading symmetrically - lightning has
+        // no attack.
+        let f = 1.0 - d;
+        f * f
+    }
+
+    /// Alpha of the sheet flash: the sky lit by whichever strike is currently brightest.
+    ///
+    /// Driven by the strongest bolt rather than by its own envelope, so the flash cannot lead or outlast
+    /// the strike that causes it. See `STORM_SHEET`.
+    fn storm_sheet(storm: f32, n: usize) -> f32 {
+        let strongest = (0..n)
+            .map(|k| Self::storm_bolt(storm, k, n))
+            .fold(0.0f32, f32::max);
+        (strongest * STORM_SHEET).clamp(0.0, 1.0)
+    }
+
     fn sun_layer(w: i32, h: i32, cx: i32, cy: i32, r: i32, t: &crate::themes::VaporParams) -> Canvas {
         let mut layer = Canvas::new(w, h);
         if r <= 0 {
@@ -406,22 +412,10 @@ impl Family for Vapor {
         // `update_bolt`.
         let bolt = self.update_bolt(d, t, dt);
 
-        // THE FLOURISH: loss of vertical sync. Advanced here, with everything else that reads dt, and
-        // applied to the composed frame at the end of `draw`.
+        // THE FLOURISH: a lightning storm. See `STORM_MS`. Advanced here with everything else that
+        // reads dt; the bolts themselves are drawn with the ordinary one, below the sun.
         let fired = self.flourish.update(&d.levels, d.dt_ms, theme.flourish);
-        let rolling = self.roll.update(fired, d.dt_ms, ROLL_MS);
-        if rolling > 0.001 {
-            self.roll_px += ROLL_PX_PER_FRAME * rolling * dt;
-            if !self.roll_px.is_finite() {
-                self.roll_px = 0.0;
-            }
-        } else {
-            // Snapped rather than eased back. At three pixels a frame the last frame of the roll is
-            // already a blur, so the return is not visible - and any alternative that eases the offset
-            // to zero has to decide what to do when the envelope expires mid-screen, which is how a
-            // scene ends up permanently displaced.
-            self.roll_px = 0.0;
-        }
+        let storm = self.storm.update(fired, d.dt_ms, STORM_MS);
 
         let before_scroll = self.scroll;
         let step = t.scroll * 0.010 * dt;
@@ -522,8 +516,42 @@ impl Family for Vapor {
         let sun = Self::sun_layer(w, h, vpx, horizon, r, t);
         c.draw_over(&sun);
 
+        // THE FLOURISH: the storm. Before the ordinary bolt so a strike that coincides with a bass hit
+        // still has the ordinary one on top, and gated on `bolt_bright` because a colourway that turns
+        // lightning OFF must not be handed a lightning storm - `vapor-toxic` and `vapor-noir` both set it
+        // to zero deliberately, for anyone who finds the strikes distracting.
+        let sheet = Self::storm_sheet(storm, STORM_BOLTS);
+        if t.bolt_bright > 0.0 && sheet > 0.001 {
+            // The sheet first, over the sky and UNDER the strikes, so the bolts read as the source of the
+            // light rather than as marks on top of a wash.
+            c.fill_rect(1, 2, w - 2, horizon - 2, Rgba::from_hex("#cfe9ff", sheet));
+        }
+        // No  check here, deliberately: `b` below already carries it, so on a colourway that
+        // turns lightning off every strike is zero and none is drawn. A second guard would be dead logic -
+        // verified by mutation, removing it changed no test. The SHEET above does need its own gate,
+        // because its alpha does not pass through `bolt_bright` at all.
+        // No `bolt_bright` guard here, deliberately: `b` below already carries it, so on a colourway that
+        // turns lightning off every strike is zero and none is drawn. A second guard would be dead logic,
+        // and mutation confirmed it - removing it changed no test. The SHEET above genuinely does need its
+        // own gate, because its alpha never passes through `bolt_bright`; removing that one fails the
+        // toxic-colourway test.
+        if storm > 0.0 {
+            for k in 0..STORM_BOLTS {
+                let b = Self::storm_bolt(storm, k, STORM_BOLTS) * t.bolt_bright;
+                if b > 0.01 {
+                    // A seed per strike, spaced by an odd multiplier so consecutive strikes land in
+                    // different parts of the sky rather than marching across it.
+                    Self::draw_bolt(c, w, horizon, self.bolt_seed.wrapping_add(k as u32 * 7919), b, t);
+                }
+            }
+        }
+
         if bolt > 0.0 {
-            Self::draw_bolt(c, w, horizon, self.bolt_seed, bolt * t.bolt_bright, t);
+            // `bolt` ALREADY carries `bolt_bright` - `update_bolt` seeds the envelope with it - so
+            // multiplying again here squared a published parameter. Harmless at the shipped 0.90 (0.81),
+            // and invisible at a value a theme author might reasonably pick: 0.4 became 0.16. Nothing
+            // else consumes `bolt`, so removing the second multiply is the whole fix.
+            Self::draw_bolt(c, w, horizon, self.bolt_seed, bolt, t);
         }
 
         // Ground plane below the horizon, so the grid has something to occlude against.
@@ -641,12 +669,6 @@ impl Family for Vapor {
             glow.bloom(theme.bloom as i32, 0.5);
             c.draw_over(&glow);
         }
-        // The roll goes on the composed, bloomed frame and BEFORE the clip, so the displaced picture is
-        // still confined to the rounded panel. After the bezel it would roll the panel's own edge, which
-        // is the one part of this that is meant to be a physical object.
-        if self.roll_px.abs() >= 1.0 {
-            roll(c, 3, (h - 6).max(1), self.roll_px as i32);
-        }
         c.clip_to_rounded_rect(1, 2, w - 2, h - 4, 4);
 
         let e = Rgba::from_hex(&theme.edge, theme.edge_alpha);
@@ -658,142 +680,301 @@ impl Family for Vapor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::themes::builtin;
 
-    /// Mean luminance of each row of the panel interior - the picture's vertical profile.
-    fn row_profile(c: &Canvas) -> Vec<f64> {
-        (3..(c.height() - 3))
-            .map(|y| {
-                let mut acc = 0.0;
-                for x in 0..c.width() {
-                    let p = c.get(x, y);
-                    acc += (0.2126 * p.r as f64 + 0.7152 * p.g as f64 + 0.0722 * p.b as f64)
-                        * (p.a as f64 / 255.0);
-                }
-                acc / c.width() as f64
-            })
-            .collect()
-    }
-
-    /// How far the picture has been displaced vertically between two frames, in pixels.
+    /// Mean sky luminance above the horizon, excluding the sun's own disc.
     ///
-    /// The lag that best aligns the two row profiles, searched over the whole interior since a roll can
-    /// be anywhere in its cycle. Measured off the composed frame rather than from `roll_px`, because the
-    /// claim is that the PICTURE moves - reading back the field that drives it would assert that the
-    /// arithmetic equals itself.
-    fn roll_lag(a: &Canvas, b: &Canvas) -> i32 {
-        let (pa, pb) = (row_profile(a), row_profile(b));
-        let n = pa.len() as i32;
-        let mut best = (f64::MAX, 0i32);
-        for lag in 0..n {
-            let mut acc = 0.0;
-            for y in 0..n {
-                // Wrapped, because the effect wraps: comparing only the overlap would score a large
-                // displacement on fewer rows and make the metric prefer small ones.
-                acc += (pa[y as usize] - pb[((y + lag) % n) as usize]).abs();
-            }
-            if acc < best.0 {
-                best = (acc, lag);
+    /// The metric for the SHEET half of the storm. The sun is masked out because it is the brightest thing
+    /// on the panel by a wide margin and would swamp a flash that is meant to be read against the sky.
+    fn sky_lift(c: &Canvas, horizon: i32) -> f64 {
+        let w = c.width();
+        // The sun sits at the vanishing point, centred; a third of the width either side of centre covers
+        // it at every radius this family draws.
+        let (lo, hi) = (w / 2 - w / 6, w / 2 + w / 6);
+        let mut acc = 0.0;
+        let mut n = 0.0f64;
+        for y in 3..horizon {
+            for x in 2..(w - 2) {
+                if x >= lo && x <= hi {
+                    continue;
+                }
+                let p = c.get(x, y);
+                acc += 0.2126 * p.r as f64 + 0.7152 * p.g as f64 + 0.0722 * p.b as f64;
+                n += 1.0;
             }
         }
-        // Reported as the shorter way round, so a roll of one pixel upward is 1 and not n-1.
-        let l = best.1;
-        if l > n / 2 {
-            l - n
-        } else {
-            l
-        }
+        acc / n.max(1.0)
     }
 
-    /// Renders `frames` frames of steady audio, forcing the flourish on the first if asked.
-    fn roll_frames(fire: bool, frames: usize) -> Canvas {
-        let mut t = builtin::all()
-            .into_iter()
-            .find(|t| t.family == "vapor")
-            .expect("no vapor colourway");
-        // Zero, so the audio path cannot fire a second time; the trigger is forced instead. See the
-        // note in `Trigger::update` about `REQUEST` being process-global.
+    /// How many DISTINCT columns above the horizon carry a bright, near-vertical mark.
+    ///
+    /// The metric for the STRIKE half. Deliberately a count of columns rather than of pixels or of total
+    /// light: a sheet flash raises every column equally and would score zero here, while a bolt is a thin
+    /// bright line and scores one column per strike. That separation is the point - it is what makes
+    /// deleting either half of the storm fail a test, which a single brightness measure could not do.
+    fn strike_columns(c: &Canvas, horizon: i32) -> usize {
+        let w = c.width();
+        let lum = |p: Rgba| 0.2126 * p.r as f64 + 0.7152 * p.g as f64 + 0.0722 * p.b as f64;
+        // Per row, the median luminance; a bolt pixel is one well above its OWN row's median, so this is
+        // immune to the sky gradient and to any uniform flash laid over it.
+        let mut hot = vec![false; w as usize];
+        for y in 3..horizon {
+            let mut row: Vec<f64> = (2..(w - 2)).map(|x| lum(c.get(x, y))).collect();
+            if row.is_empty() {
+                continue;
+            }
+            let mut sorted = row.clone();
+            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let med = sorted[sorted.len() / 2];
+            for (i, v) in row.drain(..).enumerate() {
+                if v > med + 60.0 {
+                    hot[i + 2] = true;
+                }
+            }
+        }
+        hot.iter().filter(|v| **v).count()
+    }
+
+    /// Peak sky lift and peak strike-column count across the WHOLE storm, in one render pass.
+    ///
+    /// Scanned rather than sampled at a chosen frame, because the strikes are staggered and a single frame
+    /// lands wherever it lands. The first version of this measured 20 frames in - which is between the
+    /// first two strikes, where the sheet is at 5% of its peak - and reported that the sky never flashed.
+    /// Exactly the trap the roll test fell into before it.
+    fn storm_peaks(fire: bool) -> (f64, usize) {
+        let mut t = builtin::vapor_sunset();
         t.flourish = 0.0;
         let mut v = Vapor::default();
         let mut c = Canvas::new(190, 60);
-        let d = spectrum(0.35);
-        for _ in 0..30 {
+        let d = spectrum(0.14);
+        for _ in 0..40 {
             v.draw(&mut c, &t, &d);
         }
         if fire {
             v.flourish.force_next();
         }
-        for _ in 0..frames {
+        let horizon = 2 + ((60 - 4) as f32 * t.vapor.horizon.clamp(0.05, 0.95)) as i32;
+        let (mut lift, mut cols) = (0.0f64, 0usize);
+        // 1800ms is ~108 frames at the nominal interval; 120 covers the whole envelope.
+        for _ in 0..120 {
+            v.draw(&mut c, &t, &d);
+            lift = lift.max(sky_lift(&c, horizon));
+            cols = cols.max(strike_columns(&c, horizon));
+        }
+        (lift, cols)
+    }
+
+    /// Settles the scene, then optionally fires the storm, and returns the frame `after` frames later.
+    #[allow(dead_code)]
+    fn storm_frame(fire: bool, after: usize) -> (Canvas, i32) {
+        let mut t = builtin::vapor_sunset();
+        // Zero, so the audio path cannot fire the flourish; it is forced instead. `flourish::request()` is
+        // a process-global atomic every family's draw consumes - see the note in `Trigger::update`.
+        t.flourish = 0.0;
+        let mut v = Vapor::default();
+        let mut c = Canvas::new(190, 60);
+        // A quiet spectrum, so the ordinary bass bolt does not fire and confuse the measurement.
+        let d = spectrum(0.14);
+        for _ in 0..40 {
             v.draw(&mut c, &t, &d);
         }
-        c
+        if fire {
+            v.flourish.force_next();
+        }
+        for _ in 0..after {
+            v.draw(&mut c, &t, &d);
+        }
+        // The horizon, as `draw` computes it. Recomputed rather than guessed so the metrics sample the sky
+        // and not the ground.
+        let horizon = 2 + ((60 - 4) as f32 * t.vapor.horizon.clamp(0.05, 0.95)) as i32;
+        (c, horizon)
+    }
+
+    /// Run: cargo test --release dump_vapor_storm -- --ignored --nocapture
+    ///
+    /// Six points across the storm, because the shared flourish dump samples eight frames after the hit -
+    /// which catches the first strike and none of the other four. The sequence IS the effect.
+    #[test]
+    #[ignore]
+    fn dump_vapor_storm() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut t = builtin::vapor_sunset();
+        t.flourish = 0.0;
+        let d = spectrum(0.14);
+        let mut v = Vapor::default();
+        let mut c = Canvas::new(190, 60);
+        for _ in 0..40 {
+            v.draw(&mut c, &t, &d);
+        }
+        v.flourish.force_next();
+        // 1800ms is ~108 frames; the five strikes centre near 11, 32, 54, 76 and 97.
+        let picks = [11usize, 32, 54, 76, 97, 115];
+        let mut rows = Vec::new();
+        for f in 1..=*picks.last().unwrap() {
+            v.draw(&mut c, &t, &d);
+            if picks.contains(&f) {
+                rows.push(c.clone());
+            }
+        }
+        let (ow, oh) = (190i32, 60 * rows.len() as i32 + 4 * (rows.len() as i32 - 1));
+        let mut out = vec![22u8; (ow * oh * 4) as usize];
+        for (ri, shot) in rows.iter().enumerate() {
+            for y in 0..60 {
+                for x in 0..190 {
+                    let px = shot.get(x, y);
+                    let a = px.a as f32 / 255.0;
+                    let o = (((ri as i32 * 64 + y) * ow + x) * 4) as usize;
+                    for (k, ch8) in [px.r, px.g, px.b].iter().enumerate() {
+                        out[o + k] = (*ch8 as f32 + 22.0 * (1.0 - a)).min(255.0) as u8;
+                    }
+                    out[o + 3] = 255;
+                }
+            }
+        }
+        let path = dir.join(format!("vapor-storm-{ow}x{oh}.rgba"));
+        std::fs::write(&path, &out).unwrap();
+        println!("wrote {} ({ow}x{oh}) - frames {picks:?}; the last is past the envelope", path.display());
     }
 
     #[test]
-    fn the_flourish_rolls_the_picture_vertically() {
-        // SAMPLED AT SEVERAL FRAMES, because the displacement WRAPS and one sample can land anywhere in
-        // the cycle. The first version measured a single frame 20 in and read 3px: at 3.2px a frame with
-        // a decaying envelope that is about 57px of travel, which on a 54px interior is a full
-        // revolution plus three. It reported "the picture did not roll" about a picture that had rolled
-        // all the way round.
-        //
-        // Compared against the no-flourish frame at the SAME index, never against another rolled frame:
-        // this family scrolls its grid on purpose, so consecutive frames differ vertically whatever the
-        // flourish is doing, and only the same-index comparison isolates the effect.
-        let lags: Vec<i32> = [4usize, 8, 12, 16]
-            .iter()
-            .map(|f| roll_lag(&roll_frames(false, *f), &roll_frames(true, *f)))
-            .collect();
-        let worst = lags.iter().map(|l| l.abs()).max().unwrap();
+    fn the_storm_schedules_every_strike_in_order_and_never_all_at_once() {
+        // The shape in time, asserted on the pure scheduler. Five strikes have to actually fire, arrive in
+        // order, and not pile up - five bolts at once is a white panel, not weather.
+        const N: usize = STORM_BOLTS;
+        for k in 0..N {
+            assert_eq!(Vapor::storm_bolt(0.0, k, N), 0.0, "no flourish must draw no strike");
+        }
+        let mut peak_frame = vec![-1.0f32; N];
+        let mut worst_together = 0usize;
+        for step in 0..=400 {
+            let storm = 1.0 - step as f32 / 400.0;
+            let bs: Vec<f32> = (0..N).map(|k| Vapor::storm_bolt(storm, k, N)).collect();
+            worst_together = worst_together.max(bs.iter().filter(|b| **b > 0.35).count());
+            for (k, b) in bs.iter().enumerate() {
+                if *b > 0.9 && peak_frame[k] < 0.0 {
+                    peak_frame[k] = step as f32;
+                }
+            }
+        }
+        for (k, f) in peak_frame.iter().enumerate() {
+            assert!(*f >= 0.0, "strike {k} of {N} never reached full brightness");
+        }
+        for w in peak_frame.windows(2) {
+            assert!(w[1] > w[0], "the strikes are out of order: {peak_frame:?}");
+        }
         assert!(
-            worst >= 12,
-            "the picture did not roll: best alignments {lags:?} across frames 4-16, so it is the same \
-             picture in the same place"
+            worst_together <= 2,
+            "{worst_together} strikes were bright at once - five at once is a white panel, not a storm"
         );
-        // Direction, judged at 4 frames only - about 12px, comfortably under half the interior, so the
-        // sign is unambiguous there. `roll` reads from BELOW the destination, which sends the picture
-        // upward, the way a vertical-sync fault rolls.
-        //
-        // A NEGATIVE lag is upward, and the convention is worth spelling out because I asserted it the
-        // wrong way round first: `roll_lag` finds the shift that makes `rolled[y + lag]` match
-        // `steady[y]`, so content sitting at y in the steady frame is found at y + lag in the rolled
-        // one. Content moving up means finding it at a SMALLER index, hence lag < 0.
-        //
-        // The measured series across the four samples is -12, -24, +18, +8 - monotone upward travel that
-        // wraps, since -36 and -46 on a 54px interior are +18 and +8.
-        assert!(lags[0] < 0, "the picture rolled the wrong way at 4 frames: {lags:?}");
     }
 
     #[test]
-    fn the_roll_leaves_a_dark_seam() {
-        // The seam is what makes it read as a roll rather than a pan, so it is asserted separately: the
-        // darkest row of the rolled frame must be markedly darker than the darkest row without it.
-        let rolled = row_profile(&roll_frames(true, 20));
-        let steady = row_profile(&roll_frames(false, 20));
-        let darkest = |v: &[f64]| v.iter().cloned().fold(f64::MAX, f64::min);
-        let (a, b) = (darkest(&rolled), darkest(&steady));
+    fn the_storm_both_flashes_the_sky_and_strikes_it() {
+        // TWO INDEPENDENT METRICS, which is the only arrangement where deleting either half of the effect
+        // fails a test. A single brightness measure would pass on a sheet flash with no bolts, and a pixel
+        // count would pass on bolts with no flash.
+        let (lift_calm, cols_calm) = storm_peaks(false);
+        let (lift_storm, cols_storm) = storm_peaks(true);
+
+        // The sheet: the sky as a whole is lifted at some point in the storm.
         assert!(
-            a < b * 0.6 || a < 2.0,
-            "no blanking bar: darkest row {a:.1} against {b:.1} without the flourish"
+            lift_storm > lift_calm + 6.0,
+            "the sky never flashed: peak mean sky luminance {lift_storm:.1} against {lift_calm:.1} calm"
+        );
+
+        // The strikes: distinct columns carrying a mark far above their own row's median, which a uniform
+        // flash cannot produce.
+        assert!(
+            cols_storm >= cols_calm + 3,
+            "no bolts were drawn: {cols_storm} bright columns against {cols_calm} calm"
         );
     }
 
     #[test]
-    fn the_picture_comes_back_exactly_where_it_was() {
-        // The failure this exists to catch is a scene left PERMANENTLY displaced, which is what a purely
-        // accumulating offset does when the envelope expires mid-screen. 120 frames is 2s against a
-        // 1500ms envelope, so the roll is long over.
-        //
-        // Byte-identical, not merely realigned: this family's scroll phase and terrain history are
-        // stateful, and an effect that perturbed them would show up here and nowhere else.
-        let rolled = roll_frames(true, 120);
-        let steady = roll_frames(false, 120);
+    fn a_colourway_with_lightning_turned_off_gets_no_storm() {
+        // `vapor-toxic` and `vapor-noir` set `bolt_bright` to zero deliberately, for anyone who finds the
+        // strikes distracting - and this is the whole reason the user's report of "the lightning is gone"
+        // had an innocent explanation. Handing those colourways a lightning STORM would override a choice
+        // the colourway made on purpose.
+        let mut t = builtin::vapor_toxic();
+        assert_eq!(t.vapor.bolt_bright, 0.0, "this test assumes toxic disables lightning");
+        t.flourish = 0.0;
+        let d = spectrum(0.14);
+        let run = |fire: bool| -> Canvas {
+            let mut v = Vapor::default();
+            let mut c = Canvas::new(190, 60);
+            for _ in 0..40 {
+                v.draw(&mut c, &t, &d);
+            }
+            if fire {
+                v.flourish.force_next();
+            }
+            for _ in 0..20 {
+                v.draw(&mut c, &t, &d);
+            }
+            c
+        };
         assert_eq!(
-            rolled.bits(),
-            steady.bits(),
-            "the picture did not return to where it started"
+            run(true).bits(),
+            run(false).bits(),
+            "a colourway that turns lightning off must not be given a lightning storm"
         );
     }
-    use crate::themes::builtin;
+
+    #[test]
+    fn the_published_bolt_brightness_is_not_squared() {
+        // `update_bolt` seeds the envelope WITH `bolt_bright`, and the draw call used to multiply by it
+        // again - so the published knob was quadratic. Harmless at the shipped 0.90 (0.81) and invisible
+        // at a value a theme author might reasonably choose: 0.4 became 0.16.
+        //
+        // Asserted as a RATIO between two colourways rather than against an absolute luminance, because
+        // the sky behind the bolt differs between them and an absolute figure would be measuring the sky.
+        let bright = |bb: f32| -> f64 {
+            let mut t = builtin::vapor_sunset();
+            t.flourish = 0.0;
+            t.vapor.bolt_bright = bb;
+            let mut v = Vapor::default();
+            let mut c = Canvas::new(190, 60);
+            let horizon = 2 + ((60 - 4) as f32 * t.vapor.horizon.clamp(0.05, 0.95)) as i32;
+            let lum = |p: Rgba| 0.2126 * p.r as f64 + 0.7152 * p.g as f64 + 0.0722 * p.b as f64;
+            // THE SUN IS MASKED OUT. It is the brightest thing on the panel by a wide margin and it does
+            // not change with `bolt_bright`, so an unmasked maximum was the sun in BOTH arms and the two
+            // subtracted to exactly zero - the first version of this test reported the bolt "not reaching
+            // the panel at all" while it was drawing perfectly well.
+            let (lo, hi) = (190 / 2 - 190 / 6, 190 / 2 + 190 / 6);
+            let peak_of = |c: &Canvas| -> f64 {
+                (3..horizon)
+                    .flat_map(|y| (2..188).map(move |x| (x, y)))
+                    .filter(|(x, _)| *x < lo || *x > hi)
+                    .map(|(x, y)| lum(c.get(x, y)))
+                    .fold(0.0f64, f64::max)
+            };
+            // A loud, spectrally changing feed so the flux detector fires the ordinary bolt, and the PEAK
+            // taken across every frame rather than off the last one. A bolt decays at a fixed rate from
+            // whatever `bolt_bright` seeded it with, so a dimmer one reaches zero sooner - measuring the
+            // final frame reported 0% for the halved parameter simply because its bolt had already gone
+            // out. That is the third time in this family a fixed sample point has lied about a transient.
+            let mut peak = 0.0f64;
+            for i in 0..60 {
+                let d = if i % 2 == 0 { spectrum(0.62) } else { spectrum(0.16) };
+                v.draw(&mut c, &t, &d);
+                peak = peak.max(peak_of(&c));
+            }
+            peak
+        };
+        // Halving the parameter must roughly halve the bolt, not quarter it. Compared against the sky's
+        // own brightness at zero so the sun and gradient are subtracted out.
+        let floor = bright(0.0);
+        let (full, half) = (bright(0.9) - floor, bright(0.45) - floor);
+        assert!(full > 20.0, "the bolt is not reaching the panel at all: {full:.1} over the sky");
+        let ratio = half / full;
+        assert!(
+            ratio > 0.35,
+            "halving bolt_bright cut the bolt to {:.0}% - the parameter is still being squared",
+            ratio * 100.0
+        );
+    }
 
     fn spectrum(level: f32) -> FrameData {
         let mut d = FrameData::default();
