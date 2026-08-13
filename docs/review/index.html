@@ -24,12 +24,14 @@
   footer code { color:#c8c8d2; }
 </style>
 <h1>taskbar-eq &mdash; what needs your eyes</h1>
-<p class="lede">Nine flourishes, one per family. Each fires on a rare, exceptional hit &mdash; about
-one every 30 seconds on real music, measured on a 119-second capture of nine varied tracks &mdash;
-and each is the fault or the ritual that belongs to its own instrument.</p>
-<p class="lede">Every one has a pixel-level test and was checked against deliberate mutations, so what
-is below is not "does it work" but "is it right". <strong>Item 7 is the one I would change first.</strong>
-Regenerate any of these with <code>cargo test --release dump_flourishes -- --ignored</code>.</p>
+<p class="lede"><strong>All thirteen families now have a flourish.</strong> Each fires on a rare,
+exceptional hit &mdash; about one every 30 seconds on real music &mdash; and each is the fault or the
+ritual that belongs to its own instrument.</p>
+<p class="lede">Every one has a pixel-level test and was checked against deliberate mutations, so what is
+below is not "does it work" but "is it right". <strong>Item 7, the Pantone plate slip, is still the one I
+would change first.</strong> Regenerate these with
+<code>cargo test --release dump_flourishes -- --ignored</code>, plus the per-family dumps named in each
+caption's source.</p>
 <section>
   <h2><span class="n">1</span>VFD self-test</h2>
   <p class="what">Every segment lights, then drains back to the reading.</p>
@@ -40,82 +42,82 @@ Regenerate any of these with <code>cargo test --release dump_flourishes -- --ign
   <h2><span class="n">2</span>VU needle slam</h2>
   <p class="what">Both needles driven to the end stop over 900ms with the OVER lamps lit.</p>
   <figure><img src="flourish-vu.png" alt="VU needle slam"><figcaption>top: without &middot; bottom: with</figcaption></figure>
-  <p class="judge"><strong>What I want your eyes on:</strong> Whether 900ms is too slow - a real slam is faster, but faster was hard to see.</p>
+  <p class="judge"><strong>What I want your eyes on:</strong> Whether 900ms is too slow &mdash; a real slam is faster, but faster was hard to see.</p>
 </section>
 <section>
-  <h2><span class="n">3</span>Broadband tear</h2>
+  <h2><span class="n">3</span>Spectrogram tear</h2>
   <p class="what">Three columns of full-height energy written into the history, so it scrolls away as data.</p>
-  <figure><img src="flourish-waterfall.png" alt="Broadband tear"><figcaption>top: without &middot; bottom: with</figcaption></figure>
+  <figure><img src="flourish-waterfall.png" alt="Spectrogram tear"><figcaption>top: without &middot; bottom: with</figcaption></figure>
   <p class="judge"><strong>What I want your eyes on:</strong> Whether three columns is the right width. One read as merely a brighter column.</p>
 </section>
 <section>
-  <h2><span class="n">4</span>Gas ionisation</h2>
-  <p class="what">A cold blue haze fills every envelope - the wrong colour for the display, which is the point.</p>
-  <figure><img src="flourish-tube.png" alt="Gas ionisation"><figcaption>top: without &middot; bottom: with</figcaption></figure>
-  <p class="judge"><strong>What I want your eyes on:</strong> Whether the blue is cold enough to read as a fault rather than as a colourway change.</p>
+  <h2><span class="n">4</span>Valve ionisation</h2>
+  <p class="what">A cold blue haze fills every envelope &mdash; the wrong colour for the display, which is the point.</p>
+  <figure><img src="flourish-tube.png" alt="Valve ionisation"><figcaption>top: without &middot; bottom: with</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> Whether the blue is cold enough to read as a fault rather than a colourway change.</p>
 </section>
 <section>
-  <h2><span class="n">5</span>Every cathode fires</h2>
-  <p class="what">The unused digits all glow, as a badly-driven tube's do. 520ms, the shortest of the nine.</p>
-  <figure><img src="flourish-nixie.png" alt="Every cathode fires"><figcaption>top: without &middot; bottom: with</figcaption></figure>
-  <p class="judge"><strong>What I want your eyes on:</strong> Whether the live digit still clearly reads as the value. Measured at a 32% share of its legibility headroom, but that is a number, not an opinion.</p>
+  <h2><span class="n">5</span>Nixie: every cathode fires</h2>
+  <p class="what">The unused digits all glow, as a badly-driven tube's do. 520ms, the shortest of the thirteen.</p>
+  <figure><img src="flourish-nixie.png" alt="Nixie: every cathode fires"><figcaption>top: without &middot; bottom: with</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> Whether the live digit still clearly reads as the value. It keeps 68% of its legibility headroom, but that is a number, not an opinion.</p>
 </section>
 <section>
-  <h2><span class="n">6</span>Trigger loss</h2>
+  <h2><span class="n">6</span>Scope: trigger loss</h2>
   <p class="what">The sweep free-runs, so the trace slides a screen-width of phase and the phosphor smears every phase it passes through.</p>
-  <figure><img src="flourish-scope.png" alt="Trigger loss"><figcaption>top: without &middot; bottom: with</figcaption></figure>
+  <figure><img src="flourish-scope.png" alt="Scope: trigger loss"><figcaption>top: without &middot; bottom: with</figcaption></figure>
   <p class="judge"><strong>What I want your eyes on:</strong> Whether the smear is too heavy. It is what a real scope does, but it does fill the screen.</p>
 </section>
 <section>
-  <h2><span class="n">7</span>Plate misregister</h2>
+  <h2><span class="n">7</span>Pantone plate slip</h2>
   <p class="what">A plate slips 3px vertically, so every element splits into red/green/blue ghosts.</p>
-  <figure><img src="flourish-pantone.png" alt="Plate misregister"><figcaption>top: without &middot; bottom: with</figcaption></figure>
-  <p class="judge"><strong>What I want your eyes on:</strong> THE ONE I MOST WANT JUDGED. It is the strongest of the nine by a distance. MISREG_Y comes down from 3px on one word.</p>
+  <figure><img src="flourish-pantone.png" alt="Pantone plate slip"><figcaption>top: without &middot; bottom: with</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> STILL THE STRONGEST OF THE THIRTEEN. It is what misregistration IS, and it clears in 900ms, but <code>MISREG_Y</code> comes down from 3px on one word.</p>
 </section>
 <section>
-  <h2><span class="n">8</span>Tape wow and flutter</h2>
-  <p class="what">Speed instability on the transport: 1.1Hz wow with 8.5Hz flutter riding on it, and the wow reaching the tape slack.</p>
-  <figure><img src="review-reel-warble-rate.png" alt="Tape wow and flutter"><figcaption>grey: the rate with no flourish (flat) &middot; orange: the rate warbling and settling back &middot; teal: the tape sag, carrying wow only</figcaption></figure>
-  <p class="judge"><strong>What I want your eyes on:</strong> Nothing to judge in a still - this one only exists in motion. The plot is here as evidence that the mechanism is right; judge the look in the running app.</p>
+  <h2><span class="n">8</span>Radar: barrage jamming</h2>
+  <p class="what">The receiver saturates, so returns appear at every range at once.</p>
+  <figure><img src="flourish-radar.png" alt="Radar: barrage jamming"><figcaption>top: calm &middot; bottom: jammed</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> Whether the scatter is too dense. Note the display clears at the SWEEP's pace, not the jammer's &mdash; a jammed column keeps its false return until the beam next crosses it, which is how a PPI behaves.</p>
 </section>
 <section>
-  <h2><span class="n">9</span>Patchbay re-patch</h2>
+  <h2><span class="n">9</span>Chroma: ink plate starves</h2>
+  <p class="what">A dry patch travels across the stripes, two at a time. The widths are zero-sum, so it removes INK and not WIDTH &mdash; every keyline stays put.</p>
+  <figure><img src="chroma-starve.png" alt="Chroma: ink plate starves"><figcaption>frames 18, 36, 54 and 72 of the sweep &mdash; the travel is the effect</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> Whether two stripes is the right width for the dry patch.</p>
+</section>
+<section>
+  <h2><span class="n">10</span>Vaporwave: lightning storm</h2>
+  <p class="what">Five staggered strikes, each flashing the sky behind it. This replaced the vertical-sync roll you rejected.</p>
+  <figure><img src="flourish-vapor.png" alt="Vaporwave: lightning storm"><figcaption>top: without &middot; bottom: with</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> Whether five strikes in 1800ms is the right density. Toxic and Noir set <code>bolt_bright = 0</code> and are deliberately exempt &mdash; the storm respects that.</p>
+</section>
+<section>
+  <h2><span class="n">11</span>Flame organ: flashback</h2>
+  <p class="what">Every burner guts to its pilot, then an ignition front runs along the manifold relighting them with an overshoot flare.</p>
+  <figure><img src="flame-colourways.png" alt="Flame organ: flashback"><figcaption>Sodium &middot; Propane &middot; Copper &middot; Strontium &middot; Potassium &middot; Plasma &middot; Rainbow</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> The seven colourways are the other question &mdash; see the next item.</p>
+</section>
+<section>
+  <h2><span class="n">12</span>Fluid: cavitation</h2>
+  <p class="what">The surface breaks into a patchy froth and the tank runs slack. Three earlier models that INJECTED energy into the wave field all pushed crests through the top of the tank; this one only removes energy or bypasses the field.</p>
+  <figure><img src="fluid-cavitation.png" alt="Fluid: cavitation"><figcaption>top: calm &middot; bottom: cavitating</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> Whether the froth reads as boiling water or as notches. It is 3px deep and irregular by hash &mdash; on parity it rendered as a perfect sawtooth.</p>
+</section>
+<section>
+  <h2><span class="n">13</span>Reel-to-reel: wow and flutter</h2>
+  <p class="what">1.1Hz wow with 8.5Hz flutter on the transport, the wow reaching the tape slack.</p>
+  <figure><img src="review-reel-warble-rate.png" alt="Reel-to-reel: wow and flutter"><figcaption>grey: the rate with no flourish (flat) &middot; orange: warbling and settling back &middot; teal: the tape sag, carrying wow only</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> Nothing to judge in a still &mdash; this one only exists in motion. The plot is evidence the mechanism is right; judge the look in the running app.</p>
+</section>
+<section>
+  <h2><span class="n">14</span>Patchbay: re-patch</h2>
   <p class="what">Every cable slides to the other jack of its pair and back, so the chevron mirrors itself.</p>
-  <figure><img src="patchbay-repatch.png" alt="Patchbay re-patch"><figcaption>rows are frames 0, 19, 39, 58, 77 of the 78-frame swing</figcaption></figure>
-  <p class="judge"><strong>What I want your eyes on:</strong> Whether the plugs sitting mid-air between sockets (rows 2 and 4) read as a cable in transit or as a mistake.</p>
-</section>
-<section>
-  <h2><span class="n">10</span>Patchbay: the response window, before and after</h2>
-  <p class="what">Not a flourish - a fix. The bass cable was pinned at full deflection on 64%, 96% and 100% of frames across three real-music captures, so its sag carried no information. The window now reaches full travel at a group level of 0.80 instead of 0.62.</p>
-  <figure><img src="patchbay-window.png" alt="Patchbay: the response window, before and after"><figcaption>top: the old window &middot; bottom: the new one. Same real-music frames, same code - only the window differs</figcaption></figure>
-  <p class="judge"><strong>What I want your eyes on:</strong> Whether the panel now reads as too slack. Pinning is 0% on every cable at both widths, but it cost about a quarter of the separation between cables. An intermediate value keeps more separation and leaves the bass cable pinned 29% of the time - say which trade you prefer.</p>
-</section>
-<section>
-  <h2><span class="n">11</span>NEW FAMILY: the flame organ (a Rubens&rsquo; tube)</h2>
-  <p class="what">Your idea, now a real family: seven colourways, selectable from the tray. A manifold of
-  gas nozzles, each burning to a height set by its band. Not a fluid simulation &mdash; a bottom-seeded
-  heat-diffusion field, ~2ms a frame, level with the segmented VFD. The cooling SUBTRACTS rather than
-  multiplies, which is what makes height linear in the band rather than logarithmic, and faintness comes
-  from ALPHA rather than from a dark colour, which is what makes it ghostly rather than heavy.</p>
-  <figure><img src="flame-colourways.png" alt="the seven flame colourways">
-  <figcaption>Sodium &middot; Propane &middot; Copper &middot; Strontium &middot; Potassium &middot; Plasma
-  &middot; Rainbow flame. Flame tests, mostly &mdash; Propane is what a gas flame looks like burning
-  <em>correctly</em>. Each row is the same comb of loud and quiet bands, so tall and short plumes appear in
-  every one. <code>flame-actual-size.png</code> is the 1x view.</figcaption></figure>
-  <p class="judge"><strong>What I want your eyes on:</strong> the seven ramps, and whether Strontium holds
-  up &mdash; crimson wants to be dark, and dark is what you rejected, so it is held light by starting at a
-  bright rose rather than a blood red.<br><br>
-  <strong>Two real bugs came out of testing this</strong>, both found by assertions rather than by looking:
-  the nozzle geometry was computed from the interior width in one place and the canvas width in another, so
-  the panel drew <em>thirteen</em> nozzle stubs and only <em>twelve</em> of them had a flame; and the ember
-  wash was driven by the audio level rather than by the fire, so during a flashback the panel stayed warm
-  while the flames were out.<br><br>
-  <strong>The flourish is a flashback:</strong> the pressure drops, every burner guts to its pilot, then an
-  ignition front runs along the manifold relighting each one with an overshoot flare. Both the fault and
-  the ritual, and it drives the seeding that was already there.</p>
+  <figure><img src="patchbay-repatch.png" alt="Patchbay: re-patch"><figcaption>rows are frames 0, 19, 39, 58 and 77 of the 78-frame swing</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> Whether the plugs sitting mid-air between sockets (rows 2 and 4) read as cables in transit or as a mistake.</p>
 </section>
 <footer>
-Generated from the renderers themselves, not drawn by hand. Progress log:
-<code>TODO.md</code>. Source of these images: <code>cargo test --release dump_flourishes</code>,
-<code>dump_reel_warble</code>, <code>dump_patchbay_repatch</code> (all <code>--ignored</code>).
+Generated from the renderers themselves, not drawn by hand. Progress log: <code>TODO.md</code>.
+Two items are deliberately not single frames &mdash; the reel warble only exists in motion, and the
+chroma starve and patchbay re-patch are filmstrips because their travel IS the effect.
 </footer>

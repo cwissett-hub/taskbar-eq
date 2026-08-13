@@ -3,7 +3,8 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** the vaporwave roll is GONE, replaced by a lightning storm. Display-off suspend
+**Last updated:** ALL THIRTEEN families have a flourish, the media poll is gated, and the review
+sheet covers everything. Earlier: the vaporwave roll is GONE, replaced by a lightning storm. Display-off suspend
 shipped - we were the machine's second largest energy consumer.
 
 Earlier: chroma done, inert config fields removed. FLUID cavitation ATTEMPTED AND REVERTED -
