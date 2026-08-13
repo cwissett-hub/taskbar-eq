@@ -542,6 +542,7 @@ mod newest_dump {
             ("vapor", "vapor-sunset"),
             ("radar", "radar-p1"),
             ("chroma", "chroma-spectrum"),
+            ("fluid", "fluid-deep"),
         ];
 
         // A waveform, for the families that read one. The phase WALKS between frames, which the scope

@@ -171,10 +171,16 @@ families** have one, and each is that instrument's characteristic fault or ritua
 | Radar | Barrage jamming — the receiver saturates, so returns appear at every range at once |
 | Chroma field | An ink plate starves, and the dry patch travels across the stripes |
 | Flame organ | A flashback: every burner guts to its pilot, then an ignition front relights them |
+| Fluid | Cavitation — the surface breaks into a patchy froth and the tank runs slack |
 
-The **Fluid** family is the one without: cavitation is the right idea and three models for it failed
-against that family's own invariants, which [TODO.md](TODO.md) records in full so the next attempt starts
-from the diagnosis rather than from scratch.
+**Every family has one.** The fluid tank was the last and the hardest, because it has the tightest
+invariants here: the liquid must stay inside the tank, the drawn surface must follow the simulated field,
+and each colourway's own damping must show through. Three models were tried that INJECTED a disturbance
+into the wave field and none can work — the wave equation propagates whatever is injected and interference
+then raises crests elsewhere, taking a family that clips on 0.00% of column-frames to 3.8%. Cavitation is a
+*loss* of coupling, so it is now heavier damping (the tank runs down, which removes energy and therefore
+cannot clip) plus a froth on the *drawn* surface line (which cannot propagate at all). Both halves are
+asserted separately, and deleting either fails a different test.
 
 Two colourways — **Vaporwave Toxic** and **Vaporwave Noir** — set `bolt_bright = 0`, which turns their
 lightning off deliberately for anyone who finds the strikes distracting. The storm respects that: a
@@ -286,7 +292,7 @@ a snapshot and can drift.
 | ✅ | **VU dials — 8 colourways**, twin needles, dB-mapped, ~300 ms ballistics | working |
 | ✅ | **Vaporwave grid — 5 colourways**, terrain from the spectrum, bass-triggered lightning | **unseen** |
 | ✅ | **Valve row — 5 colourways**, per-band cathode glow inside the glass | **unseen** |
-| ✅ | **Fluid — 6 colourways**, two submerged subwoofers driving a 1-D wave simulation | **unseen** |
+| ✅ | **Fluid — 6 colourways**, two submerged subwoofers driving a 1-D wave simulation | working |
 | ✅ | Theme menu: per-family submenus, follows the Windows light/dark setting | **unseen** |
 | ✅ | Tray icon, start-with-Windows, clean quit | working |
 | ✅ | **Spotify transport** — play/pause, next, previous, via the media session or real media keys | working |

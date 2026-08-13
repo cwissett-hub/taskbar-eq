@@ -180,6 +180,77 @@ const SPLASH: f32 = 0.10;
 /// Interior height, in pixels, that every vertical constant here was tuned against (h = 60).
 const REF_INTERIOR_H: f32 = 56.0;
 
+/// The flourish: cavitation - the cone loses its grip on the liquid.
+///
+/// The fault that belongs to a driven liquid rather than to the electronics. Push a diaphragm hard enough
+/// and the water cannot follow it: the pressure behind the cone drops below the vapour pressure, cavities
+/// form and collapse, and the driver is briefly pushing vapour instead of water.
+///
+/// THE FIRST ATTEMPT AT THIS WAS REVERTED, and the reason is worth stating because it is not a tuning
+/// story. Three models were tried that all INJECTED a disturbance into the wave field, and none can work:
+/// the wave equation propagates whatever is injected, and interference then raises crests elsewhere even
+/// when every injected sample is negative. This family clips on 0.00% of column-frames normally and
+/// asserts under 1%; the froth took one colourway to 3.8%, then 3.2% at half amplitude, then 4.0%. The
+/// number was never the problem.
+///
+/// Cavitation is a LOSS of coupling, not an addition of energy. So the effect is two things, and neither
+/// touches the wave field:
+///
+/// - the cone's coupling collapses to `CAVITATE_GRIP`, so the waves already travelling run down and the
+///   surface goes slack. Removing energy cannot clip anything.
+/// - a froth is applied to the DRAWN surface line, downward only. On the drawn line it can neither
+///   propagate nor raise a crest, so the family's guarantee that the liquid stays inside the tank holds by
+///   construction rather than by tuning.
+///
+/// 1300ms, long enough to read as the pump losing its bite and recovering.
+const CAVITATE_MS: f32 = 1300.0;
+
+/// How much of the cone's grip on the liquid survives at full cavitation.
+///
+/// 0.12, so the cones nearly let go. Not zero: a cavitating pump still couples through the liquid it has
+/// not lost, and a driver that stops dead reads as a severed cable rather than as cavitation.
+const CAVITATE_GRIP: f32 = 0.12;
+
+/// Damping multiplier at full cavitation.
+///
+/// Cutting the cone's DRIVE turned out to do nothing measurable - the waves already travelling dominate
+/// the surface for far longer than 1300ms, so amplitude over the window was 8.98 against 8.for calm, i.e.
+/// slightly UP rather than down. A knob that does nothing is the fault this project has already removed
+/// twice, so the drive cut is backed by the lever that actually removes energy: the waves DECAY faster.
+///
+/// That is also the more honest model. A decoupled driver does not merely stop pushing; the liquid it has
+/// lost contact with stops being driven at all and what is left runs down. Damping is where "runs down"
+/// lives.
+const CAVITATE_DAMP: f32 = 0.93;
+
+/// Peak froth depth in surface units, its cap in real pixels, and how far it is biased downward.
+///
+/// Downward only, because cavities are VOIDS - the surface pulls away rather than rising. `SINK` of 0.9
+/// puts the disturbance in -1.9..+0.1 of the amplitude, keeping a little upward spray at the edge of a
+/// collapsing cavity so the texture is not a plain dip.
+///
+/// The pixel cap is what keeps it a roughening rather than a displacement. At 0.45 with no cap the froth
+/// moved the drawn line five rows, which stops reading as a surface being disturbed and starts reading as
+/// the surface having MOVED - and where the water is is this family's whole subject. `gain` scales with the
+/// panel, so without a cap in real pixels a taller panel would get a proportionally larger froth.
+const CAVITATE_AMP: f32 = 0.25;
+const CAVITATE_MAX_PX: f32 = 3.0;
+const CAVITATE_SINK: f32 = 0.9;
+
+/// How much stronger the froth is at a cone mouth than at the far end of the tank.
+///
+/// 2.0. Cavitation happens at the driver, and a uniform froth across the whole surface reads as the
+/// renderer adding noise rather than as the liquid failing where it is being pushed.
+const CAVITATE_AT_MOUTH: f32 = 2.0;
+
+/// Fraction of columns that cavitate at any one moment.
+///
+/// 0.62. Cavities are discrete bubbles, not a texture applied to every column - and the difference is
+/// visible: at 1.0, with the sign alternating on parity, the froth rendered as a perfect sawtooth along
+/// the waterline, which reads as a drawing artefact rather than as water. Leaving a bit over a third of the
+/// columns alone each frame, and picking which ones by hash, makes it patchy the way a boil is.
+const CAVITATE_DENSITY: f32 = 0.62;
+
 #[derive(Clone, Copy)]
 struct Drop {
     x: f32,
@@ -203,6 +274,11 @@ pub struct Fluid {
     /// grid had independently written the same one; one copy is one threshold to get wrong.
     onset: crate::dsp::onset::Flux,
     seed: u32,
+    /// The flourish: cavitation. See `CAVITATE_MS`.
+    flourish: crate::dsp::flourish::Trigger,
+    cavitate: crate::dsp::flourish::Envelope,
+    /// Frame counter, so the froth churns rather than standing as a fixed ripple.
+    cav_frame: u32,
     /// Underglow envelope, 0..1. Set to 1 on a transient, released slowly.
     glow: f32,
     drops: Vec<Drop>,
@@ -220,6 +296,9 @@ impl Default for Fluid {
             // zero here would mean no droplet for the first 200ms after every theme switch.
             onset: crate::dsp::onset::Flux::default(),
             seed: 0x9e37_79b9,
+            flourish: crate::dsp::flourish::Trigger::default(),
+            cavitate: crate::dsp::flourish::Envelope::default(),
+            cav_frame: 0,
             glow: 0.0,
             drops: Vec::new(),
         }
@@ -525,13 +604,29 @@ impl Family for Fluid {
             self.spawn_drops(f, ix, rest, gain, hscale);
         }
 
+        // ---- cavitation, THE FLOURISH ---------------------------------------------------------
+        //
+        // Nothing is injected into the wave field - see `CAVITATE_MS` for the three models that tried and
+        // why they cannot work. This advances the envelope; the coupling collapse is applied to the
+        // sub-steps below and the froth to the drawn surface line further down.
+        let fired = self.flourish.update(&d.levels, dt_ms, theme.flourish);
+        let cav = self.cavitate.update(fired, dt_ms, CAVITATE_MS);
+        if cav > 0.01 {
+            self.cav_frame = self.cav_frame.wrapping_add(1);
+        }
+
         // ---- simulation ----------------------------------------------------------------------
         // `dt_ms` decides only HOW MANY fixed sub-steps run - see `substeps` and the module docs.
         let mut debt = self.debt;
         let steps = Self::substeps(&mut debt, dt_ms, f.wave_speed.clamp(0.25, 3.0));
         self.debt = debt;
-        let damp = f.damping.clamp(0.80, 0.9999);
-        let coupling = f.coupling.clamp(0.01, 0.90);
+        // Cavitation makes the tank run down - see `CAVITATE_DAMP`. Damping REMOVES energy, which is why
+        // it cannot push a crest into the top of the tank the way an injected disturbance did.
+        let damp = f.damping.clamp(0.80, 0.9999) * (1.0 - (1.0 - CAVITATE_DAMP) * cav);
+        // Cavitation collapses the cone's grip - see `CAVITATE_GRIP`. Applied to the COUPLING rather
+        // than to the field, so the effect is the driver letting go and the waves already in the tank
+        // simply running down. This is the half that removes energy, which is why it cannot clip.
+        let coupling = f.coupling.clamp(0.01, 0.90) * (1.0 - (1.0 - CAVITATE_GRIP) * cav);
         for _ in 0..steps {
             self.substep(C2, damp, &mouths, coupling);
         }
@@ -540,7 +635,40 @@ impl Family for Fluid {
         let mut surf: Vec<i32> = Vec::with_capacity(cols);
         for i in 0..cols {
             let hpx = if self.cur[i].is_finite() { self.cur[i] * gain } else { 0.0 };
+            // The froth, on the DRAWN line and downward only, so it can neither propagate nor raise a
+            // crest. See `CAVITATE_AMP`.
+            let froth = if cav > 0.01 {
+                let near = mouths
+                    .iter()
+                    .map(|m| ((m.0 + m.1) as f32 * 0.5 - i as f32).abs())
+                    .fold(f32::MAX, f32::min);
+                let local =
+                    1.0 + (CAVITATE_AT_MOUTH - 1.0) * (1.0 - (near / cols as f32 * 2.0).min(1.0));
+                // IRREGULAR, not a comb. Alternating the sign on strict parity puts every column's
+                // disturbance at the grid's Nyquist, which maximises roughness but rendered as a perfect
+                // sawtooth - a zip along the waterline, which reads as a drawing artefact rather than as
+                // water. Cavities are discrete and scattered, so the sign comes from a hash and only some
+                // columns cavitate at all.
+                let jitter = rand01(self.cav_frame, i as u32);
+                let pick = rand01(self.cav_frame ^ 0x5bf0_3635, i as u32);
+                if pick > CAVITATE_DENSITY {
+                    surf.push((rest - hpx.round() as i32).clamp(iy + 1, floor_y - 1));
+                    continue;
+                }
+                let sign = if rand01(self.cav_frame ^ 0x9e37_79b9, i as u32) > 0.5 { 1.0 } else { -1.0 };
+                let amp = CAVITATE_AMP * cav * local * (0.45 + 0.55 * jitter);
+                // Capped at the full `CAVITATE_MAX_PX`. It used to carry an extra 0.35 factor, which held
+                // the froth to 1px and meant the cap - not the amplitude - was setting the depth: with the
+                // sign alternating on parity that still read as rough, but once the signs were randomised
+                // adjacent columns often moved together and the roughness collapsed to 0.606 from 1.301.
+                // The limiter was the cap all along.
+                ((sign * amp - amp * CAVITATE_SINK) * gain).max(-CAVITATE_MAX_PX)
+            } else {
+                0.0
+            };
             // One row of air is always kept above the liquid so the meniscus has somewhere to be.
+            // `froth` is subtracted from the height, so a negative froth pushes the line DOWN.
+            let hpx = hpx + froth;
             surf.push((rest - hpx.round() as i32).clamp(iy + 1, floor_y - 1));
         }
 
@@ -940,6 +1068,24 @@ mod tests {
     /// below it. Columns over the two cone mouths are excluded by the caller - the cone is drawn
     /// over the body at 0.88 alpha, so those columns are legitimately not magenta.
     fn drawn_body(theme: &Theme, frames: &[Vec<f32>], w: i32, h: i32) -> Vec<Vec<i32>> {
+        drawn_body_firing(theme, frames, w, h, None)
+    }
+
+    /// `drawn_body`, with the option to force the flourish before frame `fire_at`.
+    ///
+    /// The classifier is the same one, deliberately: it is the only measurement in this family that reads
+    /// the DRAWN body rather than the simulated field, and the cavitation froth is applied to the drawn
+    /// surface. My first attempt at measuring the froth built a fresh luminance scan instead and reported
+    /// 0.00 roughness for both arms while a probe confirmed the froth reaching the surface - the meniscus
+    /// is a single bright row over a dark gradient with dimmer water beneath, so a threshold scan finds the
+    /// wrong row. This one classifies by an exclusive marker colour and counts from the floor up.
+    fn drawn_body_firing(
+        theme: &Theme,
+        frames: &[Vec<f32>],
+        w: i32,
+        h: i32,
+        fire_at: Option<usize>,
+    ) -> Vec<Vec<i32>> {
         let mut t = theme.clone();
         t.fluid.body_top = "#ff00ff".into();
         t.fluid.body_deep = "#ff00ff".into();
@@ -966,6 +1112,9 @@ mod tests {
         let (ix, iy, iw, ih) = (1, 2, w - 2, h - 4);
         let mut out = Vec::with_capacity(frames.len());
         for (k, row) in frames.iter().enumerate() {
+            if fire_at == Some(k) {
+                fam.flourish.force_next();
+            }
             fam.draw(&mut c, &t, &fixture_frame(row, k as f32 * FIXTURE_DT_MS / 1000.0));
             let mut heights = Vec::with_capacity(iw as usize);
             for x in ix..(ix + iw) {
@@ -2076,6 +2225,144 @@ mod tests {
         );
     }
 
+    /// Mean absolute step between neighbouring OPEN columns' drawn liquid height, over a frame range.
+    ///
+    /// The measure cavitation's froth lives in. Smooth waves have a small step between neighbours whatever
+    /// their amplitude; a boil is rough at the grid's own scale, which no amount of swell reproduces.
+    ///
+    /// Cone-mouth columns are excluded, and that is not optional: `drawn_body` classifies a masked column
+    /// as zero liquid, so a pair straddling a mouth measures the cone's cutout. Ignoring it made an
+    /// amplitude probe report 37px of peak-to-peak on a 51px interior and show no change at all when the
+    /// cones let go - the metric was reading the cutouts, not the water.
+    fn body_roughness(b: &[Vec<i32>], lo: usize, hi: usize) -> f32 {
+        let is_cone = masked_columns(188);
+        let open = |i: usize| i < is_cone.len() && !is_cone[i];
+        let (mut acc, mut n) = (0.0f32, 0.0f32);
+        for f in lo..hi.min(b.len()) {
+            for i in 1..b[f].len() {
+                if open(i) && open(i - 1) {
+                    acc += (b[f][i] - b[f][i - 1]).abs() as f32;
+                    n += 1.0;
+                }
+            }
+        }
+        acc / n.max(1.0)
+    }
+
+    /// Mean per-frame peak-to-peak of the drawn liquid height, over open columns only.
+    fn body_amplitude(b: &[Vec<i32>], lo: usize, hi: usize) -> f32 {
+        let is_cone = masked_columns(188);
+        let (mut acc, mut n) = (0.0f32, 0.0f32);
+        for f in lo..hi.min(b.len()) {
+            let (mut mn, mut mx) = (i32::MAX, i32::MIN);
+            for (i, v) in b[f].iter().enumerate() {
+                if i < is_cone.len() && !is_cone[i] {
+                    mn = mn.min(*v);
+                    mx = mx.max(*v);
+                }
+            }
+            if mn <= mx {
+                acc += (mx - mn) as f32;
+                n += 1.0;
+            }
+        }
+        acc / n.max(1.0)
+    }
+
+    #[test]
+    fn the_flourish_roughens_the_surface_and_makes_the_tank_run_slack() {
+        // TWO INDEPENDENT PROPERTIES, and each one had to be earned separately.
+        //
+        // The froth roughens the DRAWN surface. The damping makes the tank run down. Neither injects energy
+        // into the wave field, which is the whole reason this attempt works where three earlier ones could
+        // not: the wave equation propagates whatever is injected, and interference then pushed crests into
+        // the top of the tank at every amplitude tried - 3.8%, 3.2%, 4.0% of column-frames against a family
+        // that clips on 0.00% and asserts under 1%.
+        //
+        // Measured on the trusted `drawn_body` classifier rather than a fresh luminance scan. My first
+        // attempt built one of those and it reported 0.00 roughness for both arms while a probe confirmed
+        // the froth reaching the surface - the meniscus is a single bright row over a dark gradient with
+        // dimmer water beneath it, so a threshold scan finds the wrong row.
+        let mut t = builtin::fluid_deep();
+        t.flourish = 0.0;
+        let frames = real_music();
+        let calm = drawn_body(&t, &frames, 190, 60);
+        let fired = drawn_body_firing(&t, &frames, 190, 60, Some(200));
+
+        // The froth. Measured 0.360 calm against 1.301 fired over the 40 frames after the strike.
+        let (r_calm, r_fired) = (body_roughness(&calm, 200, 240), body_roughness(&fired, 200, 240));
+        assert!(
+            r_fired > r_calm * 2.0,
+            "the surface did not break up: {r_fired:.3}px of mean step between neighbours against \
+             {r_calm:.3} calm"
+        );
+
+        // The slackening. Measured 9.62 calm against 3.85 fired a little later, once the damping has had
+        // time to take the energy out - the tank does not go slack in one frame.
+        let (a_calm, a_fired) = (body_amplitude(&calm, 240, 280), body_amplitude(&fired, 240, 280));
+        assert!(
+            a_fired < a_calm * 0.7,
+            "the tank did not run slack: {a_fired:.2}px of peak-to-peak against {a_calm:.2} calm"
+        );
+
+        // AND THE TWO ARE INDEPENDENT. Roughness rises while amplitude falls, which no single mechanism
+        // produces - a bigger swell raises both, and a calmer tank lowers both. That is what makes deleting
+        // either half fail this test rather than only weakening it.
+        assert!(
+            r_fired > r_calm && a_fired < a_calm,
+            "cavitation must roughen AND slacken: roughness {r_calm:.3}->{r_fired:.3}, \
+             amplitude {a_calm:.2}->{a_fired:.2}"
+        );
+    }
+
+    #[test]
+    fn the_tank_fills_back_up_after_cavitation() {
+        // The recovery is SLOWER than the envelope, and that is physics rather than a leak: damping removed
+        // energy, so the cones have to put it back. Measured - at frames 400-460, still 34% down; by
+        // 500-560 the amplitude is 5.77 against 5.63 calm, i.e. level. The envelope is 1300ms (~129 frames
+        // at the fixture rate) and the refill takes about another 1.7s.
+        //
+        // Asserted on amplitude rather than byte equality, because a damped wave field with a different
+        // history never returns bit-for-bit and the droplet seed advances independently.
+        let mut t = builtin::fluid_deep();
+        t.flourish = 0.0;
+        let frames = real_music();
+        let calm = drawn_body(&t, &frames, 190, 60);
+        let fired = drawn_body_firing(&t, &frames, 190, 60, Some(200));
+        let (a_calm, a_fired) = (body_amplitude(&calm, 500, 560), body_amplitude(&fired, 500, 560));
+        assert!(
+            a_fired > a_calm * 0.8,
+            "the tank never filled back up: {a_fired:.2}px against {a_calm:.2} calm, 300 frames after a \
+             129-frame flourish"
+        );
+        // And the surface is smooth again, not merely full.
+        let (r_calm, r_fired) = (body_roughness(&calm, 500, 560), body_roughness(&fired, 500, 560));
+        assert!(
+            r_fired < r_calm * 1.5,
+            "the surface is still frothing long after the flourish: {r_fired:.3} against {r_calm:.3} calm"
+        );
+    }
+
+    /// Run: cargo test --release probe_cavitation -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn probe_cavitation() {
+        let mut t = builtin::fluid_deep();
+        t.flourish = 0.0;
+        let frames = real_music();
+        let calm = drawn_body(&t, &frames, 190, 60);
+        let fired = drawn_body_firing(&t, &frames, 190, 60, Some(200));
+        for (lo, hi) in [(200usize, 240usize), (280, 330), (400, 460), (500, 560), (600, 660), (700, 780)] {
+            println!(
+                "  {lo}-{hi}: roughness calm {:.3} fired {:.3} | amplitude calm {:.2} fired {:.2}",
+                body_roughness(&calm, lo, hi),
+                body_roughness(&fired, lo, hi),
+                body_amplitude(&calm, lo, hi),
+                body_amplitude(&fired, lo, hi)
+            );
+        }
+    }
+
     #[test]
     fn the_drawn_surface_line_follows_the_simulated_field() {
         // The other gap mutation testing found: drawing the meniscus, the glint and the caustics at
@@ -2092,6 +2379,18 @@ mod tests {
         // Droplets off: a droplet in the air above a column is as bright as the meniscus and would
         // win the argmax on whichever column it happens to be over.
         t.fluid.droplets = 0;
+        // The flourish off, and this is the SECOND exemption cavitation needs in this family. Both are the
+        // same kind, and it is worth naming the kind rather than exempting case by case: these two tests
+        // assert properties of NORMAL operation, and a flourish is a deliberate, rare, temporary override
+        // of normal operation.
+        //
+        // Here the property is that the drawn surface line follows the simulated field. The cavitation
+        // froth is applied to the DRAWN line precisely so that it cannot propagate through the wave
+        // equation or raise a crest - which means it deviates the drawn line from the field on purpose, to
+        // a measured 3 rows. With the flourish enabled this test measures that exception instead of the
+        // rule it exists to defend, and the deviation is asserted deliberately by
+        // `the_flourish_roughens_the_surface_and_makes_the_tank_run_slack`.
+        t.flourish = 0.0;
         let mut fam = Fluid::default();
         let mut c = Canvas::new(190, 60);
         let frames = real_music();
@@ -2231,7 +2530,23 @@ mod tests {
         let mut seen: Vec<Vec<u32>> = Vec::new();
         let mut relief = std::collections::BTreeMap::new();
         let mut elements = std::collections::BTreeMap::new();
-        for t in builtin::all().into_iter().filter(|t| t.family == "fluid") {
+        for mut t in builtin::all().into_iter().filter(|t| t.family == "fluid") {
+            // THE FLOURISH OFF, and this is the SECOND exemption cavitation has needed in this family, so
+            // it deserves justifying rather than asserting.
+            //
+            // This test's subject is that a colourway's own physics shows through - `mercury` at damping
+            // 0.9992 must ring where `ink` at 0.945 is viscous. Cavitation deliberately overrides that: it
+            // damps the tank hard for 1300ms to make it run slack, which is most of what makes the effect
+            // legible. With it enabled the two converged to 2.53px against a required 1.99px gap, because
+            // damping compounds per sub-step and heavy damping compresses the very difference being
+            // measured.
+            //
+            // So the exemption is not "the test is inconvenient" - it is that the test measures NORMAL
+            // operation and a flourish is a deliberate, rare, temporary override of it. The same reasoning
+            // exempts `the_drawn_surface_line_follows_the_simulated_field`, and the flourish's own effect on
+            // both properties is asserted deliberately in
+            // `the_flourish_roughens_the_surface_and_makes_the_tank_run_slack`.
+            t.flourish = 0.0;
             let mut fam = Fluid::default();
             let mut c = Canvas::new(190, 60);
             for (k, row) in frames.iter().take(300).enumerate() {
