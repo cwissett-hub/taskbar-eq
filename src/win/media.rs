@@ -348,6 +348,20 @@ pub fn send(action: Action, backend: Backend) -> Result<(), String> {
 /// needs no synchronisation beyond the mutex and cannot fire from the wrong thread.
 static NOW_PLAYING: std::sync::Mutex<(String, u64)> = std::sync::Mutex::new((String::new(), 0));
 
+/// Subscribes to `MediaPropertiesChanged` on a session, returning the token to unsubscribe with.
+///
+/// The handler does one thing: set a flag. It runs on a WinRT thread-pool thread, so anything more - a
+/// fetch, a log write, a lock - would be doing work on a thread this code does not own, at a moment it
+/// does not choose.
+fn subscribe_props(s: &Session) -> Option<i64> {
+    use windows::Foundation::TypedEventHandler;
+    let handler = TypedEventHandler::new(|_sender: windows::core::Ref<'_, Session>, _args| {
+        PROPS_DIRTY.store(true, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    });
+    s.MediaPropertiesChanged(&handler).ok()
+}
+
 /// One real media-session round trip, for the leak hunt only. See `main::stress`.
 ///
 /// Deliberately NOT `now_playing`, which returns a cached string: hammering that would measure a mutex
@@ -397,6 +411,47 @@ const POLL_MS: u64 = 400;
 /// Suspended is included for the same reason and more strongly: with a fullscreen game up, nobody can
 /// see a banner, and every cross-process call is one more thing competing with the game.
 const IDLE_POLL_MS: u64 = 2_000;
+
+/// Longest gap between property fetches while a track is playing, in milliseconds.
+///
+/// THE EXPENSIVE CALL IS `TryGetMediaPropertiesAsync`, and it was being made every 400ms for as long as
+/// anything was playing. It marshals the whole properties record across the process boundary INCLUDING the
+/// thumbnail stream reference - album art, for Spotify - which is real work in the Now Playing Session
+/// Manager service on every call. `GetPlaybackInfo`, by contrast, is cheap.
+///
+/// It is also the only part of the poll that scales with playback: with nothing playing there is no session
+/// and the call never happens, which is why the service's cost appears in bursts tied to playback.
+///
+/// Nothing needs the title 2.5 times a second. The banner only appears when the track CHANGES, so a fetch
+/// is worth making when something says the properties changed - and otherwise once every `PROPS_NET_MS` as
+/// a safety net, in case the notification never arrives. At 2000ms the net alone cuts fetches by 80%; with
+/// the notification working it is roughly one per track.
+///
+/// The net is what makes this safe to ship without being able to verify the event end to end: if the
+/// subscription silently fails, the banner is at worst 2 seconds late and the fetch rate still falls by
+/// four fifths.
+const PROPS_NET_MS: f32 = 2000.0;
+
+/// Set by the `MediaPropertiesChanged` handler, cleared by the fetch it triggers.
+///
+/// An atomic rather than a channel because the handler runs on a WinRT thread-pool thread and must do as
+/// little as possible - setting a flag cannot block, cannot fail, and cannot deadlock against the media
+/// thread that reads it.
+static PROPS_DIRTY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Whether the expensive properties fetch is worth making now.
+///
+/// Pure, so the policy is testable without a session, a subscription or a track change - the three things
+/// that made the previous attempt at measuring this family's cost impossible to verify.
+fn should_fetch_props(dirty: bool, since_fetch_ms: f32, playing: bool) -> bool {
+    if dirty {
+        return true;
+    }
+    // While paused or stopped the title cannot change without the notification firing, so the net can be
+    // far longer - there is nothing to be late for.
+    let net = if playing { PROPS_NET_MS } else { PROPS_NET_MS * 4.0 };
+    since_fetch_ms >= net
+}
 
 /// How long to wait before the next look for a track change.
 ///
@@ -465,6 +520,12 @@ pub fn start() -> Handle {
         // Whether a track was playing at the last look. Seeded true, so the very first wait is the
         // short one and a track already playing at startup is picked up promptly.
         let mut playing = true;
+        // Milliseconds since the last properties fetch, and the session the subscription belongs to.
+        // Both drive `should_fetch_props`; the token is kept so the handler can be REMOVED when the
+        // session is replaced, because a subscription left on a dead session is exactly the kind of leak
+        // this change exists to stop.
+        let mut since_fetch = PROPS_NET_MS;
+        let mut subscribed: Option<(String, i64, Session)> = None;
         loop {
             // `recv_timeout`, not `recv`: the thread also has to NOTICE things, not only be told
             // them. Without a timeout it slept until the next hotkey, so a track change was invisible
@@ -486,22 +547,57 @@ pub fn start() -> Handle {
                         publish(&title_and_artist(&s));
                     }
                     // Somebody just pressed a key, so they are listening: back to the fast rate
-                    // immediately rather than waiting for a poll to notice.
+                    // immediately rather than waiting for a poll to notice, and the title has very likely
+                    // just changed - a skip is the most common reason to press anything.
                     playing = true;
+                    PROPS_DIRTY.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    since_fetch += wait as f32;
                     match find_session() {
-                        Ok(Some((_, s))) => {
-                            publish(&title_and_artist(&s));
-                            // Drives the next wait. A failed status read counts as not playing, which
-                            // errs toward polling less - the safe direction for a call that leaks.
+                        Ok(Some((id, s))) => {
+                            // Subscribe once per session, and unsubscribe the previous one. `Session` here
+                            // is a fresh projection of the same underlying session each call, so the ID is
+                            // what identifies it - comparing the objects would re-subscribe every poll.
+                            if subscribed.as_ref().map(|(sid, _, _)| sid != &id).unwrap_or(true) {
+                                if let Some((_, token, old)) = subscribed.take() {
+                                    let _ = old.RemoveMediaPropertiesChanged(token);
+                                }
+                                match subscribe_props(&s) {
+                                    Some(token) => {
+                                        subscribed = Some((id, token, s.clone()));
+                                        log::write(
+                                            "media: subscribed to MediaPropertiesChanged; the expensive \
+                                             properties fetch now runs on a change rather than 2.5 times \
+                                             a second",
+                                        );
+                                    }
+                                    None => log::write(
+                                        "media: could not subscribe to MediaPropertiesChanged - falling \
+                                         back to the safety-net fetch interval",
+                                    ),
+                                }
+                            }
+                            // Cheap every time; this is not the call that costs anything.
                             playing = matches!(status_of(&s), Ok(Status::Playing));
+                            // Expensive, and now gated. See `PROPS_NET_MS`.
+                            let dirty = PROPS_DIRTY.swap(false, std::sync::atomic::Ordering::Relaxed);
+                            if should_fetch_props(dirty, since_fetch, playing) {
+                                since_fetch = 0.0;
+                                publish(&title_and_artist(&s));
+                            }
                         }
                         // Nothing playing: clear it, so a banner cannot be re-shown for a track that
                         // stopped ages ago when playback resumes.
                         Ok(None) => {
                             publish("");
                             playing = false;
+                            // A session that has gone away takes its subscription with it, and the next
+                            // one must be subscribed afresh.
+                            if let Some((_, token, old)) = subscribed.take() {
+                                let _ = old.RemoveMediaPropertiesChanged(token);
+                            }
+                            PROPS_DIRTY.store(true, std::sync::atomic::Ordering::Relaxed);
                         }
                         Err(_) => playing = false,
                     }
@@ -575,6 +671,48 @@ mod tests {
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted.len(), 3, "two actions share a virtual key: {vks:?}");
+    }
+
+    #[test]
+    fn the_expensive_properties_fetch_is_gated_but_never_starved() {
+        // `TryGetMediaPropertiesAsync` is the only part of the poll that costs anything - it marshals the
+        // whole properties record including the thumbnail reference, and it only runs while something is
+        // playing, which is why the Now Playing service's cost appears in bursts tied to playback.
+        //
+        // Two properties have to hold together, and the second is what makes this safe to ship without
+        // being able to start playback from here to verify the subscription end to end.
+
+        // 1. A notification always fetches, whatever else is true.
+        assert!(should_fetch_props(true, 0.0, true), "a change notification must always fetch");
+        assert!(should_fetch_props(true, 0.0, false), "even when paused - the track can change while paused");
+
+        // 2. Without one, it still fetches eventually. If the subscription silently fails the banner is at
+        //    worst `PROPS_NET_MS` late and the fetch rate still falls by four fifths against the old 400ms.
+        assert!(!should_fetch_props(false, 0.0, true), "no notification and no time elapsed: skip");
+        assert!(
+            !should_fetch_props(false, PROPS_NET_MS - 1.0, true),
+            "just short of the net: still skip"
+        );
+        assert!(
+            should_fetch_props(false, PROPS_NET_MS, true),
+            "the net must fire, or a failed subscription would freeze the banner for ever"
+        );
+
+        // 3. Paused waits longer, because a paused track's title cannot change without the notification.
+        assert!(
+            !should_fetch_props(false, PROPS_NET_MS, false),
+            "paused should not use the playing net"
+        );
+        assert!(should_fetch_props(false, PROPS_NET_MS * 4.0, false), "but it must still have one");
+
+        // And the net has to be worth having: at the old 400ms rate this is the reduction it buys on its
+        // own, before the notification saves anything at all.
+        let old_per_sec = 1000.0 / POLL_MS as f32;
+        let netted_per_sec = 1000.0 / PROPS_NET_MS;
+        assert!(
+            netted_per_sec < old_per_sec * 0.25,
+            "the safety net alone must cut the fetch rate to under a quarter: {netted_per_sec:.2}/s              against {old_per_sec:.2}/s"
+        );
     }
 
     #[test]

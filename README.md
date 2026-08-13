@@ -135,6 +135,12 @@ Two backends, switchable in the menu:
 | **Spotify session** (default) | WinRT `Windows.Media.Control`, addressed by Spotify's app id | 2–10 ms, works minimised and unfocused, and goes to Spotify even when Chrome also has media keys. Success is **observed**, not assumed: it watches for the playback status to flip or the title to change, for 750 ms |
 | **Media keys** | `SendInput` of the real `VK_MEDIA_*` keys | ~76 ms, and whoever owns the key wins — commonly Chrome |
 
+The track name behind the banner comes from the same session, and the expensive part of reading it is
+gated. `TryGetMediaPropertiesAsync` marshals the whole properties record — including the thumbnail
+reference, which for Spotify is album art — and it was being called every 400 ms for as long as anything
+played. It now runs when the session says its properties changed, with a 2 s safety net in case that
+notification never arrives: worst case the banner is 2 s late and the call rate still falls by four fifths.
+
 A failed command is **never retried**, in either backend. A double-skip is worse than a missed press.
 The backends never silently fall back to each other either, because a control that sometimes goes to
 the wrong application is harder to live with than one that reliably does nothing.
