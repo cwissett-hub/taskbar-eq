@@ -180,8 +180,17 @@ There is a picture of all nine, with what to look at, in [docs/review/index.html
 
 ### It gets out of the way
 
-The tool **suspends itself** whenever something is covering the taskbar: a fullscreen app, presentation
-mode, or a hidden taskbar.
+The tool **suspends itself** whenever the **display is off**, or something is covering the taskbar: a
+fullscreen app, presentation mode, or a hidden taskbar.
+
+**The display-off case matters most on a laptop, and it is measured rather than assumed.**
+`powercfg /srumutil` over eight days put this app *second* on the machine for energy — above VS Code and
+5.3× Chrome across its thirty processes — alongside a battery draining in about 45 minutes with the lid
+**closed**. With the lid shut nothing can be seen, so every frame composited was waste. The cost is also
+worse than the CPU share suggests: a process waking every 16 ms keeps the machine out of the deep idle
+states that make a closed lid cheap at all. A **dimmed** display is deliberately *not* treated as off —
+Windows dims before it sleeps, and blanking the meter early on every idle timeout would be a visible
+regression for nothing.
 
 "A fullscreen app" is checked two ways, and the second matters more than it looks.
 `SHQueryUserNotificationState` reports fullscreen only for **exclusive** Direct3D - so a game in
