@@ -153,8 +153,8 @@ meter. Turn the whole thing off with `show_track_name = false`.
 ### Flourishes
 
 Once in a while — about every 30 seconds on real music — the display does something that has nothing
-to do with the audio, and everything to do with what it is pretending to be. Each of the nine
-instrument families has its own, and each one is that instrument's characteristic fault or ritual:
+to do with the audio, and everything to do with what it is pretending to be. **Thirteen of the fourteen
+families** have one, and each is that instrument's characteristic fault or ritual:
 
 | Family | Flourish |
 |---|---|
@@ -167,6 +167,18 @@ instrument families has its own, and each one is that instrument's characteristi
 | Reel-to-reel | Wow and flutter — 1.1 Hz and 8.5 Hz speed error, reaching the tape slack |
 | Pantone | A printing plate slips out of register |
 | Patchbay | The panel re-patches itself, every cable to the other jack of its pair, and back |
+| Vaporwave grid | A lightning storm — five staggered strikes, each flashing the sky behind it |
+| Radar | Barrage jamming — the receiver saturates, so returns appear at every range at once |
+| Chroma field | An ink plate starves, and the dry patch travels across the stripes |
+| Flame organ | A flashback: every burner guts to its pilot, then an ignition front relights them |
+
+The **Fluid** family is the one without: cavitation is the right idea and three models for it failed
+against that family's own invariants, which [TODO.md](TODO.md) records in full so the next attempt starts
+from the diagnosis rather than from scratch.
+
+Two colourways — **Vaporwave Toxic** and **Vaporwave Noir** — set `bolt_bright = 0`, which turns their
+lightning off deliberately for anyone who finds the strikes distracting. The storm respects that: a
+colourway that switches lightning off is not handed a lightning storm.
 
 **When one fires is judged by rarity, never by a threshold.** Each hit is compared against the median
 of recent hits, so it fires on a moment that is exceptional *for this track* — which is what makes the
