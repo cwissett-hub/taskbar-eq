@@ -10,6 +10,7 @@ pub mod media;
 pub mod overlay;
 pub mod health;
 pub mod placement;
+pub mod power;
 pub mod shell_state;
 pub mod tray;
 pub mod visibility;

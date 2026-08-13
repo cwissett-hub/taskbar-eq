@@ -291,6 +291,7 @@ impl Ticker {
             notification_state: win::shell_state::notification_state(),
             taskbar_visible: win::shell_state::taskbar_visible(),
             fullscreen_foreground: win::shell_state::fullscreen_foreground(),
+            display_off: win::shell_state::display_off(),
         };
         self.phases.vis = t0.elapsed().as_millis() as u32;
 
@@ -302,6 +303,7 @@ impl Ticker {
             inputs.notification_state,
             inputs.taskbar_visible,
             inputs.fullscreen_foreground,
+            inputs.display_off,
         );
         if blocked != win::shell_state::suspended() {
             // Logged on the TRANSITION only, so the log stays useful rather than becoming a heartbeat.
@@ -693,6 +695,9 @@ fn diagnose() -> Result<()> {
         notification_state: quns,
         taskbar_visible: win::placement::taskbar_visible(),
         fullscreen_foreground,
+        // A diagnose run cannot be looking at an off display - it is being read on the screen it would
+        // be reporting about.
+        display_off: false,
     };
     log::write(&format!(
         "=> would draw: {}",
@@ -1253,6 +1258,18 @@ fn main() -> Result<()> {
         });
     });
     win::tray::install_tick(tray.hwnd(), TICK_TIMER_MS, tick_now);
+
+    // Ask for display power notifications on the tray window, and HOLD the handle: unregistering is what
+    // stops them arriving, so letting this drop would register and immediately cancel. Bound with a
+    // leading underscore rather than discarded with `_`, because `let _ = ...` drops immediately and that
+    // is exactly the bug. See `win::power` for what this is worth - measured, this app was the second
+    // largest energy consumer on the machine over eight days.
+    let _display_watch = win::power::watch_display(tray.hwnd());
+    if _display_watch.is_none() {
+        log::write(
+            "could not register for display power notifications - the overlay will keep drawing with              the screen off, which is the largest single battery cost it has",
+        );
+    }
 
     // Transport control. The media thread is started even with nothing bound, because it costs one
     // idle thread and it means the very first key press does not also pay for WinRT activation.

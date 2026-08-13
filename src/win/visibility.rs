@@ -17,6 +17,9 @@ pub struct Inputs {
     pub taskbar_visible: bool,
     /// A borderless-fullscreen app is covering the screen. See `covers_monitor`.
     pub fullscreen_foreground: bool,
+    /// The display is off or dimmed to black - a closed laptop lid, a power-managed monitor, a locked
+    /// session. See `win::power`.
+    pub display_off: bool,
 }
 
 /// What the foreground window looks like, for `covers_monitor`.
@@ -91,17 +94,35 @@ pub fn covers_monitor(fg: Option<&Foreground>) -> bool {
 ///
 /// So this is the question "is something covering the taskbar", which is the only reason to go to
 /// sleep. "Do I know where to draw" is a different question with a different answer.
-pub fn shell_blocks(notification_state: i32, taskbar_visible: bool, fullscreen_foreground: bool) -> bool {
+pub fn shell_blocks(
+    notification_state: i32,
+    taskbar_visible: bool,
+    fullscreen_foreground: bool,
+    display_off: bool,
+) -> bool {
     !taskbar_visible
         || notification_state == QUNS_FULLSCREEN
         || notification_state == QUNS_PRESENTATION
-        // The geometric check, which is the only one of the four that sees a borderless-fullscreen
-        // game. See `covers_monitor`.
+        // The geometric check, which is the only one that sees a borderless-fullscreen game. See
+        // `covers_monitor`.
         || fullscreen_foreground
+        // THE DISPLAY IS OFF. The most clear-cut reason of the four and the one with the largest
+        // measured consequence: `powercfg /srumutil` put this app SECOND on the machine for energy over
+        // eight days - above VS Code, 5.3x Chrome across its thirty processes - and the battery was
+        // reported draining in 45 minutes with the lid CLOSED. With the lid closed there is nothing to
+        // look at, so every frame drawn and every shell call made is pure waste. It is also worse than
+        // its own CPU share suggests: a process waking every 16ms keeps the machine out of the deep
+        // idle states that make a closed lid cheap at all.
+        || display_off
 }
 
 pub fn should_show(i: &Inputs) -> bool {
-    if shell_blocks(i.notification_state, i.taskbar_visible, i.fullscreen_foreground) {
+    if shell_blocks(
+        i.notification_state,
+        i.taskbar_visible,
+        i.fullscreen_foreground,
+        i.display_off,
+    ) {
         return false;
     }
     match i.widget {
@@ -201,16 +222,38 @@ mod fullscreen_tests {
     }
 
     #[test]
+    fn an_off_display_suspends_the_overlay_whatever_else_is_true() {
+        // The end-to-end claim through the predicate the render loop calls, with every OTHER signal set
+        // to "all is well" - notification state 5 is QUNS_ACCEPTS_NOTIFICATIONS, the taskbar is up and
+        // nothing is fullscreen. That is exactly the state a laptop reports with its lid shut, which is
+        // the case this exists for: measured, this app was the second largest energy consumer on the
+        // machine over eight days, and the battery was reported draining in 45 minutes with the lid CLOSED.
+        assert!(
+            shell_blocks(5, true, false, true),
+            "an off display must suspend the overlay even when every other signal says all is well"
+        );
+        assert!(!shell_blocks(5, true, false, false), "and an on display must not");
+        // It is also independent of the others rather than redundant with them: a display that is off
+        // while a game is fullscreen must still suspend, and so must one behind a hidden taskbar.
+        for (quns, vis, full) in [(5, true, true), (QUNS_FULLSCREEN, true, false), (0, false, false)] {
+            assert!(
+                shell_blocks(quns, vis, full, true),
+                "an off display must suspend regardless of state ({quns}, {vis}, {full})"
+            );
+        }
+    }
+
+    #[test]
     fn a_borderless_game_suspends_the_overlay() {
         // The end-to-end claim, through the predicate the render loop actually calls. The other three
         // signals are all set to "nothing is wrong", which is exactly what they report during a
         // borderless-fullscreen game: notification state 5 is QUNS_ACCEPTS_NOTIFICATIONS.
         assert!(
-            shell_blocks(5, true, true),
+            shell_blocks(5, true, true, false),
             "a borderless game must suspend the overlay even when the shell says all is well"
         );
         assert!(
-            !shell_blocks(5, true, false),
+            !shell_blocks(5, true, false, false),
             "and an ordinary desktop must not"
         );
     }
@@ -225,7 +268,7 @@ mod tests {
     }
 
     fn base() -> Inputs {
-        Inputs { widget: Some(good_rect()), notification_state: 5, taskbar_visible: true, fullscreen_foreground: false }
+        Inputs { widget: Some(good_rect()), notification_state: 5, taskbar_visible: true, fullscreen_foreground: false, display_off: false }
     }
 
     #[test]
@@ -304,24 +347,24 @@ mod tests {
         // draw" counted as "the shell is covering me", then: rect None -> suspended -> no rediscovery
         // -> rect stays None -> suspended for ever. The overlay would never appear again, and the
         // symptom would be indistinguishable from the app failing to start.
-        let no_rect = Inputs { widget: None, notification_state: 0, taskbar_visible: true, fullscreen_foreground: false };
+        let no_rect = Inputs { widget: None, notification_state: 0, taskbar_visible: true, fullscreen_foreground: false, display_off: false };
         assert!(!should_show(&no_rect), "with no rect there is nowhere to draw");
         assert!(
-            !shell_blocks(no_rect.notification_state, no_rect.taskbar_visible, no_rect.fullscreen_foreground),
+            !shell_blocks(no_rect.notification_state, no_rect.taskbar_visible, no_rect.fullscreen_foreground, no_rect.display_off),
             "not knowing the rect must NOT suspend the app - that is how it would never recover"
         );
 
         // The genuine reasons to suspend, on the other hand, must all report true.
-        assert!(shell_blocks(QUNS_FULLSCREEN, true, false), "a fullscreen app must suspend");
-        assert!(shell_blocks(QUNS_PRESENTATION, true, false), "presentation mode must suspend");
-        assert!(shell_blocks(0, false, false), "a hidden taskbar must suspend");
-        assert!(!shell_blocks(0, true, false), "an ordinary desktop must not suspend");
+        assert!(shell_blocks(QUNS_FULLSCREEN, true, false, false), "a fullscreen app must suspend");
+        assert!(shell_blocks(QUNS_PRESENTATION, true, false, false), "presentation mode must suspend");
+        assert!(shell_blocks(0, false, false, false), "a hidden taskbar must suspend");
+        assert!(!shell_blocks(0, true, false, false), "an ordinary desktop must not suspend");
 
         // And the two agree wherever they can: anything the shell blocks is also not shown.
         for state in [0, 1, 2, QUNS_FULLSCREEN, QUNS_PRESENTATION] {
             for vis in [true, false] {
-                let i = Inputs { widget: Some(base().widget.unwrap()), notification_state: state, taskbar_visible: vis, fullscreen_foreground: false };
-                if shell_blocks(state, vis, false) {
+                let i = Inputs { widget: Some(base().widget.unwrap()), notification_state: state, taskbar_visible: vis, fullscreen_foreground: false, display_off: false };
+                if shell_blocks(state, vis, false, false) {
                     assert!(!should_show(&i), "state {state}/vis {vis}: blocked but shown");
                 }
             }

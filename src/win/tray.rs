@@ -650,6 +650,20 @@ unsafe extern "system" fn tray_wndproc(
         }
         return LRESULT(0);
     }
+    // The display went off or came back. Handled here because power notifications are delivered to a
+    // WINDOW and this is the app's only long-lived one; the decision itself is pure and lives in
+    // `win::power`, which is what makes the three-state DIMMED case testable without a laptop lid.
+    if msg == windows::Win32::UI::WindowsAndMessaging::WM_POWERBROADCAST {
+        const PBT_POWERSETTINGCHANGE: usize = 0x8013;
+        if wparam.0 == PBT_POWERSETTINGCHANGE {
+            if let Some(off) = unsafe { crate::win::power::display_off_from_lparam(lparam) } {
+                crate::win::shell_state::set_display_off(off);
+            }
+        }
+        // Fall through to DefWindowProcW: other power messages have their own default handling and
+        // swallowing them is not this app's business.
+    }
+
     if msg == WM_HOTKEY {
         // Routed here because a null-hwnd registration would post a THREAD message that
         // DispatchMessageW cannot deliver anywhere - see the note in `win::hotkeys`.

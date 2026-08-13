@@ -48,6 +48,13 @@ static TASKBAR_VISIBLE: AtomicBool = AtomicBool::new(true);
 /// Defaults to FALSE, matching the other two: the safe default is the one that shows the meter, because
 /// a meter that never appears is a far worse failure than one frame of one that should not have.
 static FULLSCREEN_FOREGROUND: AtomicBool = AtomicBool::new(false);
+/// Whether the display is off. Pushed by `win::power` from a `WM_POWERBROADCAST`, not polled - there is
+/// no cheap query for display power state, and the notification is the documented mechanism.
+///
+/// Defaults to FALSE for the same reason as the others. It also has to: the notification only arrives on
+/// a CHANGE, so an app that started with the display already on would never be told, and a default of
+/// "off" would hide the meter until the next time the screen slept.
+static DISPLAY_OFF: AtomicBool = AtomicBool::new(false);
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
 /// True while the overlay is BLOCKED - a fullscreen or presentation-mode app is on top, or the taskbar
@@ -112,6 +119,24 @@ pub fn taskbar_visible() -> bool {
 /// Whether a borderless-fullscreen app was covering the screen as of the last poll. Free to call.
 pub fn fullscreen_foreground() -> bool {
     FULLSCREEN_FOREGROUND.load(Ordering::Relaxed)
+}
+
+/// Whether the display is currently off. Free to call.
+pub fn display_off() -> bool {
+    DISPLAY_OFF.load(Ordering::Relaxed)
+}
+
+/// Records the display power state. Called from the window proc - see `win::power`.
+pub fn set_display_off(v: bool) {
+    let was = DISPLAY_OFF.swap(v, Ordering::Relaxed);
+    if was != v {
+        crate::log::write(if v {
+            "display off: suspending until it comes back. Nothing can be seen, and waking every 16ms \
+             also keeps the machine out of deep idle - which is most of the battery cost."
+        } else {
+            "display on: resuming"
+        });
+    }
 }
 
 /// Records whether the overlay is currently blocked. See `SUSPENDED`.
@@ -220,6 +245,7 @@ mod tests {
         for state in [QUNS_FULLSCREEN, QUNS_PRESENTATION] {
             let blocked = !should_show(&Inputs {
                 fullscreen_foreground: false,
+                display_off: false,
                 widget,
                 notification_state: state,
                 taskbar_visible: true,
@@ -239,6 +265,7 @@ mod tests {
             notification_state: 0,
             taskbar_visible: false,
             fullscreen_foreground: false,
+            display_off: false,
         });
         assert!(blocked, "a hidden taskbar must block the overlay");
 

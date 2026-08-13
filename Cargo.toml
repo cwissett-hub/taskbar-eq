@@ -24,6 +24,10 @@ features = [
   "Win32_System_LibraryLoader",
   "Win32_System_Registry",
   "Win32_System_Threading",
+  # Power setting notifications, for GUID_CONSOLE_DISPLAY_STATE. The overlay suspends when the display
+  # is off - with a laptop lid closed nobody can see it, and a process waking every 16ms also stops the
+  # machine reaching deep idle. See win::power.
+  "Win32_System_Power",
   # Toolhelp, for counting THIS process's threads during the leak hunt. Threads are the number
   # that actually stalled a game (19,000 of them); handles are only the cheap proxy the watchdog
   # polls. See win::health.
