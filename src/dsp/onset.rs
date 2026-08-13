@@ -160,7 +160,25 @@ impl BassRise {
 mod tests {
     use super::*;
 
+    /// The render loop's interval, which is how often a family actually asks a detector anything.
     const DT: f32 = 16.7;
+
+    /// Milliseconds between fixture ROWS, which is not the same thing at all.
+    ///
+    /// The fixtures are one row per DSP frame, and a DSP frame is `HOP` samples: 512 at 48kHz is
+    /// **10.67ms**, or 93.75 rows a second. The test used to drive them at `DT` and compute their duration
+    /// from `DT`, which was wrong twice over:
+    ///
+    /// - it claimed each fixture was **1.57x longer** than it is, so every rate it printed and asserted
+    ///   was 1.57x too LOW. A detector firing at 2.5/s was reported as 1.6/s.
+    /// - it fed the detector every row as though the render loop saw all of them. It does not: the loop
+    ///   runs at ~60fps against a 93.75/s capture, so it sees roughly two rows in every three. Feeding all
+    ///   of them hands the detector more chances to fire than it will ever get, which is the wrong
+    ///   direction for a guard whose whole purpose is catching a threshold that CANNOT fire.
+    ///
+    /// 48kHz is assumed because that is what the capture device on the machine these were recorded on
+    /// runs at. A different rate would change the durations but not the shape of the argument.
+    const FIXTURE_ROW_MS: f32 = 1000.0 * crate::dsp::bands::HOP as f32 / 48_000.0;
     const N: usize = 64;
 
     /// Every band at one level.
@@ -359,13 +377,22 @@ mod tests {
         // every-frame threshold fails.
         for (name, frames) in fixtures() {
             assert!(frames.len() > 500, "{name}: fixture looks truncated, {} frames", frames.len());
-            let secs = frames.len() as f32 * DT / 1000.0;
+            // The recording's REAL duration, from the row interval - not from the render interval.
+            let secs = frames.len() as f32 * FIXTURE_ROW_MS / 1000.0;
 
             let mut f = Flux::default();
             let mut flux_hits = 0u32;
             let mut b = BassRise::default();
             let mut bass_hits = 0u32;
-            for row in &frames {
+            // Driven the way production drives it: one update per render frame, reading whichever row is
+            // current at that moment. At 60fps against a 93.75/s capture that means about two rows in
+            // every three are never seen by a detector at all, which is exactly the behaviour a guard
+            // against "cannot fire" has to reproduce.
+            let total_ms = frames.len() as f32 * FIXTURE_ROW_MS;
+            let mut t = 0.0f32;
+            while t < total_ms {
+                let idx = ((t / FIXTURE_ROW_MS) as usize).min(frames.len() - 1);
+                let row = &frames[idx];
                 // 2.8 and 200ms are the vaporwave lightning's shipped settings; 0.055 is the radar's.
                 if f.update(row, DT, 2.8, 200.0) {
                     flux_hits += 1;
@@ -373,6 +400,7 @@ mod tests {
                 if b.update(row, 8, 0.22) > 0.055 {
                     bass_hits += 1;
                 }
+                t += DT;
             }
             let (fr, br) = (flux_hits as f32 / secs, bass_hits as f32 / secs);
             println!("{name:16} flux {fr:.2}/s bass rise {br:.2}/s ({secs:.1}s)");

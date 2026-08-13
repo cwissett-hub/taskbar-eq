@@ -37,7 +37,14 @@ use crate::themes::Theme;
 /// the numbers came out an order of magnitude below the threshold. SPECTRAL FLUX - the sum of
 /// positive change across every band - is the standard onset measure and it works: swept over the
 /// fixture, a threshold of `avg * FLUX_RATIO` yields 4.12 onsets/s at ratio 1.6, 3.25 at 2.0, 2.25
-/// at 2.5, 1.38 at 3.0. "Every snare" was too many, so 2.8 is used, landing near 1.6/s.
+/// at 2.5, 1.38 at 3.0. "Every snare" was too many, so 2.8 is used.
+///
+/// THOSE RATES ARE ALL 1.57x TOO LOW, and the sweep that produced them is left as it was written because
+/// the RANKING it establishes is what chose the constant, and that is unaffected. The absolute figures are
+/// not: they divided by a duration computed from the render interval when the fixture rows are DSP frames
+/// at 10.67ms, so each recording is 8.4s and not the 13.2s assumed. Re-measured with the time base fixed,
+/// 2.8 lands at 1.42-2.48 onsets/s across the three fixtures rather than "near 1.6" - a strike every 0.4
+/// to 0.7 seconds, which is what was wanted. See `dsp::onset`'s `FIXTURE_ROW_MS`.
 ///
 /// The threshold is RELATIVE to a slow-following average of the flux, not absolute, so it adapts to
 /// how busy and how loud a track is instead of needing per-track tuning - the failure that made the
@@ -1023,8 +1030,9 @@ mod tests {
         // time with anything".
         //
         // Swept over the fixture, the flux detector yields 4.12 onsets/s at ratio 1.6, 3.25 at 2.0,
-        // 2.25 at 2.5 and 1.38 at 3.0. "Every snare" was too many, so the shipped ratio aims near
-        // 1.6/s. The band asserted here is deliberately wide - the point is that it fires at a rate
+        // 2.25 at 2.5 and 1.38 at 3.0. "Every snare" was too many, so 2.8 was chosen. Those rates are
+        // 1.57x too low - see `FLUX_RATIO` - and the true figure at the shipped ratio is 1.42-2.48/s.
+        // The band asserted here is deliberately wide - the point is that it fires at a rate
         // a listener would call musical, not that it hits one exact number.
         let frames = real_music();
         assert!(frames.len() > 500, "fixture looks truncated: {} frames", frames.len());
