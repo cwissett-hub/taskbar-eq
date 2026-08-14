@@ -127,6 +127,15 @@ closed; all nine flourishes done, review sheet written, README current.
 
 ### Correctness and performance
 
+- `adb5e96` **The stray spinner over the display, and the menu drawn behind it.** The class had NO
+  cursor - a null `hCursor` does not mean "arrow", it means the window never asserts a shape, so a
+  foreign one leaks in and sticks (measured: three different shapes with the pointer held still).
+  The menu was **`ShowWindow` on an already-visible window re-inserting us at the top of the z-order
+  band** every frame, which is not the no-op it looks like. Found by forcing the display below the
+  menu from another process: it was back on top in **120ms** before, and stays down past **1200ms**
+  after. **Three earlier fixes for the menu measured as no-ops and are still in the tree** - see the
+  commit; removing them is an experiment I have not run.
+
 - `a8a9f75` **Random buttons were biased, two unrelated causes.** Within-family shuffle chi2/df
   **24.93 -> 1.19**; the clock's low bits are dead (`nanos & 3` was zero on all 2,000 samples) and one
   xorshift round cannot reach bit 0, and `% 8` reads only those bits - invisible in the whole-list mode,
