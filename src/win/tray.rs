@@ -10,9 +10,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
     TranslateMessage, HMENU, IDI_APPLICATION, MF_CHECKED, MF_POPUP, MF_SEPARATOR,
     MF_STRING, MSG,
     PM_REMOVE,
-    PostMessageW, SetTimer, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTALIGN, WM_APP, WM_CONTEXTMENU, WM_HOTKEY,
+    PostMessageW, SetTimer, SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTALIGN, WM_APP, WM_CONTEXTMENU, WM_HOTKEY,
     WM_LBUTTONUP, WM_RBUTTONUP, WM_TIMER,
-    WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
+    WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 // NOTE ON THE `poll` / Quit DEVIATION FROM THE BRIEF:
@@ -149,8 +150,15 @@ impl Tray {
                 ..Default::default()
             };
             RegisterClassW(&class);
+            // WS_EX_TOPMOST on this invisible owner window is what puts its MENUS in the topmost band.
+            // A popup menu is owned by the window passed to `TrackPopupMenu`, and an owned window is
+            // constrained to sit above its owner - which also puts it in the owner's band. With this
+            // window non-topmost the menu was created below every topmost window, so the display was
+            // above it by BAND and no per-frame z-order restraint could lift the menu over it: measured
+            // `EQ then MENU` both before and after suppressing the re-assertion. This window is 0x0 and
+            // never shown, so being topmost gives it nothing to draw over.
             let hwnd = CreateWindowExW(
-                WS_EX_TOOLWINDOW,
+                WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
                 w!("TaskbarEqTray"),
                 w!("Taskbar EQ"),
                 WS_POPUP,
@@ -418,19 +426,46 @@ impl Tray {
 
             let mut pt = POINT::default();
             let _ = GetCursorPos(&mut pt);
+            // Under TPM_BOTTOMALIGN the y below is the menu's BOTTOM edge, so it is the taskbar's top
+            // edge and not the cursor - `geom::menu_anchor` carries the reasoning. This is shared by
+            // both ways in: right-clicking the display, and right-clicking the tray icon. Both put the
+            // pointer inside the taskbar, so both were mispositioned by however far up the click was.
+            let (menu_x, menu_y) =
+                crate::geom::menu_anchor((pt.x, pt.y), crate::win::placement::taskbar_rect());
             // A tray menu needs its owner to be foreground or it dismisses itself on the first
             // mouse move, and it needs the WM_NULL nudge afterwards or the first selection after it
             // closes is swallowed. Both are long-standing shell requirements for this pattern.
             let _ = SetForegroundWindow(self.hwnd);
+            // Being topmost is not enough: a menu is inserted immediately ABOVE ITS OWNER, and this
+            // owner window has sat at the bottom of the topmost band since it was created because
+            // nothing ever raises it. The display, which re-asserts HWND_TOPMOST every frame, was above
+            // it - so the menu was created above the owner but still below the display. Measured
+            // `EQ then MENU` with the owner non-topmost AND with it topmost; only raising the owner to
+            // the top of the band immediately before the menu opens changes the answer.
+            let _ = SetWindowPos(
+                self.hwnd,
+                Some(HWND_TOPMOST),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+            // The display re-asserts HWND_TOPMOST on every frame, and the timer keeps it drawing while
+            // this call blocks - so without this flag it would climb straight back over the menu, one
+            // frame later. Set on both sides of the blocking call because there is no other moment to
+            // clear it in: TrackPopupMenu does not return until the menu is gone.
+            crate::win::overlay::set_menu_open(true);
             let cmd = TrackPopupMenu(
                 menu,
                 TPM_RIGHTALIGN | TPM_BOTTOMALIGN | TPM_RETURNCMD,
-                pt.x,
-                pt.y,
+                menu_x,
+                menu_y,
                 Some(0),
                 self.hwnd,
                 None,
             );
+            crate::win::overlay::set_menu_open(false);
             let _ = DestroyMenu(menu);
             let _ = PostMessageW(Some(self.hwnd), 0x0000, WPARAM(0), LPARAM(0));
 

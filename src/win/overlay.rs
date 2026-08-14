@@ -11,15 +11,18 @@ use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, SelectObject, AC_SRC_ALPHA,
     AC_SRC_OVER, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, BI_RGB, DIB_RGB_COLORS, HBITMAP, HDC,
 };
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_LWIN,
     VK_W,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, PeekMessageW, RegisterClassW, SetWindowPos,
-    ShowWindow, TranslateMessage, UpdateLayeredWindow, HWND_TOPMOST, MSG, PM_REMOVE,
-    SWP_NOACTIVATE, SWP_NOSIZE, SW_HIDE, SW_SHOWNA, ULW_ALPHA, WNDCLASSW, WS_EX_LAYERED,
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, IsWindowVisible, LoadCursorW, PeekMessageW,
+    RegisterClassW,
+    SetWindowPos, ShowWindow, TranslateMessage, UpdateLayeredWindow, HWND_TOPMOST, IDC_ARROW, MSG,
+    PM_REMOVE,
+    SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOWNA, ULW_ALPHA, WNDCLASSW,
+    WS_EX_LAYERED,
     WM_LBUTTONUP, WM_RBUTTONUP, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
@@ -39,6 +42,36 @@ pub enum OverlayEvent {
 static PENDING: AtomicU8 = AtomicU8::new(0);
 const P_LEFT: u8 = 1;
 const P_RIGHT: u8 = 2;
+
+/// Set while one of our own popup menus is on screen. See `should_assert_topmost`.
+///
+/// Process-global for the same reason `PENDING` is: the menu is opened from `win::tray`, and the
+/// window whose z-order it affects is owned here. One overlay and one menu exist per process.
+static MENU_OPEN: AtomicBool = AtomicBool::new(false);
+
+/// Called by `win::tray` either side of `TrackPopupMenu`, which blocks for as long as the menu is up.
+pub fn set_menu_open(open: bool) {
+    MENU_OPEN.store(open, Ordering::Relaxed);
+}
+
+/// Whether `show` should re-assert `HWND_TOPMOST` this frame.
+///
+/// Re-asserting it every frame is what keeps the display above the taskbar, but `SetWindowPos` with
+/// `HWND_TOPMOST` also re-inserts the window at the TOP of the topmost band - above any popup menu of
+/// ours that is open. A timer keeps the visualiser drawing while `TrackPopupMenu` blocks the main loop
+/// (see `tick`), so that fight happened once per frame and the menu always lost.
+///
+/// Measured with the menu open: `EnumWindows`, which walks the z-order downward, returned the overlay
+/// BEFORE the menu. The main menu only overlapped the display by 4px so it looked survivable, but a
+/// submenu opens downward from wherever its parent item sits and the theme list runs to the bottom of
+/// the screen - straight through the display, which was drawn on top of it.
+///
+/// While a menu is up this returns false and the move is done with `SWP_NOZORDER`, so the menu keeps
+/// the position it was created in. The frame after it closes re-asserts topmost as before, so nothing
+/// is given up permanently.
+fn should_assert_topmost(menu_open: bool) -> bool {
+    !menu_open
+}
 
 pub struct Overlay {
     hwnd: HWND,
@@ -66,6 +99,17 @@ impl Overlay {
             let class = WNDCLASSW {
                 lpfnWndProc: Some(wndproc),
                 lpszClassName: w!("TaskbarEqOverlay"),
+                // A null hCursor - which is what `..Default::default()` leaves here - does NOT mean
+                // "use the arrow". It means this window never asserts a cursor shape at all, so
+                // whatever shape the pointer is already wearing persists for as long as it is over the
+                // display, and nothing resets it. Measured on the live window: `GCLP_HCURSOR` read 0,
+                // and while the pointer sat still over the display the shape changed three times
+                // (65539 -> 65541 -> 65567) without ever leaving it. That is the reported spinner: a
+                // shape leaking in from whatever was busy nearby - the Widgets flyout loading beneath
+                // us is the obvious candidate, since we sit on its button - and then sticking.
+                // With a class cursor set, DefWindowProc resets the arrow on every WM_SETCURSOR and
+                // no foreign shape can survive the next mouse move.
+                hCursor: LoadCursorW(None, IDC_ARROW)?,
                 ..Default::default()
             };
             // RegisterClassW returns an ATOM (u16), not a bool - 0 means failure.
@@ -135,16 +179,22 @@ impl Overlay {
                 canvas.bits().len(),
             );
 
-            let _ = SetWindowPos(
-                self.hwnd,
-                Some(HWND_TOPMOST),
-                rect.x,
-                rect.y,
-                0,
-                0,
-                SWP_NOSIZE | SWP_NOACTIVATE,
-            );
-            let _ = ShowWindow(self.hwnd, SW_SHOWNA);
+            // The position still has to be applied every frame; only the z-order is conditional.
+            let (insert_after, flags) = if should_assert_topmost(MENU_OPEN.load(Ordering::Relaxed)) {
+                (Some(HWND_TOPMOST), SWP_NOSIZE | SWP_NOACTIVATE)
+            } else {
+                (None, SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER)
+            };
+            let _ = SetWindowPos(self.hwnd, insert_after, rect.x, rect.y, 0, 0, flags);
+            // ShowWindow on an ALREADY-VISIBLE window is not the no-op it looks like: it re-inserts the
+            // window at the top of its z-order band, which put the display back over its own menus once
+            // per tick. Measured by forcing the display below an open menu from another process - it was
+            // back on top within 120ms, about four timer-driven ticks, with the SetWindowPos z-order
+            // already suppressed. Calling it only on the hidden -> visible transition also drops one
+            // window-manager call from every frame.
+            if !IsWindowVisible(self.hwnd).as_bool() {
+                let _ = ShowWindow(self.hwnd, SW_SHOWNA);
+            }
 
             let pos = POINT { x: rect.x, y: rect.y };
             let src = POINT { x: 0, y: 0 };
@@ -304,6 +354,23 @@ unsafe extern "system" fn wndproc(
 mod tests {
     use super::*;
     use crate::render::canvas::Rgba;
+
+    /// The wiring this protects is an inversion, which is the only way to get this wrong: assert
+    /// topmost while a menu is open and the menu goes behind the display, skip it when none is open
+    /// and the display sinks behind the taskbar. The end-to-end proof is a z-order read with a real
+    /// menu open - `EnumWindows` must return the menu before the overlay - which no unit test here
+    /// can perform, because it needs a menu on screen and `TrackPopupMenu` blocks its own caller.
+    #[test]
+    fn a_menu_being_open_stops_the_topmost_reassertion() {
+        assert!(
+            should_assert_topmost(false),
+            "with no menu open the display must keep climbing back above the taskbar"
+        );
+        assert!(
+            !should_assert_topmost(true),
+            "while a menu is open the display must not re-insert itself at the top of the topmost band"
+        );
+    }
 
     #[test]
     fn new_creates_a_window_then_show_and_hide_succeed() {

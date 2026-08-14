@@ -3,9 +3,12 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** ALL THIRTEEN families have a flourish, the media poll is gated, and the review
-sheet covers everything. Earlier: the vaporwave roll is GONE, replaced by a lightning storm. Display-off suspend
-shipped - we were the machine's second largest energy consumer.
+**Last updated:** THE GAME STUTTER IS CONFIRMED FIXED on the gaming machine - the borderless-fullscreen
+suspend was the cause, so the vsync/flip-loss reading was right and the resource leak was NOT to blame.
+Two new fixes from your report: the pointer no longer picks up a stray spinner over the display, and the
+context menu is no longer drawn behind it. Earlier: ALL THIRTEEN families have a flourish, the media poll
+is gated, and the review sheet covers everything. Earlier: the vaporwave roll is GONE, replaced by a
+lightning storm. Display-off suspend shipped - we were the machine's second largest energy consumer.
 
 Earlier: chroma done, inert config fields removed. FLUID cavitation ATTEMPTED AND REVERTED -
 see below. Everything in the tree is committed, green and pushed.
@@ -32,11 +35,9 @@ closed; all nine flourishes done, review sheet written, README current.
       whose own CoreWindow is foreground would not suspend us. Packaged games hosted in
       `ApplicationFrameWindow` ARE caught - I took that name off the list for exactly that reason.
 
-- [ ] **Please retest on the gaming machine.** The borderless-fullscreen fix is in. Two things to
-      check: does the overlay still draw over a game, and does the stutter still appear after 30-45
-      minutes. If it does, run `taskbar-eq.exe --diagnose` **while the game is running** (alt-tab out,
-      or use a second monitor) and send me the `foreground window:` line - that says exactly what the
-      new check sees. The log also records every suspend and resume transition.
+- [x] **RETESTED AND FIXED on the gaming machine** - reported 2026-08-14. The borderless-fullscreen
+      suspend was the cause. That also settles the open question: the 160 -> 30fps drop was flip loss,
+      not the resource leak, so a clean halving of 60 really was the tell.
 
 ## Waiting on you
 
