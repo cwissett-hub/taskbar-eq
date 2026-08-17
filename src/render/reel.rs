@@ -1268,7 +1268,11 @@ mod tests {
             }
             seen.push(bits);
         }
-        assert_eq!(seen.len(), 5, "expected five reel colourways, got {}", seen.len());
+        // Eight: the five authentic machines, plus the three bright ones added on the report that the
+        // deck's palette was boring. The count is asserted so a colourway silently failing to
+        // register - which the per-pair inequality above could never catch, since a missing theme
+        // simply is not compared - still fails here.
+        assert_eq!(seen.len(), 8, "expected eight reel colourways, got {}", seen.len());
     }
 
     /// Run: cargo test --release dump_reel_frames -- --ignored --nocapture

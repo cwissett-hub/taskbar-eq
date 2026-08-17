@@ -57,6 +57,9 @@ pub fn all() -> Vec<Theme> {
         reel_black_chrome(),
         reel_olive_military(),
         reel_cream_domestic(),
+        reel_neon_miami(),
+        reel_acid_lime(),
+        reel_pantone_press(),
         patch_classic(),
         patch_buchla(),
         patch_noir(),
@@ -1531,6 +1534,92 @@ pub fn reel_cream_domestic() -> Theme {
             socket: "#d8cbb0".into(),
             collar: "#b8a888".into(),
             glass: "#fff6e0".into(),
+            ..TubeParams::default()
+        },
+        ..reel_base()
+    }
+}
+
+// The three below were asked for as "brighter and more in keeping with our other colours, think
+// pantone and neon". The five above are all authentic machines - broadcast grey, walnut, black
+// chrome, olive drab, cream plastic - which is a faithful palette and, reported from use, a boring
+// one. These borrow the language the vaporwave, pantone and flame families already speak instead.
+//
+// The constraint that shapes all three: the SPOKES are read against the wound tape pack, not against
+// the flange (see `reel_cream_domestic`). So a bright flange needs `internals` kept near-black or the
+// rotation stops being visible - which is the one failure this family cannot afford, since a reel
+// that does not visibly turn is just a circle.
+
+/// Hot magenta deck, electric cyan flanges - the Miami machine.
+pub fn reel_neon_miami() -> Theme {
+    Theme {
+        id: "reel-neon-miami".into(),
+        name: "Neon Miami".into(),
+        lit: "#ff54d6".into(),
+        hot: "#ffd8f4".into(),
+        panel: "#150a20".into(),
+        panel_alpha: 1.0,
+        edge: "#b03cc8".into(),
+        edge_alpha: 0.28,
+        tube: TubeParams {
+            chassis_top: "#4a1060".into(),
+            chassis_bottom: "#17061f".into(),
+            internals: "#10050f".into(),
+            socket: "#2de0f0".into(),
+            collar: "#7cf3ff".into(),
+            glass: "#ffe9fb".into(),
+            ..TubeParams::default()
+        },
+        ..reel_base()
+    }
+}
+
+/// Acid lime flanges against charcoal, magenta trim.
+pub fn reel_acid_lime() -> Theme {
+    Theme {
+        id: "reel-acid-lime".into(),
+        name: "Acid lime".into(),
+        lit: "#c6ff3d".into(),
+        hot: "#f2ffd0".into(),
+        panel: "#101408".into(),
+        panel_alpha: 1.0,
+        edge: "#7fbf2a".into(),
+        edge_alpha: 0.26,
+        tube: TubeParams {
+            chassis_top: "#29331a".into(),
+            chassis_bottom: "#0c1005".into(),
+            internals: "#070a04".into(),
+            socket: "#b8ff36".into(),
+            collar: "#ff5fa8".into(),
+            glass: "#f4ffe0".into(),
+            ..TubeParams::default()
+        },
+        ..reel_base()
+    }
+}
+
+/// Flat process inks - yellow flanges, warm red trim - the press-room deck.
+///
+/// The one of the three that is not neon: Pantone's brightness comes from FLAT saturated ink on a
+/// near-black plate rather than from a glow, so the chassis stays deliberately neutral and lets the
+/// two inks carry it.
+pub fn reel_pantone_press() -> Theme {
+    Theme {
+        id: "reel-pantone-press".into(),
+        name: "Pantone press".into(),
+        lit: "#ffd400".into(),
+        hot: "#fff8d0".into(),
+        panel: "#0e1013".into(),
+        panel_alpha: 1.0,
+        edge: "#d8b400".into(),
+        edge_alpha: 0.24,
+        tube: TubeParams {
+            chassis_top: "#23262b".into(),
+            chassis_bottom: "#0b0d10".into(),
+            internals: "#08090b".into(),
+            socket: "#ffcf00".into(),
+            collar: "#ff3b5c".into(),
+            glass: "#fffbe8".into(),
             ..TubeParams::default()
         },
         ..reel_base()
