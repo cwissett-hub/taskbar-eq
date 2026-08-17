@@ -648,7 +648,7 @@ impl Default for FluidParams {
             // deliberately NOT the flattest: a dedicated assertion requires the lossless ringing
             // liquid and the dead viscous one to look different, and putting mercury at the bottom
             // of the ladder broke exactly that.
-            surface_gain: 14.4,
+            surface_gain: 17.5,
             cone_travel: 0.16,
             coupling: 0.22,
             // Raised from 5 on the report that "the small splashes are cool" and there should be

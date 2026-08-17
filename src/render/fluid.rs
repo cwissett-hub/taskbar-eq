@@ -298,6 +298,18 @@ const CEILING_SPRAY_VX: f32 = 95.0;
 /// rather than left looking like a considered design decision.
 const TENSION: f32 = 0.04;
 
+/// Liveliness floor every fluid colourway must clear: median and p95 surface relief, in pixels.
+///
+/// These replace the per-pair amplitude ladder, which required each colourway to differ from every other
+/// by 25% of relief. Over six values that spans 3.05x, and with the top end fixed by the tank ceiling it
+/// forced the calm end down to 1.5px - which is what made most of the family barely move. Colour was
+/// ruled more important than differing liquid properties, so the requirement is a floor, not a spread.
+///
+/// 8px of median on a 56px interior is obvious motion at ordinary levels; 18px at p95 is a wave spanning
+/// a third of the tank on the loud moments.
+const LIVELY_MEDIAN_PX: f32 = 8.0;
+const LIVELY_P95_PX: f32 = 18.0;
+
 /// Interior height, in pixels, that every vertical constant here was tuned against (h = 60).
 const REF_INTERIOR_H: f32 = 56.0;
 
@@ -3053,7 +3065,7 @@ mod tests {
         // at a time. Run with --nocapture to read it.
         let mut ladder: Vec<(&String, &f32)> = relief.iter().collect();
         ladder.sort_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal));
-        println!("surface relief ladder, median peak-to-trough px (each must be >1.25x its neighbour):");
+        println!("surface relief, median and p95 peak-to-trough px (every one must clear the lively floor):");
         let mut last = 0.0f32;
         for (id, px) in &ladder {
             let step = if last > 0.0 { **px / last } else { 0.0 };
@@ -3062,24 +3074,32 @@ mod tests {
             last = **px;
         }
 
-        let (merc, ink) = (relief["fluid-mercury"], relief["fluid-ink"]);
-        assert!(
-            merc > ink * 3.0,
-            "mercury (damping 0.9992, ringing) and ink (0.945, viscous) must not produce a similar \
-             surface: {merc:.2}px against {ink:.2}px"
-        );
-        for (a, ra) in &relief {
-            for (b, rb) in &relief {
-                if a >= b {
-                    continue;
-                }
-                let ratio = ra.max(*rb) / rb.min(*ra).max(1e-3);
-                assert!(
-                    ratio > 1.25,
-                    "{a} ({ra:.2}px) and {b} ({rb:.2}px) of surface relief are within 25% of each \
-                     other, so they will read as the same liquid in a different colour"
-                );
-            }
+        // **THE AMPLITUDE LADDER IS GONE, DELIBERATELY, AND THIS IS WHAT REPLACED IT.**
+        //
+        // Every pair used to be required to differ by 25% in surface relief, so six colourways could not
+        // read as one liquid recoloured. Six values needing 1.25x steps span 3.05x, and with the top end
+        // fixed by the tank ceiling that forced the bottom end to be nearly still: ink sat at 1.5px of
+        // median relief and oil at 2.6px against coolant's 19.8px.
+        //
+        // Ruled on directly: "I care more about colour, the idea of the liquids having different
+        // properties was interesting but in practice it made most of them just not move much." The ladder
+        // was spending four colourways' motion to buy a distinction that was not wanted.
+        //
+        // Distinctness is still guarded, by the byte-inequality above (no two render alike) and by the
+        // `elements` tuple below (which whole features each has). `damping` and `wave_speed` still differ
+        // per colourway, so the SHAPE and travel of the waves differ where the size no longer does. What
+        // this asserts instead is the property that was actually complained about: all of them are lively.
+        for (id, r) in &relief {
+            assert!(
+                *r >= LIVELY_MEDIAN_PX,
+                "{id} has only {r:.2}px of median surface relief - under {LIVELY_MEDIAN_PX}px it reads                  as a pond, which is the exact complaint the ladder caused"
+            );
+        }
+        for (id, r) in &loud {
+            assert!(
+                *r >= LIVELY_P95_PX,
+                "{id} reaches only {r:.2}px of relief on its loudest frames - the whole surface is                  meant to have big visible waves when the signal goes high"
+            );
         }
         // Every colourway must also switch a different SET of elements on, so the difference is
         // not only amplitude. (droplets, caustics, emissive, iridescence, sheen)

@@ -2622,7 +2622,7 @@ pub fn fluid_mercury() -> Theme {
         bloom: 4.0,
         glow_strength: 0.60,
         fluid: FluidParams {
-            surface: 0.55,
+            surface: 0.58,
             body_top: "#9aa7b4".into(),
             body_deep: "#2b3138".into(),
             cone: "#3a4048".into(),
@@ -2637,7 +2637,7 @@ pub fn fluid_mercury() -> Theme {
             wave_speed: 0.65,
             // Mercury's surface tension is enormous, so it does not pile up - the amplitude is
             // deliberately lower than water's even though it rings far longer.
-            surface_gain: 5.8,
+            surface_gain: 13.0,
             cone_travel: 0.13,
             coupling: 0.30,
             droplets: 9,
@@ -2675,7 +2675,7 @@ pub fn fluid_oil() -> Theme {
             film: "#5cffd0".into(),
             cone: "#241a38".into(),
             cone_dark: "#0b0714".into(),
-            damping: 0.9955,
+            damping: 0.997,
             // Fast, but NOT fine - that half of the claim was wrong and the measurement caught it.
             // `wave_speed` scales the number of fixed sub-steps taken per frame, so it is a TIME
             // scale: it makes a wave cross the tank sooner, and if anything lengthens the wavelength,
@@ -2690,7 +2690,7 @@ pub fn fluid_oil() -> Theme {
             // the amplitude was starved: the cone barely coupled into the liquid, so the shimmer
             // was there in the field and quantised away on the way to the screen. Raising the two
             // together keeps the short wavelength and gives it enough travel to survive rounding.
-            surface_gain: 5.0,
+            surface_gain: 20.0,
             cone_travel: 0.20,
             coupling: 0.34,
             // Light spray, and lots of it.
@@ -2763,7 +2763,7 @@ pub fn fluid_ink() -> Theme {
         bloom: 2.0,
         glow_strength: 0.30,
         fluid: FluidParams {
-            surface: 0.50,
+            surface: 0.58,
             // Measured: at #232030 over #08070c the body read 1.21:1 against its own panel, i.e.
             // not visible - "so viscous the waves die" had become "so dark there is no liquid".
             // These give 2.08:1, which is enough to see a body of ink without making it a bright
@@ -2775,12 +2775,12 @@ pub fn fluid_ink() -> Theme {
             // 0.945 per sub-step is 0.80 per nominal frame: a wave is down to a fifth within four
             // frames and never reaches the middle at all. That is the whole character - the two
             // mounds heave locally and the tank between them stays glassy.
-            damping: 0.945,
+            damping: 0.9955,
             wave_speed: 0.55,
             // 5.0 left the two mounds a 4px heave over 8 seconds. The waves still die before the
             // middle - that is `damping`, and it is untouched - but the drivers' own liquid has to
             // move enough to read as liquid rather than as a line.
-            surface_gain: 7.0,
+            surface_gain: 23.0,
             // The cone gets the travel the liquid does not: with the surface nearly static, cone
             // POSITION is the only thing left carrying the channel, so it is given the most.
             cone_travel: 0.26,
@@ -2826,7 +2826,7 @@ pub fn fluid_pantone() -> Theme {
         ink_morph: 0.35,
         aberration: 2.0,
         fluid: FluidParams {
-            surface: 0.46,
+            surface: 0.56,
             // Fallbacks only: with `rainbow` on, both ends come from the ink set. They still matter
             // for the TOML case where someone overrides `rainbow` back to 0.
             body_top: "#00c8ff".into(),
@@ -2835,7 +2835,7 @@ pub fn fluid_pantone() -> Theme {
             cone_dark: "#08080c".into(),
             damping: 0.9975,
             wave_speed: 1.15,
-            surface_gain: 4.1,
+            surface_gain: 13.5,
             cone_travel: 0.24,
             coupling: 0.30,
             // Ink spatter, and a fast one - it is the closest thing here to a printing accident.
