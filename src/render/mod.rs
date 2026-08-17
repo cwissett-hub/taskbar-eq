@@ -543,6 +543,7 @@ mod newest_dump {
             ("radar", "radar-p1"),
             ("chroma", "chroma-spectrum"),
             ("fluid", "fluid-deep"),
+            ("reel", "reel-neon-miami"),
         ];
 
         // A waveform, for the families that read one. The phase WALKS between frames, which the scope
@@ -595,7 +596,11 @@ mod newest_dump {
                 // Frames after the hit: the envelope is still high and the band levels have dropped
                 // away. The waveform does NOT drop to silence, because music does not - and a scope
                 // with no signal draws a flat line, which would hide its flourish entirely.
-                for _ in 0..8 {
+                //
+                // 24 frames, not 8. 8 is 134ms, and `probe_flourish_visibility` measures the scope's
+                // peak difference at 183ms and the reel's at 350ms - so the old window closed before
+                // either effect had arrived and these pairs were showing the run-up.
+                for _ in 0..24 {
                     let mut d = FrameData { dt_ms: 16.7, rms_l: 0.02, rms_r: 0.02, ..FrameData::default() };
                     d.waveform = tone(frame, 0.30);
                     f.draw(&mut c, &theme, &d);

@@ -41,6 +41,18 @@ closed; all nine flourishes done, review sheet written, README current.
 
 ## Waiting on you
 
+- [ ] **FOUR CHANGES FROM YOUR REPORT: open `docs/review/changes-2026-08-17.html`.** The fluid barely
+      moving, the tape deck's colours, and the scope and reel flourishes never seeming to happen.
+      **The headline finding: neither flourish was too small.** Measured against families whose
+      flourishes read clearly, the scope's already changed 38.5% of the panel - more than the VU needle
+      slam (14%) or the spectrogram tear (3.5%), neither of which you have missed. They were the wrong
+      KIND of change, so both were reworked for character rather than amplitude.
+      Three specific questions in there: whether 13.8 droplet sheds/s is splashing or drizzle, whether
+      the five neutral reel decks should now go, and whether three overlapping scope traces is too much
+      of a mess. **Reel's tape lurch cannot be judged from a still** - that one needs the running app.
+      Also worth knowing: `fluid-ink` throws no droplets on purpose, so if that was the colourway you
+      were watching, that is why it looked dead.
+
 - [ ] **THE REVIEW SHEET IS WRITTEN: open `docs/review/index.html`.** Ten items now - the nine
       flourishes plus the Patchbay window fix - each with the render, what it is meant to be, and what
       specifically I want judged. One pass rather than thirteen. **Item 7, the Pantone plate slip, is

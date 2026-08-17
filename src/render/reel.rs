@@ -143,7 +143,27 @@ const FLUTTER_DEPTH: f32 = 0.10;
 /// perfectly steady tape span reads as the reels being wrong rather than the transport being wrong.
 /// Well under 1.0 because the sag is also the family's bass cue, and a flourish that swamped it would
 /// be overwriting a reading rather than decorating it.
-const WARBLE_SAG: f32 = 0.35;
+/// How far the wow heaves the tape, in PIXELS at the drawn sag.
+///
+/// This replaces a multiplicative `WARBLE_SAG` that was inert exactly where it mattered. The sag target
+/// is `sag_min + (sag_max - sag_min) * bass`, and a flourish fires on a big hit - so on the frames
+/// straight afterwards `bass` has dropped to near zero, the target collapses to `sag_min` of about 2px,
+/// and a 30% speed error had less than one pixel of tape to move. Measured: raising that factor from
+/// 0.35 to 0.85 changed the rendered panel by 0.01%. It was a knob on a quantity that is not there when
+/// the flourish happens, which is the same class of defect as the inert config fields this project has
+/// already removed twice.
+///
+/// An absolute displacement does not care what the bass is doing. 26px against a wow depth of 0.30
+/// gives +-7.8px of travel on a 60px panel, clamped so the tape can go taut but never above taut.
+///
+/// Applied to the DRAWN sag, bypassing the `SAG_K` follower - which is the same reason the fluid tank's
+/// froth is applied to its drawn surface line and not to its wave field. That follower is a low-pass,
+/// and a 1.1Hz oscillation is precisely what it exists to smooth away.
+///
+/// The note this replaces warned the value must stay well under 1.0 because the sag is also the bass
+/// cue, and a flourish that swamped it would cost the family its position readout. This does swamp it,
+/// for 2200ms, deliberately: the transport is supposed to be failing.
+const WARBLE_LURCH_PX: f32 = 26.0;
 
 /// Deepest sag, as a multiple of the reel radius, and the shallowest.
 ///
@@ -235,6 +255,9 @@ pub struct Reel {
     omega: f32,
     /// Smoothed sag depth of the free tape span, in pixels.
     sag: f32,
+    /// The sag as DRAWN this frame - the follower above plus the flourish's lurch, clamped. See
+    /// `WARBLE_LURCH_PX`.
+    sag_drawn: f32,
     /// Fast-falling peak hold per strip bar. A `Vec` because the bar count follows the panel
     /// width, and `#[derive(Default)]` has no impl for arrays past 32 anyway.
     marker: Vec<f32>,
@@ -402,15 +425,31 @@ impl Family for Reel {
         let yt = cy - shoulder;
         let sag_min = (r as f32 / 8.0).max(2.0);
         let sag_max = ((r as f32 * SAG_SPAN).min((deck_bot - 3 - yt) as f32)).max(sag_min + 1.0);
-        // The wow reaches the tape slack too - see `WARBLE_SAG`. Only the wow: flutter is faster
-        // than a span of tape carrying any tension can follow, so putting it here would be drawing a
-        // vibration the physical object would damp out.
-        let sag_target = (sag_min + (sag_max - sag_min) * bass) * (1.0 - wow * WARBLE_SAG);
+        let sag_target = sag_min + (sag_max - sag_min) * bass;
         self.sag += (sag_target - self.sag) * (SAG_K * dt).min(1.0);
         if !self.sag.is_finite() {
             self.sag = sag_min;
         }
-        let sag = self.sag.clamp(0.0, sag_max);
+        // The wow reaches the tape slack - see `WARBLE_LURCH_PX` - as an absolute displacement added to
+        // the DRAWN sag, after the follower. Only the wow: flutter is faster than a span of tape
+        // carrying any tension can follow, so putting it here would draw a vibration the physical
+        // object would damp out.
+        //
+        // The MAGNITUDE of the speed error, so the lurch is one-sided: any departure from nominal
+        // slackens the tape, and it pulls back taut as the error passes through zero.
+        //
+        // Signed was tried first and wastes half the effect. The follower sits at `sag_min`, about 2px,
+        // on the quiet frames after a hit - so a signed +-7.8px lurch spends the whole fast half of the
+        // cycle clamped flat at 0 and only the slow half moves anything. One-sided uses the entire
+        // travel, and reads as the tape pumping, which is also what a slipping capstan does to it.
+        // A side effect worth naming: |sin| has twice the period of sin, so the tape visibly pumps at
+        // 2.2Hz while the reels still hunt at the true 1.1Hz wow rate.
+        let sag = (self.sag + wow.abs() * WARBLE_LURCH_PX).clamp(0.0, sag_max);
+        // Kept so the flourish test can assert against the sag that is actually DRAWN rather than
+        // against the follower. It read `self.sag` before, and when the wow moved out of the follower
+        // and into the drawn value that assertion went to 0.0000 while the tape on screen was heaving
+        // 7.8px - a test measuring the wrong side of the last arithmetic in the function.
+        self.sag_drawn = sag;
 
         // ---- deck plate ----
 
@@ -820,7 +859,7 @@ mod tests {
         for _ in 0..frames {
             r.draw(&mut c, &t, &d);
             steps.push((r.phase_l - prev).rem_euclid(1.0));
-            sags.push(r.sag);
+            sags.push(r.sag_drawn);
             prev = r.phase_l;
         }
         (steps, sags)

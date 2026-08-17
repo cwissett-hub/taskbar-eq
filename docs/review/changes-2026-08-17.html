@@ -1,0 +1,60 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>taskbar-eq &mdash; changes from your last report</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#101014; color:#e7e7ea; font:15px/1.55 "Segoe UI",system-ui,sans-serif;
+         margin:0 auto; max-width:900px; padding:40px 24px 96px; }
+  h1 { font-size:26px; margin:0 0 6px; letter-spacing:-.2px; }
+  .lede { color:#a2a2ac; margin:0 0 8px; }
+  .lede code, .judge code { color:#d8d8e0; }
+  section { border-top:1px solid #26262e; padding:28px 0 4px; }
+  h2 { font-size:18px; margin:0 0 8px; font-weight:600; }
+  .n { display:inline-block; width:26px; color:#6f6f7d; font-variant-numeric:tabular-nums; }
+  .what { margin:0 0 14px; color:#b8b8c2; }
+  figure { margin:0 0 12px; }
+  img { display:block; max-width:100%; image-rendering:pixelated; border-radius:6px;
+        border:1px solid #2c2c36; background:#16161c; }
+  figcaption { color:#7c7c8a; font-size:12.5px; margin-top:7px; }
+  .judge { background:#171720; border-left:3px solid #4f7fd8; margin:0; padding:10px 14px;
+           border-radius:0 6px 6px 0; }
+  .judge strong { color:#8fb0ea; font-weight:600; }
+  footer { border-top:1px solid #26262e; margin-top:36px; padding-top:20px; color:#7c7c8a;
+           font-size:13.5px; }
+</style>
+<h1>Four changes from what you reported</h1>
+<p class="lede">The fluid barely moving, the tape deck's colours, and the scope and reel flourishes
+never seeming to happen.</p>
+<p class="lede"><strong>The headline finding is that neither flourish was too small.</strong> Measured
+against families whose flourishes read clearly, the scope's already changed more of the panel than the
+VU slam or the spectrogram tear. They were the wrong KIND of change: the scope already looks like a
+wiggly line, the reels already spin. So both were reworked for a change of character, not for
+amplitude.</p>
+<section>
+  <h2><span class="n">1</span>Fluid: break the surface</h2>
+  <p class="what">Droplets used to fly only on a detected transient (~3/s), all from the highest crest in each HALF of the tank - so a whole volley left from within 3px of one column. Now one per segment across the width, plus continuous shedding off the fastest-RISING column so throws follow a travelling wave.</p>
+  <figure><img src="flourish-fluid.png" alt="Fluid: break the surface"><figcaption>top: flourish off &middot; bottom: on</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> Whether 13.8 sheds/s reads as splashing or as drizzle. That is one constant (<code>SHED_INTERVAL_MS</code> = 85ms) and it is a first guess at something I cannot judge from a still. Droplets in flight went 8&rarr;32 on deep water. <strong>fluid-ink still throws none on purpose</strong> - it is the viscous one, so if that is the colourway you were watching, that is why it looked dead.</p>
+</section>
+<section>
+  <h2><span class="n">2</span>Reel: three bright colourways</h2>
+  <p class="what">The five existing decks are all authentic machines - broadcast grey, walnut, black chrome, olive drab, cream plastic. These three borrow the vaporwave/pantone/flame palette instead.</p>
+  <figure><img src="reel-colourways.png" alt="Reel: three bright colourways"><figcaption>new: Neon Miami, Acid lime, Pantone press &middot; then two originals for comparison</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> Whether these are the right three, and whether the five neutrals should now go. They were ADDED, not swapped, so nothing you liked is lost - but the random picker still lands on a neutral five times in eight. Say and I will drop them.</p>
+</section>
+<section>
+  <h2><span class="n">3</span>Scope: overlapping sweeps</h2>
+  <p class="what">The trigger-loss flourish now draws three sweeps at once at different phases, instead of one sweep sliding. That is what a scope with no lock actually shows - the phosphor is written at a different phase every sweep and they are all visible together.</p>
+  <figure><img src="flourish-scope.png" alt="Scope: overlapping sweeps"><figcaption>top: locked &middot; bottom: trigger lost</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> This is the one I am most confident in. The measurement said the old version already changed 38.5% of the panel - MORE than the VU needle slam (14%) or the spectrogram tear (3.5%), neither of which you have missed. So it was never too small; a sliding wiggly line just reads as a wiggly line. Judge whether three traces is too much of a mess.</p>
+</section>
+<section>
+  <h2><span class="n">4</span>Reel: the tape lurches</h2>
+  <p class="what">The wow now displaces the tape by an absolute &plusmn;7.8px instead of scaling the sag. It scaled a term that is near zero exactly when a flourish fires - a flourish follows a big hit, so the bass that sets the sag has just dropped - which left a 30% speed error less than one pixel of tape to move.</p>
+  <figure><img src="flourish-reel.png" alt="Reel: the tape lurches"><figcaption>top: flourish off &middot; bottom: on, at 400ms of a 2200ms warble</figcaption></figure>
+  <p class="judge"><strong>What I want your eyes on:</strong> <strong>This one a still cannot show, and the pair below is close to useless for it</strong> - the tape pumps at 2.2Hz over 2.2s and a single frame catches it wherever it happens to be. Judge it in the running app. What I can report is that it went from 8.2% of the panel to 12.8%, and that the change is now whole-width tape motion rather than two 20px discs at slightly different angles.</p>
+</section>
+<footer>
+Renders come from the renderers themselves. The full thirteen-flourish sheet is
+<a href="index.html" style="color:#8fb0ea">index.html</a>. Progress log: <code>TODO.md</code>.
+</footer>

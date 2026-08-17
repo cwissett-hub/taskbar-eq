@@ -90,6 +90,25 @@ const DRAW_WINDOW: usize = 256 - TRIGGER_SEARCH;
 const UNLOCK_MS: f32 = 1400.0;
 const DRIFT_PER_MS: f32 = 0.18;
 
+/// Extra sweeps drawn at other phases during trigger loss, and how bright each is.
+///
+/// **Added because the flourish was reported as never happening, and the reason was not that it was
+/// too small.** Measured against families whose flourishes read clearly, the sliding trace changes
+/// 38.5% of the panel's pixels - more than the VU needle slam (14%) or the spectrogram tear (3.5%),
+/// neither of which anyone has failed to notice. The problem is that the change is not a change of
+/// KIND: the display already looks like a wiggly line, so a differently-positioned wiggly line reads
+/// as more of the same. Amplitude was never the missing ingredient.
+///
+/// Overlapping sweeps are. A scope with no trigger lock does not show one clean trace sliding, it
+/// shows several at once, because the phosphor is being written at a different phase on every sweep
+/// and they are all visible together. Three traces where there was one is unmistakable at a glance,
+/// and it is what the instrument actually does.
+///
+/// Stroked with `fade = 0.0`, which in `stroke_into` means "decay nothing": the ghosts are additional
+/// writes into the same phosphor buffer, so they must not each apply another frame of decay to it.
+const GHOSTS: usize = 2;
+const GHOST_ALPHA: f32 = 0.45;
+
 /// Half-width of the smoothing kernel applied before stroking.
 ///
 /// 256 samples at 48kHz is ~5ms, so everything above roughly 1kHz completes many cycles
@@ -330,6 +349,20 @@ impl Family for Scope {
             let c = Rgba::from_hex(&t.lit, 1.0);
             let rb = if t.rainbow > 0.0 { Some((t, d.time_s)) } else { None };
             Self::stroke_into(trace, &wave, start, c, t.fade, gain, rb);
+            // The unlocked scope shows several sweeps at once - see `GHOSTS`. Spread evenly across the
+            // sweep window rather than clustered, so they read as separate traces instead of as one
+            // thick one, and faded in with the envelope so the display comes apart and reassembles.
+            if unlock > 0.01 {
+                let a = (GHOST_ALPHA * unlock * 255.0).clamp(0.0, 255.0) as u8;
+                if a > 2 {
+                    let ghost = Rgba::new(c.r, c.g, c.b, a);
+                    for k in 1..=GHOSTS {
+                        let off = (TRIGGER_SEARCH + 1) * k / (GHOSTS + 1);
+                        let gs = (start + off) % (TRIGGER_SEARCH + 1);
+                        Self::stroke_into(trace, &wave, gs, ghost, 0.0, gain, rb);
+                    }
+                }
+            }
         }
 
         // Compose: panel, graticule, trail, trace, bezel.
