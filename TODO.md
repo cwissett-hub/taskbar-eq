@@ -41,6 +41,17 @@ closed; all nine flourishes done, review sheet written, README current.
 
 ## Waiting on you
 
+- [ ] **ALL SIX FLUIDS ARE NOW LIVELY: `docs/review/fluid-loud.png`.** The amplitude LADDER IS GONE, on
+      your ruling that colour matters more than differing liquid properties. It required every pair of
+      colourways to differ by 25% of surface relief, and six values needing 1.25x steps span 3.05x - with
+      the top end fixed by the tank ceiling, that forced the calm end down to 1.5px. It was spending four
+      colourways' motion on a distinction you did not want. Replaced by a liveliness FLOOR every
+      colourway must clear (8px median, 18px p95), so none can regress to a pond.
+      Median / p95 relief now, out of a 56px interior: oil 12.2/23.5, pantone 12.8/22.9, ink 13.2/19.7,
+      deep 13.3/29.4, mercury 15.9/22.5, coolant 19.8/33.1. Before: ink 1.5/3.1, oil 2.6/7.0.
+      They still differ by more than colour - `damping` and `wave_speed` are untouched, so wave SHAPE and
+      travel differ, and the feature sets are still asserted distinct. `fluid-ink` still throws no spray.
+
 - [ ] **FOUR CHANGES FROM YOUR REPORT: open `docs/review/changes-2026-08-17.html`.** The fluid barely
       moving, the tape deck's colours, and the scope and reel flourishes never seeming to happen.
       **The headline finding: neither flourish was too small.** Measured against families whose
