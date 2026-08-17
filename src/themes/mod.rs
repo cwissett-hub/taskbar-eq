@@ -635,19 +635,27 @@ impl Default for FluidParams {
             // every PAIR to differ by 25% and six values on one bounded axis do not spread
             // themselves. Lowering the water line gave every colourway more headroom and so more
             // relief, which collapsed deep and mercury into each other until the ladder was placed
-            // deliberately: ink 2.0, oil 3.0, pantone 4.6, mercury 6.8, deep 10.2, coolant 15.9 - a 1.5x step,
-            // which is what six values inside a 7.8x range allow. Mercury is
+            // deliberately. After the splash rework the measured ladder is ink 2.01, oil 3.66,
+            // pantone 5.24, mercury 7.94, deep 12.46, coolant 16.36px, with steps of 1.82x, 1.43x,
+            // 1.52x, 1.57x and 1.31x - every one clear of the 1.25x the pair assertion requires.
+            //
+            // Every rung is HIGHER than the ladder it replaced (ink 2.0, oil 3.0, pantone 4.6,
+            // mercury 6.8, deep 10.2, coolant 15.9), so the surface moves more everywhere. The rework
+            // first pushed it much further than that - deep reached 13.9 and coolant flat-topped on
+            // 3.2% of column-frames - because each landing droplet punches `SPLASH` into the surface,
+            // so more droplets meant bigger waves meant more droplets. `surface_gain` came down here
+            // and on oil to absorb that feedback rather than to make the tank calmer. Mercury is
             // deliberately NOT the flattest: a dedicated assertion requires the lossless ringing
             // liquid and the dead viscous one to look different, and putting mercury at the bottom
             // of the ladder broke exactly that.
-            surface_gain: 8.9,
+            surface_gain: 7.05,
             cone_travel: 0.16,
             coupling: 0.22,
             // Raised from 5 on the report that "the small splashes are cool" and there should be
             // more of them. The per-frame cost is bounded elsewhere by MAX_DROPS, so this only
             // changes how many a single crest throws.
-            droplets: 9,
-            droplet_v: 120.0,
+            droplets: 18,
+            droplet_v: 155.0,
             caustics: true,
             iridescence: 0.0,
             sheen: 0.0,

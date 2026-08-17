@@ -146,6 +146,11 @@ const FLUX_REFRACTORY_MS: f32 = 200.0;
 /// Upward kick applied to the field at a cone's mouth on a transient, scaled by that cone's own
 /// excursion. The envelope follower alone cannot produce a step this sharp - it is deliberately
 /// rate-limited - so without this a snare displaces no more water than a sustained pad.
+/// Left at 0.35: raising it to 0.46 to make the surface heave harder put coolant's crests into the
+/// renderer's clamp on 4.58% of column-frames against a 1% bound, and a flat-topped surface reads as a
+/// bug rather than as violence. It also collapsed coolant and deep into each other, because two
+/// colourways both saturating against the same ceiling cannot differ. The tank has no headroom left to
+/// spend on amplitude - the extra energy has to go into droplets, which fly in the air above it.
 const TRANSIENT_KICK: f32 = 0.35;
 
 /// How far below the rest surface the cone's base sits, as a fraction of the tank depth.
@@ -172,10 +177,53 @@ const UNDERGLOW_RELEASE_MS: f32 = 850.0;
 const DROP_GRAVITY: f32 = 900.0;
 /// Ceiling on droplets in flight. Bounds the work per frame and stops a dense passage filling the
 /// headroom with sparks.
-const MAX_DROPS: usize = 28;
+///
+/// Raised from 28 on the report that the liquid "doesn't move really at all". 28 was reached by the
+/// louder colourways during a busy passage, at which point every further throw was silently dropped -
+/// so the tank got QUIETER exactly when the music got busier, which is the opposite of the intent.
+const MAX_DROPS: usize = 72;
 /// Dimple a landing droplet punches into the surface. Small, but it couples the ballistics back
 /// into the simulation so a splash is visible as a ripple rather than as a vanishing dot.
-const SPLASH: f32 = 0.10;
+///
+/// Raised with the droplet count: this is the only path by which thrown water disturbs the surface it
+/// falls back into, and it is what makes a volley read as a splash rather than as sparks passing over
+/// a pane of glass.
+const SPLASH: f32 = 0.14;
+
+/// Most droplets one transient may throw. `FluidParams::droplets` is clamped to this.
+///
+/// 12 was the old ceiling and four of the six colourways were at or near it, so the field could not
+/// express "much more violent than that" at all.
+const DROPLETS_MAX_PER_VOLLEY: i32 = 24;
+
+/// Gap between sheds at the default droplet setting, in milliseconds. Scaled per colourway.
+///
+/// The old model threw droplets only on a detected transient, off the single highest crest in each half
+/// of the tank. Between transients the surface could be heaving and throw nothing, and within one it
+/// threw everything from two columns - which is why it read as two narrow fountains rather than as
+/// water breaking.
+///
+/// **The rate is set here rather than emerging from a threshold, because the first attempt did the
+/// latter and it did not work.** Shedding whenever the upward surface speed passed a constant looked
+/// physically right and was untunable in practice: raising the threshold 2.5x moved the measured rate
+/// from 45.5/s to 41.5/s, because the field's velocity scale varies per colourway - the constant meant
+/// something different in every tank. Worse, it was self-exciting. Each landing droplet punches
+/// `SPLASH` into the surface, so more droplets made bigger waves, which sheds more droplets: the median
+/// surface relief of the mercury colourway went from 6.8px to 18.2px on nothing but that loop.
+///
+/// An explicit interval has neither problem. Velocity still chooses WHERE - the fastest-rising crest -
+/// so throws still follow a travelling wave rather than clustering over the cones. It only stops
+/// deciding WHETHER.
+const SHED_INTERVAL_MS: f32 = 85.0;
+
+/// Minimum upward speed at the chosen column for a shed to happen at all, in field units per sub-step.
+///
+/// Not a rate control - the interval above is. This exists so a still tank sheds nothing: without it
+/// the timer would throw droplets out of flat water during silence.
+const SHED_MIN_V: f32 = 0.004;
+
+/// Crest height also required, so droplets leave a rising crest and not the floor of a trough.
+const SHED_H: f32 = 0.10;
 
 /// Interior height, in pixels, that every vertical constant here was tuned against (h = 60).
 const REF_INTERIOR_H: f32 = 56.0;
@@ -282,6 +330,8 @@ pub struct Fluid {
     /// Underglow envelope, 0..1. Set to 1 on a transient, released slowly.
     glow: f32,
     drops: Vec<Drop>,
+    /// Unspent time toward the next shed, in milliseconds. See `SHED_INTERVAL_MS`.
+    shed_due: f32,
 }
 
 impl Default for Fluid {
@@ -301,6 +351,7 @@ impl Default for Fluid {
             cav_frame: 0,
             glow: 0.0,
             drops: Vec::new(),
+            shed_due: 0.0,
         }
     }
 }
@@ -477,17 +528,20 @@ impl Fluid {
         gain: f32,
         hscale: f32,
     ) {
-        let n = params.droplets.clamp(0, 12);
+        let n = params.droplets.clamp(0, DROPLETS_MAX_PER_VOLLEY);
         if n <= 0 || self.cur.is_empty() {
             return;
         }
         let cols = self.cur.len();
-        let half = (cols / 2).max(1);
         let speed = params.droplet_v.max(0.0) * hscale;
         for k in 0..n {
-            // Alternating halves, so a transient throws water on both sides rather than piling
-            // every droplet on whichever cone happened to be louder.
-            let (lo, hi) = if k % 2 == 0 { (0, half) } else { (half, cols) };
+            // One droplet per SEGMENT of the tank, rather than n droplets off the highest crest in
+            // each half. The old version re-searched the same half for every second droplet and so
+            // found the same column every time, which put a whole volley inside 3px of one x - a
+            // narrow fountain, not a surface breaking. Segments spread the same count across the
+            // width while still launching each droplet off a local crest.
+            let lo = (cols * k as usize) / n as usize;
+            let hi = ((cols * (k as usize + 1)) / n as usize).clamp(lo + 1, cols);
             let mut best = lo;
             for i in lo..hi {
                 if self.cur[i] > self.cur[best] {
@@ -513,6 +567,84 @@ impl Fluid {
                 // spark, not as thrown water.
                 vx: (r2 - 0.5) * 26.0 * hscale,
                 vy: -speed * (0.55 + 0.60 * r3) * (0.45 + 0.55 * crest),
+            });
+        }
+    }
+
+    /// Sheds droplets wherever the surface is rising fast enough to break, on EVERY frame.
+    ///
+    /// The transient volley above is punctuation: it fires when the onset detector says so, and never
+    /// otherwise. Between transients a heaving surface threw nothing at all, which is most of why the
+    /// tank read as static - a wave can cross the whole 190px and reflect without a single droplet
+    /// leaving it.
+    ///
+    /// Upward SPEED is the criterion because that is what actually breaks a surface: tension fails
+    /// where the liquid accelerates away from the bulk fastest. It also has the property the crest
+    /// height alone does not - it fires on the leading face of a travelling wave, so throws follow the
+    /// wave across the tank instead of clustering where the water happens to be deepest.
+    ///
+    /// Scaled by the colourway's own `droplets`, so this cannot make the viscous liquid throw any: at
+    /// `droplets = 0` it returns immediately, which is what keeps
+    /// `droplets_fly_on_real_music_and_the_viscous_colourway_throws_none` meaningful.
+    fn shed_drops(
+        &mut self,
+        params: &crate::themes::FluidParams,
+        ix: i32,
+        rest: i32,
+        gain: f32,
+        hscale: f32,
+        dt_ms: f32,
+    ) {
+        let set = params.droplets.clamp(0, DROPLETS_MAX_PER_VOLLEY);
+        if set <= 0 || self.cur.len() < 3 || self.prev.len() != self.cur.len() {
+            // A colourway with droplets off must not accumulate time either, or switching to it and
+            // back would shed a burst of everything it owed.
+            self.shed_due = 0.0;
+            return;
+        }
+        // A colourway that throws more per transient also sheds more often between them, so the one
+        // field still describes how violent this liquid is rather than becoming two unrelated knobs.
+        let interval = (SHED_INTERVAL_MS * 9.0 / set as f32).clamp(24.0, 600.0);
+        let dt = if dt_ms.is_finite() { dt_ms.clamp(0.0, 200.0) } else { NOMINAL_DT_MS };
+        self.shed_due += dt;
+        if !self.shed_due.is_finite() {
+            self.shed_due = 0.0;
+        }
+        // Bounded, so a long stall cannot pay out a whole curtain of droplets on the next frame - the
+        // same failure `MAX_SUBSTEPS` exists to prevent in the simulation.
+        self.shed_due = self.shed_due.min(interval * 3.0);
+        let speed = params.droplet_v.max(0.0) * hscale;
+        let cols = self.cur.len();
+        while self.shed_due >= interval {
+            self.shed_due -= interval;
+            if self.drops.len() >= MAX_DROPS {
+                continue;
+            }
+            // WHERE, not whether: the fastest-RISING column, so throws follow the leading face of a
+            // travelling wave across the tank instead of sitting over the cones where the water is
+            // deepest.
+            let mut best = 1;
+            let mut best_v = f32::MIN;
+            for i in 1..cols - 1 {
+                let v = self.cur[i] - self.prev[i];
+                if v.is_finite() && v > best_v {
+                    best_v = v;
+                    best = i;
+                }
+            }
+            if best_v < SHED_MIN_V || self.cur[best] < SHED_H {
+                continue;
+            }
+            let salt = best as u32 * 5 + self.drops.len() as u32;
+            let r1 = rand01(self.seed, salt);
+            let r2 = rand01(self.seed, salt + 7);
+            // How hard it was rising, so a violent crest throws further than a marginal one.
+            let over = (best_v / SHED_MIN_V - 1.0).clamp(0.0, 3.0);
+            self.drops.push(Drop {
+                x: (ix + best as i32) as f32 + (r1 - 0.5) * 2.0,
+                y: rest as f32 - self.cur[best] * gain - 1.0,
+                vx: (r2 - 0.5) * 22.0 * hscale,
+                vy: -speed * (0.40 + 0.30 * over),
             });
         }
     }
@@ -630,6 +762,10 @@ impl Family for Fluid {
         for _ in 0..steps {
             self.substep(C2, damp, &mouths, coupling);
         }
+        // AFTER the sub-steps, so the velocity read is this frame's rather than last frame's. The
+        // transient volley above deliberately runs before them, because its kick is what the sub-steps
+        // then propagate.
+        self.shed_drops(f, ix, rest, gain, hscale, dt_ms);
 
         // ---- surface line --------------------------------------------------------------------
         let mut surf: Vec<i32> = Vec::with_capacity(cols);
@@ -1739,12 +1875,21 @@ mod tests {
     #[test]
     fn droplets_fly_on_real_music_and_the_viscous_colourway_throws_none() {
         // `droplets` and `droplet_v` are the two fields most likely to end up inert, because
-        // nothing else in the scene depends on them. Measured over the fixture at 190x60: deep
-        // water peaks at 8 droplets in flight, mercury 6, oil 13, coolant 9 - and ink, which is too
-        // viscous to throw any, exactly 0.
+        // nothing else in the scene depends on them. Measured over the fixture at 190x60 after the
+        // splash rework: deep peaks at 32 droplets in flight, oil 28, coolant 23, pantone 23,
+        // mercury 17 - and ink, which is too viscous to throw any, exactly 0. Before it, the same
+        // figures were deep 8, oil 13, coolant 9, mercury 6.
+        //
+        // Ink's 0 is the load-bearing case. It is the only colourway that proves the per-colourway
+        // field still gates BOTH throw paths, and `shed_drops` returns on it before touching its
+        // timer - so the deliberately viscous liquid stayed deliberately viscous.
         let frames = real_music();
         for t in builtin::all().into_iter().filter(|t| t.family == "fluid") {
             let tr = drive(&t, &frames, 190, 60);
+            println!(
+                "  {:16} droplets set {:2} -> peak {:2} in flight, {} volleys",
+                t.id, t.fluid.droplets, tr.drops_peak, tr.drop_volleys
+            );
             if t.fluid.droplets > 0 {
                 assert!(
                     tr.drops_peak >= 3,
@@ -1761,13 +1906,22 @@ mod tests {
     }
 
     #[test]
-    fn the_droplets_fire_at_a_musical_rate_on_real_music_where_a_bass_rise_could_not() {
+    fn the_droplets_shed_continuously_and_the_transients_still_fire_at_a_musical_rate() {
         // Two claims, and the second is why the detector is spectral flux.
         //
-        // First: the rate is musical. Swept on this fixture at a 200ms refractory the flux
-        // detector gives 3.25/s at ratio 2.0, 1.75/s at 2.8 and 1.50/s at 3.2; the shipped 3.0
-        // lands in between. The band asserted is wide on purpose - the point is that it fires like
-        // a listener would expect, not that it hits an exact number.
+        // First: the droplet rate. **This band was 0.7..=3.2/s and was raised deliberately**, on the
+        // report that the tank "doesn't move really at all" and the request that it "break surface
+        // tension and splash around more". Droplets used to fly ONLY on a detected transient, so the
+        // rate was the transient rate by construction and between hits nothing left the water however
+        // hard it was heaving. `shed_drops` now also sheds on a timer - see `SHED_INTERVAL_MS` - which
+        // is a deliberate change of intent, not a regression, and the measured rate went 3.0/s -> 13.8/s.
+        //
+        // The band still has a ceiling because the failure at the other end is real and I hit it: an
+        // earlier threshold-driven version shed on 69% of frames (41.5/s), which is a fog rather than a
+        // splash. Anything above ~22/s means the timer or its bound has come undone.
+        //
+        // The transient rate is asserted SEPARATELY below, so raising this ceiling cannot hide the
+        // musical path breaking.
         //
         // Second: the obvious alternative CANNOT fire. The largest single-frame rise in the bass
         // mean anywhere in these 8 seconds is 0.140, which is below the 0.157 threshold the
@@ -1792,10 +1946,22 @@ mod tests {
             tr.drop_volleys
         );
         assert!(
-            (0.7..=3.2).contains(&per_sec),
-            "droplets fired {} volleys over {seconds:.1}s = {per_sec:.2}/s, outside the rate a \
-             listener would call musical",
+            (6.0..=22.0).contains(&per_sec),
+            "droplets fired {} volleys over {seconds:.1}s = {per_sec:.2}/s - below the band the \
+             water reads as static, above it the spray reads as fog",
             tr.drop_volleys
+        );
+        // The MUSICAL path, on its own axis. `tr.transients` alone would be vacuous - the detector
+        // fires whether or not anything is thrown, and this whole test once passed with `spawn_drops`
+        // stubbed out to an immediate `return` - which is why the droplet-rate assertion above it
+        // exists. Together they pin both: that water leaves the tank, and that the punctuation is
+        // still keyed to the music rather than to the clock.
+        let transients_per_sec = tr.transients as f32 / seconds;
+        assert!(
+            (0.7..=3.2).contains(&transients_per_sec),
+            "the transient detector fired {} times over {seconds:.1}s = {transients_per_sec:.2}/s, \
+             outside the rate a listener would call musical",
+            tr.transients
         );
 
         let bass_mean = |r: &Vec<f32>| r[..BASS_BANDS].iter().sum::<f32>() / BASS_BANDS as f32;
@@ -2603,6 +2769,19 @@ mod tests {
         // coolant ~17px of median peak-to-trough relief. EVERY PAIR must be at least 25% apart,
         // which is the assertion that would have caught the sibling family shipping three
         // near-identical colourways - pixel inequality would not have.
+        // Printed, because the ladder is the thing being tuned and the assertion below only ever
+        // names the FIRST offending pair - which meant re-spacing it was guesswork against one number
+        // at a time. Run with --nocapture to read it.
+        let mut ladder: Vec<(&String, &f32)> = relief.iter().collect();
+        ladder.sort_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal));
+        println!("surface relief ladder, median peak-to-trough px (each must be >1.25x its neighbour):");
+        let mut last = 0.0f32;
+        for (id, px) in &ladder {
+            let step = if last > 0.0 { **px / last } else { 0.0 };
+            println!("  {id:16} {px:6.2}px   step x{step:.2}");
+            last = **px;
+        }
+
         let (merc, ink) = (relief["fluid-mercury"], relief["fluid-ink"]);
         assert!(
             merc > ink * 3.0,

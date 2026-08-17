@@ -2548,12 +2548,12 @@ pub fn fluid_mercury() -> Theme {
             wave_speed: 0.65,
             // Mercury's surface tension is enormous, so it does not pile up - the amplitude is
             // deliberately lower than water's even though it rings far longer.
-            surface_gain: 3.6,
+            surface_gain: 4.25,
             cone_travel: 0.13,
             coupling: 0.30,
-            droplets: 3,
+            droplets: 9,
             // Beads, not spray: fewer, faster, higher.
-            droplet_v: 165.0,
+            droplet_v: 195.0,
             // Opaque metal - nothing focuses below the surface.
             caustics: false,
             underglow: 0.0,
@@ -2601,12 +2601,12 @@ pub fn fluid_oil() -> Theme {
             // the amplitude was starved: the cone barely coupled into the liquid, so the shimmer
             // was there in the field and quantised away on the way to the screen. Raising the two
             // together keeps the short wavelength and gives it enough travel to survive rounding.
-            surface_gain: 4.4,
+            surface_gain: 3.2,
             cone_travel: 0.20,
             coupling: 0.34,
             // Light spray, and lots of it.
-            droplets: 8,
-            droplet_v: 105.0,
+            droplets: 17,
+            droplet_v: 140.0,
             caustics: true,
             underglow: 0.45,
             // The signature: the meniscus is mixed toward `film` by the local slope, so a crest's
@@ -2649,8 +2649,8 @@ pub fn fluid_coolant() -> Theme {
             surface_gain: 13.0,
             cone_travel: 0.20,
             coupling: 0.26,
-            droplets: 6,
-            droplet_v: 145.0,
+            droplets: 15,
+            droplet_v: 180.0,
             caustics: true,
             emissive: 0.75,
             ..FluidParams::default()
@@ -2750,8 +2750,8 @@ pub fn fluid_pantone() -> Theme {
             cone_travel: 0.24,
             coupling: 0.30,
             // Ink spatter, and a fast one - it is the closest thing here to a printing accident.
-            droplets: 7,
-            droplet_v: 120.0,
+            droplets: 16,
+            droplet_v: 155.0,
             // Off: caustics are a light-through-water effect and read as noise once the body is a
             // flat ink. The hard specular horizon replaces them, which is the printed-edge look.
             caustics: false,

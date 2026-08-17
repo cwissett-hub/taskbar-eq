@@ -619,4 +619,131 @@ mod newest_dump {
         println!("wrote {n} flourish dumps (on/off pairs) to {}", dir.display());
     }
 
+    /// How VISIBLE each family's flourish is, as a number rather than an impression.
+    ///
+    /// Run: cargo test --release probe_flourish_visibility -- --ignored --nocapture
+    ///
+    /// Exists because "the scope and tape deck flourishes never seem to happen" was reported from use,
+    /// while the trigger's own fixtures prove they FIRE at the same rate as everyone else's. So the
+    /// question is not whether they fire, it is whether anything reaches the eye when they do - and that
+    /// needs a magnitude, measured against families whose flourishes are agreed to read clearly.
+    ///
+    /// **Measured over 160 frames, not 8.** The pair dump above holds 8 frames after the hit, which is
+    /// 134ms - and the reel's warble runs for 2200ms. That dump was therefore looking at the first 6% of
+    /// the effect and the review sheet undersold it accordingly. Anything keyed to a long envelope has to
+    /// be sampled across the whole envelope, and the peak frame is reported so a slow effect is not
+    /// mistaken for a weak one.
+    #[test]
+    #[ignore]
+    fn probe_flourish_visibility() {
+        let seq = crate::dsp::flourish::firing_sequence(crate::dsp::bands::NUM_BANDS);
+        let tone = |frame: usize, amp: f32| -> [f32; 256] {
+            let mut w = [0.0f32; 256];
+            for (i, v) in w.iter_mut().enumerate() {
+                let t = i as f32 / 256.0 + frame as f32 * 0.031;
+                let mut acc = (t * std::f32::consts::TAU * 2.0).sin();
+                acc += 0.45 * (t * std::f32::consts::TAU * 5.0).sin();
+                acc += 0.22 * (t * std::f32::consts::TAU * 11.0).sin();
+                *v = acc / 1.67 * amp;
+            }
+            w
+        };
+        // The two reported as invisible, and four whose flourishes read clearly, as the yardstick.
+        let picks = [
+            ("scope", "scope-amber", "REPORTED INVISIBLE"),
+            ("reel", "reel-studio-grey", "REPORTED INVISIBLE"),
+            ("segmented", "vfd-ice", "reads clearly"),
+            ("pantone", "pantone-spectrum", "reads clearly"),
+            ("vu", "hifi-white", "reads clearly"),
+            ("waterfall", "waterfall-heat", "reads clearly"),
+        ];
+        // Composite onto the taskbar grey the display actually sits on, so a difference in ALPHA counts
+        // as a difference to the eye. Comparing raw RGB would score a fully transparent change as large.
+        let composite = |c: &Canvas, x: i32, y: i32| -> [f32; 3] {
+            let px = c.get(x, y);
+            let a = px.a as f32 / 255.0;
+            [
+                px.r as f32 * a + 22.0 * (1.0 - a),
+                px.g as f32 * a + 22.0 * (1.0 - a),
+                px.b as f32 * a + 22.0 * (1.0 - a),
+            ]
+        };
+        println!(
+            "{:<11} {:<20} {:>9} {:>9} {:>8} {:>7}",
+            "family", "expectation", "mean d", "peak d", "%px>8", "peak@"
+        );
+        for (family, theme_id, note) in picks {
+            let fetch = |strength: f32| {
+                let mut t = crate::themes::builtin::all()
+                    .into_iter()
+                    .find(|t| t.id == theme_id)
+                    .unwrap_or_else(|| panic!("no colourway {theme_id}"));
+                t.flourish = strength;
+                t
+            };
+            let on_t = fetch(crate::themes::DEFAULT_FLOURISH);
+            let off_t = fetch(0.0);
+            let mut f_on = family_for(family);
+            let mut f_off = family_for(family);
+            let mut c_on = Canvas::new(190, 60);
+            let mut c_off = Canvas::new(190, 60);
+            let mut frame = 0usize;
+            for _ in 0..40 {
+                let mut d =
+                    FrameData { dt_ms: 16.7, rms_l: 0.03, rms_r: 0.03, ..FrameData::default() };
+                d.levels = [0.10; crate::dsp::bands::NUM_BANDS];
+                d.peaks = d.levels;
+                d.waveform = tone(frame, 0.30);
+                f_on.draw(&mut c_on, &on_t, &d);
+                f_off.draw(&mut c_off, &off_t, &d);
+                frame += 1;
+            }
+            for row in &seq {
+                let mut d = FrameData { dt_ms: 16.7, ..FrameData::default() };
+                for (i, v) in d.levels.iter_mut().enumerate() {
+                    *v = row.get(i).copied().unwrap_or(0.0);
+                }
+                d.peaks = d.levels;
+                d.rms_l = 0.06;
+                d.rms_r = 0.05;
+                d.waveform = tone(frame, 0.45);
+                f_on.draw(&mut c_on, &on_t, &d);
+                f_off.draw(&mut c_off, &off_t, &d);
+                frame += 1;
+            }
+            let (mut best_mean, mut best_peak, mut best_frac, mut best_at) = (0.0f32, 0.0f32, 0.0f32, 0);
+            for k in 0..160 {
+                let mut d =
+                    FrameData { dt_ms: 16.7, rms_l: 0.02, rms_r: 0.02, ..FrameData::default() };
+                d.waveform = tone(frame, 0.30);
+                f_on.draw(&mut c_on, &on_t, &d);
+                f_off.draw(&mut c_off, &off_t, &d);
+                frame += 1;
+                let (mut sum, mut peak, mut over) = (0.0f32, 0.0f32, 0u32);
+                for y in 0..60 {
+                    for x in 0..190 {
+                        let a = composite(&c_on, x, y);
+                        let b = composite(&c_off, x, y);
+                        let d3 = (a[0] - b[0]).abs().max((a[1] - b[1]).abs()).max((a[2] - b[2]).abs());
+                        sum += d3;
+                        peak = peak.max(d3);
+                        if d3 > 8.0 {
+                            over += 1;
+                        }
+                    }
+                }
+                let mean = sum / (190.0 * 60.0);
+                if mean > best_mean {
+                    best_mean = mean;
+                    best_peak = peak;
+                    best_frac = over as f32 / (190.0 * 60.0) * 100.0;
+                    best_at = k;
+                }
+            }
+            println!(
+                "{family:<11} {note:<20} {best_mean:>9.2} {best_peak:>9.1} {best_frac:>7.1}% {:>6}ms",
+                (best_at as f32 * 16.7) as i32
+            );
+        }
+    }
 }
