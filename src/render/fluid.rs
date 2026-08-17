@@ -92,8 +92,18 @@ const H_LIMIT: f32 = 3.0;
 ///
 /// The gamma is below 1 for the same reason the vaporwave terrain's is: it expands the lower half
 /// of the distribution, which is where most frames actually live.
+///
+/// **The span was 0.28 and that is why the tank read as calm on loud passages.** Floor + span put full
+/// travel at an RMS of 0.42, and the same 8 seconds run p90 0.399 with a max of 0.576 - so everything
+/// above the 90th percentile produced the SAME amplitude. The display had no way to get bigger when the
+/// music did, which is exactly the report: "needs big visible waves when the signal goes high".
+///
+/// 0.44 puts full travel at 0.58, just past the loudest frame in the fixture. p50 now maps to 0.33 of
+/// travel and p90 to 0.67, against 0.46 and 0.95 before - so ordinary passages sit LOWER and the loud
+/// ones have most of the range left to climb through. The dynamic range is the point; `surface_gain`
+/// goes up to pay for the lower average.
 const RMS_FLOOR: f32 = 0.14;
-const RMS_SPAN: f32 = 0.28;
+const RMS_SPAN: f32 = 0.436;
 const RMS_GAMMA: f32 = 0.75;
 
 /// Bass shaping window, also measured, and the reason it is stated separately.
@@ -106,7 +116,10 @@ const RMS_GAMMA: f32 = 0.75;
 const BASS_BANDS: usize = 6;
 const BASS_MAX_BIAS: f32 = 0.65;
 const BASS_FLOOR: f32 = 0.45;
-const BASS_SPAN: f32 = 0.20;
+/// Widened from 0.20 for the same reason as `RMS_SPAN`: it reached full drive at 0.65 while the
+/// fixture's shaped bass runs p90 0.608, so the biggest kicks in the material were landing on a
+/// saturated response. 0.28 tops out at 0.73, above anything measured here.
+const BASS_SPAN: f32 = 0.28;
 
 /// How much of the cone drive comes from the LOUDER of the two contributions rather than their
 /// weighted mean.
@@ -188,7 +201,7 @@ const MAX_DROPS: usize = 72;
 /// Raised with the droplet count: this is the only path by which thrown water disturbs the surface it
 /// falls back into, and it is what makes a volley read as a splash rather than as sparks passing over
 /// a pane of glass.
-const SPLASH: f32 = 0.14;
+const SPLASH: f32 = 0.10;
 
 /// Most droplets one transient may throw. `FluidParams::droplets` is clamped to this.
 ///
@@ -224,6 +237,66 @@ const SHED_MIN_V: f32 = 0.004;
 
 /// Crest height also required, so droplets leave a rising crest and not the floor of a trough.
 const SHED_H: f32 = 0.10;
+
+/// What the liquid does when it reaches the top of the tank.
+///
+/// **Before this, nothing did.** The drawn surface row was clamped to one row below the ceiling, so a
+/// wave that wanted to go higher rendered with a flat horizontal plateau where its peak should be - a
+/// wave with its top sliced off, which reads as a drawing bug. That is why the tank's amplitude was
+/// bounded by a test: the only defence against the artefact was keeping the water away from the lid.
+///
+/// Asked directly whether clipping might look like fluid bouncing off the ceiling - it did not, but it
+/// should, so now it does. The FIELD is stopped at the ceiling and its velocity reversed, which is an
+/// impact rather than a truncation, and the column sheds spray sideways along the lid the way water
+/// actually breaks against one. The amplitude is then free to be as big as the music asks for, because
+/// reaching the ceiling is an event instead of a defect.
+///
+/// 0.45 of the impact speed comes back. Water is not elastic - most of the energy goes sideways and into
+/// the spray - and a higher value made the whole tank ring against the lid rather than break on it.
+const CEILING_BOUNCE: f32 = 0.45;
+
+/// Sideways speed of the spray thrown along the lid, px/s at the reference height.
+///
+/// Large compared with the droplets' own launch speed, and deliberately: water hitting a ceiling has
+/// nowhere left to go UP, so what you see is it running outward along the surface it hit.
+const CEILING_SPRAY_VX: f32 = 95.0;
+
+/// Surface tension, as a 3-tap smoothing of the field per frame.
+///
+/// **Added because at a loud signal the tank read as fine CHOP rather than as big waves**, which is the
+/// opposite of what was asked for. The chop was self-inflicted: every landing droplet punches `SPLASH`
+/// into a single column, and after the droplet rework there are 32 in flight instead of 8, so the
+/// surface was being peppered with one-column dimples faster than the wave equation could spread them.
+/// A real liquid does not hold a 1px tooth - surface tension pulls it flat, and only the long
+/// wavelengths survive.
+///
+/// This is what makes the difference between "busy" and "big": the broad swell was always there
+/// underneath, but a sawtooth on top of it is what the eye actually read. 0.25 removes the teeth within
+/// a few frames while leaving a wave of any real width untouched, because a 3-tap filter's effect falls
+/// off sharply with wavelength.
+///
+/// **0.25 was tried first and was far too strong.** Applied every frame at 60fps the effect accumulates,
+/// and it took deep water's loud waves from 28.6px down to 16.1px and broke
+/// `the_two_wavetrains_interfere_in_the_middle` outright - the interference pattern IS long-wavelength
+/// structure, so a filter aggressive enough to flatten it is destroying the thing the family is for.
+/// 0.08 removes the teeth over several frames instead of one and leaves the swell and the interference
+/// intact. Halving `SPLASH` at the same time removed half the cause, so less filtering was needed than
+/// the first guess assumed.
+///
+/// Applied to the FIELD, after the sub-steps: it is a physical property of the liquid, not a drawing
+/// tidy-up, and the cavitation froth is deliberately added later so the flourish stays rough.
+///
+/// **HONEST NOTE ON WHY THIS EXISTS.** It was added to kill visible chop at a loud signal, and that chop
+/// turned out to be two things that were not field roughness. First, shed droplets launching at 0.40 of
+/// their speed, which is an apex of two pixels - they never left the waterline and formed a picket of
+/// marks along it. Second, and mostly: the loud-signal dump did not disable the flourish, so over 260
+/// frames one fired and I was looking at cavitation froth - a deliberate per-column roughness - and
+/// calling it the normal surface. With both corrected the surface is smooth and the waves are large.
+///
+/// So this is retained only for the dimples that landing droplets genuinely do punch, at a value low
+/// enough to cost little amplitude. It is a candidate for removal, and it is recorded here as such
+/// rather than left looking like a considered design decision.
+const TENSION: f32 = 0.04;
 
 /// Interior height, in pixels, that every vertical constant here was tuned against (h = 60).
 const REF_INTERIOR_H: f32 = 56.0;
@@ -332,6 +405,8 @@ pub struct Fluid {
     drops: Vec<Drop>,
     /// Unspent time toward the next shed, in milliseconds. See `SHED_INTERVAL_MS`.
     shed_due: f32,
+    /// Columns that hit the lid on the last frame. See `CEILING_BOUNCE`.
+    ceiling_hits: u32,
 }
 
 impl Default for Fluid {
@@ -352,6 +427,7 @@ impl Default for Fluid {
             glow: 0.0,
             drops: Vec::new(),
             shed_due: 0.0,
+            ceiling_hits: 0,
         }
     }
 }
@@ -571,6 +647,79 @@ impl Fluid {
         }
     }
 
+    /// Pulls single-column teeth out of the surface - see `TENSION`.
+    fn smooth_surface(&mut self) {
+        let n = self.cur.len();
+        if n < 3 || TENSION <= 0.0 {
+            return;
+        }
+        // Read from a snapshot so the filter is not chasing its own output along the row, which would
+        // make the smoothing direction-dependent and drag the whole surface sideways.
+        let src: Vec<f32> = self.cur.clone();
+        for i in 1..n - 1 {
+            let avg = (src[i - 1] + src[i] * 2.0 + src[i + 1]) * 0.25;
+            if avg.is_finite() {
+                self.cur[i] += (avg - src[i]) * TENSION;
+            }
+        }
+    }
+
+    /// Stops the liquid at the top of the tank, rebounds it, and throws spray along the lid.
+    ///
+    /// See `CEILING_BOUNCE`. Acts on the FIELD, before the surface line is drawn, which is the whole
+    /// point: the renderer's `.clamp(iy + 1, ..)` still exists as a backstop but no longer has anything
+    /// to do, because the field never arrives above the ceiling any more.
+    ///
+    /// Returns the number of columns that hit, so the fixture harness can report impacts as impacts.
+    fn ceiling_impact(
+        &mut self,
+        params: &crate::themes::FluidParams,
+        ix: i32,
+        rest: i32,
+        gain: f32,
+        hscale: f32,
+        iy: i32,
+    ) -> u32 {
+        if gain <= 0.0 || self.cur.is_empty() || self.prev.len() != self.cur.len() {
+            return 0;
+        }
+        // The field value whose drawn row is exactly one below the ceiling - the same limit the
+        // renderer clamps to, derived from the same numbers so the two cannot disagree.
+        let h_max = (rest - (iy + 1)) as f32 / gain;
+        if !h_max.is_finite() || h_max <= 0.0 {
+            return 0;
+        }
+        let spray_vx = CEILING_SPRAY_VX * hscale;
+        let mut hits = 0;
+        for i in 0..self.cur.len() {
+            if !self.cur[i].is_finite() || self.cur[i] <= h_max {
+                continue;
+            }
+            let v = self.cur[i] - self.prev[i];
+            self.cur[i] = h_max;
+            // Reversed, not zeroed. `prev` is the previous sub-step, so writing `h_max + v * BOUNCE`
+            // makes the next velocity read `cur - prev = -v * BOUNCE`: the same speed, downward, scaled.
+            // Zeroing it instead would leave the crest resting against the lid, which is the flat top
+            // this replaces.
+            self.prev[i] = h_max + v * CEILING_BOUNCE;
+            hits += 1;
+            // Spray, thrown outward along the lid rather than upward - there is no up left.
+            if params.droplets > 0 && v > 0.0 && self.drops.len() < MAX_DROPS {
+                let salt = i as u32 * 11 + self.drops.len() as u32;
+                let r1 = rand01(self.seed, salt);
+                let r2 = rand01(self.seed, salt + 3);
+                let dir = if rand01(self.seed, salt + 5) > 0.5 { 1.0 } else { -1.0 };
+                self.drops.push(Drop {
+                    x: (ix + i as i32) as f32,
+                    y: (iy + 1) as f32,
+                    vx: dir * spray_vx * (0.55 + 0.65 * r1),
+                    vy: -params.droplet_v.max(0.0) * hscale * 0.12 * r2,
+                });
+            }
+        }
+        hits
+    }
+
     /// Sheds droplets wherever the surface is rising fast enough to break, on EVERY frame.
     ///
     /// The transient volley above is punctuation: it fires when the onset detector says so, and never
@@ -644,7 +793,12 @@ impl Fluid {
                 x: (ix + best as i32) as f32 + (r1 - 0.5) * 2.0,
                 y: rest as f32 - self.cur[best] * gain - 1.0,
                 vx: (r2 - 0.5) * 22.0 * hscale,
-                vy: -speed * (0.40 + 0.30 * over),
+                // 0.40 of the launch speed was an apex of about TWO PIXELS at this gravity, so shed
+                // droplets never left the waterline - they formed a dense picket of marks along it, and
+                // that fuzz is what read as "chop" rather than as waves when the signal went high. The
+                // fix is not fewer droplets or a smoother field, it is droplets that actually fly:
+                // 0.95 gives an apex around 12px, which is an arc against the air above the tank.
+                vy: -speed * (0.95 + 0.45 * over),
             });
         }
     }
@@ -765,6 +919,12 @@ impl Family for Fluid {
         // AFTER the sub-steps, so the velocity read is this frame's rather than last frame's. The
         // transient volley above deliberately runs before them, because its kick is what the sub-steps
         // then propagate.
+        // Surface tension first - see `TENSION`. Before the lid check, so a tooth cannot be frozen
+        // against the ceiling by an impact and then survive the smoothing.
+        self.smooth_surface();
+        // Stop the water at the lid and bounce it, BEFORE anything reads the field to draw or to shed.
+        // See `CEILING_BOUNCE`.
+        self.ceiling_hits = self.ceiling_impact(f, ix, rest, gain, hscale, iy);
         self.shed_drops(f, ix, rest, gain, hscale, dt_ms);
 
         // ---- surface line --------------------------------------------------------------------
@@ -1403,11 +1563,26 @@ mod tests {
         // band, so the element barely moves. Measured window: p50 0.240, p90 0.399, max 0.576.
         let lo = Fluid::rms_resp(0.240, 1.0);
         let hi = Fluid::rms_resp(0.399, 1.0);
-        assert!(lo > 0.25 && lo < 0.65, "a median moment must be mid-travel, got {lo:.3}");
-        assert!(hi > 0.85, "the loud tenth must be near full travel, got {hi:.3}");
-        assert!(hi - lo > 0.35, "p50..p90 must cover a large part of the range: {lo:.3} -> {hi:.3}");
+        let top = Fluid::rms_resp(0.576, 1.0);
+        assert!(lo > 0.25 && lo < 0.50, "a median moment must be low-to-mid travel, got {lo:.3}");
+        // **This assertion used to read `hi > 0.85`, and that was the defect.** Putting the loud tenth
+        // at 95% of travel means every frame above p90 renders the same height, so the tank could not
+        // get bigger when the music did - reported from use as the fluid being too calm on loud
+        // passages. The upper bound is now the load-bearing half: the loud tenth must be well up the
+        // range and must NOT be at the top of it.
+        assert!(
+            (0.55..0.82).contains(&hi),
+            "the loud tenth must be well up the range but not pinned at the top, got {hi:.3}"
+        );
+        assert!(hi - lo > 0.25, "p50..p90 must cover a large part of the range: {lo:.3} -> {hi:.3}");
+        // And the range ABOVE p90 has to be real, which is what makes a loud passage look loud. Without
+        // this the bound above could be satisfied by a curve that simply flattens earlier.
+        assert!(
+            top - hi > 0.25,
+            "p90..max has no travel left, so the loudest passages all render alike: {hi:.3} -> {top:.3}"
+        );
         assert_eq!(Fluid::rms_resp(0.0, 1.0), 0.0, "silence must be still, not a pedestal");
-        assert!(Fluid::rms_resp(0.576, 1.0) >= 0.999, "the loudest frame must reach the top");
+        assert!(top >= 0.999, "the loudest frame must still reach the top, got {top:.3}");
         // sensitivity is the user-facing knob and must actually do something here.
         assert!(
             Fluid::rms_resp(0.24, 1.6) > Fluid::rms_resp(0.24, 1.0),
@@ -1854,9 +2029,21 @@ mod tests {
 
     #[test]
     fn the_crests_stay_inside_the_tank_on_real_music() {
-        // The cost of a piston that injects net volume: the whole surface rides UP with loudness
-        // (see the note on the forcing term), so an over-generous `surface_gain` would push the
-        // crests into the renderer's clamp and the surface would go visibly flat-topped. Measured
+        // What this guards CHANGED with `ceiling_impact`, and the bound stayed tight anyway.
+        //
+        // It used to guard a drawing artefact: the drawn surface row was clamped one row below the
+        // ceiling, so a wave that wanted to go higher rendered as a flat horizontal plateau - a wave with
+        // its top sliced off. Keeping the water away from the lid was the only defence, and that is what
+        // capped the family's amplitude.
+        //
+        // Contact is now an impact - the field is stopped at the ceiling and its velocity reversed, so
+        // the column leaves again immediately, with spray. See `CEILING_BOUNCE` and
+        // `hitting_the_top_of_the_tank_rebounds_instead_of_flat_topping`. That is why this bound still
+        // passes at under 1% with coolant's loud waves spanning 37px: nothing RESTS against the lid any
+        // more, so a much bigger tank produces no more contact than the small one did.
+        //
+        // Worth keeping regardless, since a surface pinned against the lid would read as a full tank
+        // however it got there. Measured
         // over the fixture at 190x60 the clamp is reached on 0.00% of column-frames for four
         // colourways and 0.17% for the deliberately violent coolant.
         let frames = real_music();
@@ -1870,6 +2057,93 @@ mod tests {
                 tr.clamped * 100.0
             );
         }
+    }
+
+    /// The tank at a LOUD signal, which is the condition the amplitude rework was asked for.
+    ///
+    /// Run: cargo test --release dump_fluid_loud -- --ignored --nocapture
+    ///
+    /// The general frame dump drives a moderate level, so it shows the calm case and cannot answer
+    /// "are the waves big when the signal goes high" - which is the whole question. This drives the
+    /// fixture's loudest sustained conditions instead.
+    #[test]
+    #[ignore]
+    fn dump_fluid_loud() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
+        std::fs::create_dir_all(&dir).unwrap();
+        for mut t in builtin::all().into_iter().filter(|t| t.family == "fluid") {
+            // FLOURISH OFF. The cavitation froth is a deliberate per-column roughness of up to 3px, and
+            // over 260 frames of loud audio one fires - so leaving it on renders the flourish and calls
+            // it the normal surface. That cost me two rounds of chasing "chop" that was the froth doing
+            // exactly its job.
+            t.flourish = 0.0;
+            let mut fam = Fluid::default();
+            let mut c = Canvas::new(190, 60);
+            // Loud, and MOVING - a steady level would settle into a flat pond however loud it was,
+            // because the cones would stop travelling. The swing is what launches waves.
+            for k in 0..260 {
+                let ph = k as f32 * 0.11;
+                let loud = 0.62 + 0.33 * ph.sin();
+                let mut d = FrameData { dt_ms: 16.7, ..FrameData::default() };
+                for (i, v) in d.levels.iter_mut().enumerate() {
+                    let bass = 1.0 - (i as f32 / crate::dsp::bands::NUM_BANDS as f32) * 0.45;
+                    *v = (loud * bass).clamp(0.0, 1.0);
+                }
+                d.peaks = d.levels;
+                d.rms_l = (0.30 + 0.26 * ph.sin()).clamp(0.0, 1.0);
+                d.rms_r = (0.30 + 0.26 * (ph * 1.13).sin()).clamp(0.0, 1.0);
+                d.time_s = k as f32 * 0.0167;
+                fam.draw(&mut c, &t, &d);
+            }
+            let mut out = Vec::new();
+            for y in 0..60 {
+                for x in 0..190 {
+                    let px = c.get(x, y);
+                    out.extend_from_slice(&[px.r, px.g, px.b, px.a]);
+                }
+            }
+            std::fs::write(dir.join(format!("loud-{}.rgba", t.id)), &out).unwrap();
+            println!("  wrote loud-{}.rgba", t.id);
+        }
+    }
+
+    #[test]
+    fn hitting_the_top_of_the_tank_rebounds_instead_of_flat_topping() {
+        // The difference between an impact and the truncation it replaced, in one assertion: after the
+        // water reaches the lid it must be moving DOWN. A clamp - of the field or of the drawn row -
+        // leaves the velocity still pointing up and the crest resting against the ceiling, which is the
+        // flat top this exists to rule out. Synthetic on purpose: the mechanism is the claim.
+        let mut f = Fluid::default();
+        f.cur = vec![0.0; 8];
+        f.prev = vec![0.0; 8];
+        let (rest, gain, iy) = (40, 4.0, 4);
+        let h_max = (rest - (iy + 1)) as f32 / gain;
+        // One column well above the lid and still rising fast.
+        f.cur[3] = h_max + 3.0;
+        f.prev[3] = h_max + 1.0;
+        let p = crate::themes::FluidParams::default();
+        let hits = f.ceiling_impact(&p, 0, rest, gain, 1.0, iy);
+
+        assert_eq!(hits, 1, "exactly the one column over the lid should have hit");
+        assert!(
+            (f.cur[3] - h_max).abs() < 1e-3,
+            "the surface must stop AT the ceiling, got {} against {h_max}",
+            f.cur[3]
+        );
+        let v = f.cur[3] - f.prev[3];
+        assert!(v < 0.0, "the water must be moving DOWN after the impact, got {v:.3}");
+        assert!(
+            v < -0.5,
+            "it must keep some of its speed rather than stopping dead against the lid, got {v:.3}"
+        );
+        // Per-column, not a global clamp.
+        assert_eq!(f.cur[0], 0.0, "a column nowhere near the lid was modified");
+        // And spray left the impact, since this colourway throws droplets.
+        assert!(!f.drops.is_empty(), "an impact threw no spray along the lid");
+        assert!(
+            f.drops.iter().any(|d| d.vx.abs() > d.vy.abs()),
+            "the spray must run SIDEWAYS along the lid - there is no up left at the ceiling"
+        );
     }
 
     #[test]
@@ -2704,6 +2978,7 @@ mod tests {
         let frames = real_music();
         let mut seen: Vec<Vec<u32>> = Vec::new();
         let mut relief = std::collections::BTreeMap::new();
+        let mut loud: std::collections::HashMap<String, f32> = Default::default();
         let mut elements = std::collections::BTreeMap::new();
         for mut t in builtin::all().into_iter().filter(|t| t.family == "fluid") {
             // THE FLOURISH OFF, and this is the SECOND exemption cavitation has needed in this family, so
@@ -2742,6 +3017,10 @@ mod tests {
             // 12.3px against 7.3px - a short run would have reported them as the same liquid.
             let tr = drive(&t, &frames, 190, 60);
             relief.insert(t.id.clone(), pct(&mut tr.range.clone(), 0.5));
+            // p95 as well as the median, because "big waves when the signal goes high" is a claim about
+            // the LOUD frames and a median cannot see them. The two together also show whether a change
+            // bought dynamic range or just a uniformly busier tank.
+            loud.insert(t.id.clone(), pct(&mut tr.range.clone(), 0.95));
             // ...and which whole ELEMENTS each one has, which is the other axis of the split.
             let f = &t.fluid;
             elements.insert(
@@ -2778,7 +3057,8 @@ mod tests {
         let mut last = 0.0f32;
         for (id, px) in &ladder {
             let step = if last > 0.0 { **px / last } else { 0.0 };
-            println!("  {id:16} {px:6.2}px   step x{step:.2}");
+            let hi = loud.get(*id).copied().unwrap_or(0.0);
+            println!("  {id:16} median {px:6.2}px   p95 {hi:6.2}px   step x{step:.2}");
             last = **px;
         }
 

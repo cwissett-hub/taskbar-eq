@@ -617,7 +617,7 @@ impl Default for FluidParams {
             // surface, and left the crests crowded against the top. 0.50 splits the panel evenly -
             // still enough body to read as a volume, and now enough air that an 8px crest plus a
             // droplet arc has somewhere to go.
-            surface: 0.50,
+            surface: 0.58,
             body_top: "#1d6fa8".into(),
             body_deep: "#04121f".into(),
             film: "#7f5bd6".into(),
@@ -648,7 +648,7 @@ impl Default for FluidParams {
             // deliberately NOT the flattest: a dedicated assertion requires the lossless ringing
             // liquid and the dead viscous one to look different, and putting mercury at the bottom
             // of the ladder broke exactly that.
-            surface_gain: 7.05,
+            surface_gain: 14.4,
             cone_travel: 0.16,
             coupling: 0.22,
             // Raised from 5 on the report that "the small splashes are cool" and there should be

@@ -2622,7 +2622,7 @@ pub fn fluid_mercury() -> Theme {
         bloom: 4.0,
         glow_strength: 0.60,
         fluid: FluidParams {
-            surface: 0.50,
+            surface: 0.55,
             body_top: "#9aa7b4".into(),
             body_deep: "#2b3138".into(),
             cone: "#3a4048".into(),
@@ -2637,7 +2637,7 @@ pub fn fluid_mercury() -> Theme {
             wave_speed: 0.65,
             // Mercury's surface tension is enormous, so it does not pile up - the amplitude is
             // deliberately lower than water's even though it rings far longer.
-            surface_gain: 4.25,
+            surface_gain: 5.8,
             cone_travel: 0.13,
             coupling: 0.30,
             droplets: 9,
@@ -2690,7 +2690,7 @@ pub fn fluid_oil() -> Theme {
             // the amplitude was starved: the cone barely coupled into the liquid, so the shimmer
             // was there in the field and quantised away on the way to the screen. Raising the two
             // together keeps the short wavelength and gives it enough travel to survive rounding.
-            surface_gain: 3.2,
+            surface_gain: 5.0,
             cone_travel: 0.20,
             coupling: 0.34,
             // Light spray, and lots of it.
@@ -2724,7 +2724,7 @@ pub fn fluid_coolant() -> Theme {
         bloom: 6.0,
         glow_strength: 0.70,
         fluid: FluidParams {
-            surface: 0.45,
+            surface: 0.64,
             body_top: "#1fbf7a".into(),
             body_deep: "#03170f".into(),
             cone: "#183028".into(),
@@ -2735,7 +2735,7 @@ pub fn fluid_coolant() -> Theme {
             // higher than water does: measured at 190x60 over the fixture it runs 15.9px of median
             // peak-to-trough relief against water's 7.3px, which is what stops it reading as the
             // reference colourway in green. (`fluid`'s own colourway test asserts that gap.)
-            surface_gain: 13.0,
+            surface_gain: 22.0,
             cone_travel: 0.20,
             coupling: 0.26,
             droplets: 15,
@@ -2763,7 +2763,7 @@ pub fn fluid_ink() -> Theme {
         bloom: 2.0,
         glow_strength: 0.30,
         fluid: FluidParams {
-            surface: 0.46,
+            surface: 0.50,
             // Measured: at #232030 over #08070c the body read 1.21:1 against its own panel, i.e.
             // not visible - "so viscous the waves die" had become "so dark there is no liquid".
             // These give 2.08:1, which is enough to see a body of ink without making it a bright
@@ -2826,7 +2826,7 @@ pub fn fluid_pantone() -> Theme {
         ink_morph: 0.35,
         aberration: 2.0,
         fluid: FluidParams {
-            surface: 0.34,
+            surface: 0.46,
             // Fallbacks only: with `rainbow` on, both ends come from the ink set. They still matter
             // for the TOML case where someone overrides `rainbow` back to 0.
             body_top: "#00c8ff".into(),
@@ -2835,7 +2835,7 @@ pub fn fluid_pantone() -> Theme {
             cone_dark: "#08080c".into(),
             damping: 0.9975,
             wave_speed: 1.15,
-            surface_gain: 3.5,
+            surface_gain: 4.1,
             cone_travel: 0.24,
             coupling: 0.30,
             // Ink spatter, and a fast one - it is the closest thing here to a printing accident.
