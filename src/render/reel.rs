@@ -400,7 +400,15 @@ impl Family for Reel {
 
         // ---- geometry ----
 
-        let strip_h = (h / 8).clamp(3, 8);
+        // The record-level strip, and it was TOO SHORT: `h / 8` gave 7px at the reference 60px panel
+        // and `bar_max` is `strip_h - 2`, so the bars could never exceed 5px of a 60px display. Reported
+        // as the strip lacking amplitude, and it was geometry rather than response - the level mapping
+        // reaches full travel at 0.62 against music that peaks around 0.65, which is well matched.
+        //
+        // `h / 6` gives 10px here, so the bars get 8px: a 60% increase that costs NOTHING elsewhere,
+        // because the reel radius is already at its `.min(20)` cap. Checked: the reels only start losing
+        // radius once the strip passes 10px at this panel height, so this is exactly the free amount.
+        let strip_h = (h / 6).clamp(3, 12);
         let deck_top = 3;
         let deck_bot = h - 4 - strip_h - 1; // last deck row, above the strip
         // Height caps the reel, never width - the same lesson the VU family learned when a
@@ -1169,9 +1177,21 @@ mod tests {
             d.rms_l = rms;
             d.rms_r = rms;
             let (_, c) = settled(&t, &d, 190, 60, 10);
+            // DERIVED from the same expressions the renderer uses, not a fixed window. The window was
+            // `y in 49..54`, which silently encoded a 7px strip: raising the strip to 10px moved the
+            // lamp up 3px, so the probe sampled the recess beside it and failed a test about a lamp
+            // that was working perfectly.
+            //
+            // Widening it to the whole corner was WORSE and is worth recording - it caught a
+            // permanently bright edge and returned 242.67 for both the quiet and hot cases, so the
+            // test passed on the wrong pixel and asserted nothing. Hence the guard below.
+            let strip_h = (60i32 / 6).clamp(3, 12);
+            let bar_top = 60 - 4 - strip_h + 1;
+            let lamp_h = (strip_h - 2).min(2).max(1);
+            let lamp_x = (190 - 3) - 3 - 1;
             let mut best = 0.0f32;
-            for y in 49..54 {
-                for x in 182..187 {
+            for y in bar_top..(bar_top + lamp_h) {
+                for x in lamp_x..(lamp_x + 3) {
                     best = best.max(lum(c.get(x, y)));
                 }
             }
@@ -1179,6 +1199,13 @@ mod tests {
         };
         let normal = lamp(0.06);
         let hot = lamp(0.95);
+        // The probe must not be sitting on something permanently bright. Without this, a window that
+        // drifts off the lamp onto the bezel reads saturated in BOTH cases and the ratio assertion
+        // below is satisfied by nothing at all - which is exactly what happened once.
+        assert!(
+            normal < 200.0,
+            "the quiet reading is {normal}, which is too bright to be an unlit lamp - the probe is              sampling the wrong pixels"
+        );
         assert!(hot > normal * 1.8, "the lamp must clearly light when hot: {normal} -> {hot}");
     }
 
