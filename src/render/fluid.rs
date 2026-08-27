@@ -307,7 +307,12 @@ const TENSION: f32 = 0.04;
 ///
 /// 8px of median on a 56px interior is obvious motion at ordinary levels; 18px at p95 is a wave spanning
 /// a third of the tank on the loud moments.
+/// Test-only: nothing in the render path reads these, they are the assertion's thresholds. Kept here
+/// beside the other tuning constants rather than inside the test module, because the reasoning above is
+/// about the family's design and belongs with the design.
+#[cfg(test)]
 const LIVELY_MEDIAN_PX: f32 = 8.0;
+#[cfg(test)]
 const LIVELY_P95_PX: f32 = 18.0;
 
 /// Interior height, in pixels, that every vertical constant here was tuned against (h = 60).
