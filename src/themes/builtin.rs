@@ -52,6 +52,11 @@ pub fn all() -> Vec<Theme> {
         mesh_amber_stack(),
         mesh_magenta_deck(),
         mesh_white_stack(),
+        pipes_win95_teal(),
+        pipes_brass(),
+        pipes_neon_magenta(),
+        pipes_copper(),
+        pipes_chrome(),
         nixie_orange(),
         nixie_ice(),
         nixie_neon_green(),
@@ -3277,6 +3282,101 @@ pub fn mesh_white_stack() -> Theme {
         edge_alpha: 0.14,
         ghost: 0.10,
         ..mesh_base()
+    }
+}
+
+// ===================== 3D Pipes =====================
+//
+// The screensaver, driven. Brightness carries which AXIS a segment runs along - the three-tone shading
+// that makes an isometric solid read as solid - so these colourways need a `lit` with enough range
+// beneath it that a 62% and a 34% mix toward the panel are still clearly different from each other and
+// from the panel. A very dark `lit` collapses all three tones together and the pipe reads flat.
+fn pipes_base() -> Theme {
+    Theme {
+        family: "pipes".into(),
+        texture: Texture::None_,
+        panel_alpha: 1.0,
+        // Tight: a wide bloom fills the gaps between pipe runs and the lattice stops reading as depth.
+        bloom: 2.0,
+        glow_strength: 0.24,
+        edge_glow: 1.0,
+        ballistics: Ballistics { attack: 0.55, decay: 0.14, peak_fall: 0.006 },
+        ..Theme::default()
+    }
+}
+
+/// The 1995 default: chrome-teal pipes on near-black, the OpenGL screensaver look.
+pub fn pipes_win95_teal() -> Theme {
+    Theme {
+        id: "pipes-win95-teal".into(),
+        name: "Win95 teal".into(),
+        lit: "#5fe0d8".into(),
+        hot: "#e0fffb".into(),
+        panel: "#040b0c".into(),
+        edge: "#5fe0d8".into(),
+        edge_alpha: 0.15,
+        ghost: 0.10,
+        ..pipes_base()
+    }
+}
+
+/// Brass plumbing, the warm end.
+pub fn pipes_brass() -> Theme {
+    Theme {
+        id: "pipes-brass".into(),
+        name: "Brass".into(),
+        lit: "#ffbe4d".into(),
+        hot: "#fff0cf".into(),
+        panel: "#0d0803".into(),
+        edge: "#ffbe4d".into(),
+        edge_alpha: 0.15,
+        ghost: 0.10,
+        ..pipes_base()
+    }
+}
+
+/// Hot magenta, for the vaporwave end of the same lineage.
+pub fn pipes_neon_magenta() -> Theme {
+    Theme {
+        id: "pipes-neon-magenta".into(),
+        name: "Neon magenta".into(),
+        lit: "#ff6ad5".into(),
+        hot: "#ffdaf4".into(),
+        panel: "#0c0410".into(),
+        edge: "#ff6ad5".into(),
+        edge_alpha: 0.16,
+        ghost: 0.10,
+        ..pipes_base()
+    }
+}
+
+/// Copper, and the darkest panel of the five - the tone separation has the most room here.
+pub fn pipes_copper() -> Theme {
+    Theme {
+        id: "pipes-copper".into(),
+        name: "Copper".into(),
+        lit: "#ff9a6b".into(),
+        hot: "#ffe0d0".into(),
+        panel: "#0a0503".into(),
+        edge: "#ff9a6b".into(),
+        edge_alpha: 0.15,
+        ghost: 0.10,
+        ..pipes_base()
+    }
+}
+
+/// Chrome: no hue at all, so the shape does the work.
+pub fn pipes_chrome() -> Theme {
+    Theme {
+        id: "pipes-chrome".into(),
+        name: "Chrome".into(),
+        lit: "#dfe7f0".into(),
+        hot: "#ffffff".into(),
+        panel: "#070809".into(),
+        edge: "#dfe7f0".into(),
+        edge_alpha: 0.14,
+        ghost: 0.10,
+        ..pipes_base()
     }
 }
 

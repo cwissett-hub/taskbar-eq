@@ -179,6 +179,7 @@ families** have one, and each is that instrument's characteristic fault or ritua
 | Flame organ | A flashback: every burner guts to its pilot, then an ignition front relights them |
 | Dolphin LCD | The dolphin leaps clear of the display and lands, throwing a splash along the waterline |
 | 3D spectrum | The whole stack surges one depth step forward and settles back |
+| 3D Pipes | Every run is abandoned at once and fresh pipes start, the way the screensaver resets |
 | Fluid | Cavitation — the surface breaks into a patchy froth and the tank runs slack |
 
 **Every family has one.** The fluid tank was the last and the hardest, because it has the tightest
@@ -286,7 +287,7 @@ colourway files, which hot-reload on save and can replace a built-in by reusing 
 **Last updated: 2026-08-10.** Full test suite green (520 at the time of writing), release build
 warning-free. The colourway and family counts below are asserted by a test; the test count itself is
 a snapshot and can drift.
-**113 colourways across 16 families.**
+**118 colourways across 17 families.**
 
 | | Feature | State |
 |---|---|---|
@@ -404,6 +405,23 @@ collapsed onto two pixel rows, which also silently disabled its occlusion. An ea
 refused too, for a subtler reason — extruding a *curve* by a constant offset gives a visible depth
 face of `dy` minus the curve's own rise over the run, which collapses to zero wherever the slope matches
 the offset. Discrete boxes have no such term.
+
+**3D Pipes** — the Windows screensaver, driven. Pipes grow segment by segment through a lattice,
+turning at right angles on the beat, in a **real perspective projection**: a camera, a divide and a near
+plane, not an oblique fake.
+
+That choice was made twice. An isometric version was built first and rejected — *"if we cant do true
+3d then I think it's not really worth it"* — and it deserved to be: in isometric the x axis feeds both
+width and height, so a 56-row panel runs out of height after about 64px of width, and one lattice
+occupied 48px of a 380px panel. The workaround, several small lattices side by side, is fakery.
+
+Perspective brings two hazards this project has already measured, and both are handled explicitly rather
+than hoped about. Depth planes must land on **distinct integer pixel rows** — at the vaporwave grid's
+tuned perspective, seven of sixteen collapsed onto two rows, which also silently disabled its occlusion,
+because lines sharing a row cannot occlude each other. And a vertex near the eye projects to infinity,
+saturates `as i32` to 2147483647, and sends one Bresenham edge on ~2.1 billion iterations — measured
+at 294.6ms, eighteen dropped frames. A near-plane clip in front of the divide is what makes that
+impossible.
 
 | Colourway | Character |
 |---|---|
@@ -570,7 +588,7 @@ The app also writes that log on every normal launch, so a failure can be reporte
 
 ## Themes
 
-**113 colourways across 16 families.** A *family* is a renderer with fixed geometry — code. A
+**118 colourways across 17 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
 **Segmented VFD** — a smoked-glass panel with discrete stacked segments, a faint dormant grid,
