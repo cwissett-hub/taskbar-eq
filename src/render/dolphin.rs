@@ -85,37 +85,54 @@ const LEVEL_GAMMA: f32 = 0.6;
 const LOOP_SLOW_S: f32 = 5.6;
 const LOOP_FAST_S: f32 = 2.2;
 
-/// The sprite, mid-leap, travelling right. `#` is a lit dot; a dot lets the well lattice show through.
-const SPRITE_W: i32 = 9;
+/// The sprite: body F, chosen from four rendered at true dot scale, with THREE TAIL PHASES.
+///
+/// The history matters, because two earlier attempts were rejected for the same reason and a third
+/// would have been. A solid 9x5 lump read as "a lump with something sticking out". Replacing it with a
+/// thin arcing back read as "a worm" - correctly: it was a one-to-two cell diagonal. What was missing
+/// both times was a BODY: a thick middle, a distinct head, a fin above and a fluke separated from the
+/// body by a narrower peduncle. Eleven cells wide instead of nine buys exactly that.
+///
+/// The three phases are the FLUKE moving up and down. Cycled on a timer, that is the movement asked
+/// for - a dolphin that flicks its tail rather than a rigid decal sliding across the display.
+///
+/// The attitude stays LEVEL through the arc rather than tilting nose-up and nose-down. Two reasons: a
+/// vertical flip puts the dorsal fin on the belly, which reads instantly as an upside-down fish, and at
+/// eleven cells there is no room for a convincing tilted variant that keeps the fin, the melon and the
+/// fluke all legible. The arc carries the leap; the tail carries the life.
+const SPRITE_W: i32 = 11;
 const SPRITE_H: i32 = 5;
-/// ASCEND: the arcing back breaking the water, nose up-right, tail dropping away left.
-///
-/// Chosen by the owner from four candidates rendered at true dot scale
-/// (`docs/review/dolphin-sprite-candidates.png`). The three rejected ones all failed the same way and
-/// it is worth recording: a SOLID body in 45 cells reads as a lump, not an animal. This one works
-/// because most of its cells are empty - the negative space is doing the drawing.
-///
-/// It is also the more faithful reading of the object. A real head unit at this resolution shows the
-/// arcing back and fin breaking the surface, not a full side-on dolphin.
-const ASCEND: [&str; SPRITE_H as usize] = [
-    ".....###.",
-    "...###..#",
-    ".###.....",
-    "##.......",
-    "#........",
+const PHASES: usize = 3;
+const BODY: [[&str; SPRITE_H as usize]; PHASES] = [
+    [
+        "....##.....",
+        "##..######.",
+        ".#.########",
+        "##..######.",
+        "......##...",
+    ],
+    [
+        "##..##.....",
+        ".#..######.",
+        "##.########",
+        "....######.",
+        "......##...",
+    ],
+    [
+        "....##.....",
+        "....######.",
+        "##.########",
+        ".#..######.",
+        "##....##...",
+    ],
 ];
-/// DESCEND: the same arc inverted for the dive, still travelling right.
+
+/// How long one tail phase is held, in milliseconds.
 ///
-/// This IS the vertical flip of `ASCEND`, and unlike a side-on body that is legitimate here: an arc has
-/// no belly to put a fin on. Written out anyway rather than computed, because a flip in code invites a
-/// later "just patch the fin cell" fix, and a belly-fin dolphin is invisible to any pixel-count test.
-const DESCEND: [&str; SPRITE_H as usize] = [
-    "#........",
-    "##.......",
-    ".###.....",
-    "...###..#",
-    ".....###.",
-];
+/// 130ms is about 7.7 phases a second, so the fluke beats a little under 3Hz through the 3-phase cycle
+/// - a real dolphin's tail beat. Also comfortably above the aliasing floor: the sprite moves less than
+/// half a dot cell per frame at every loop speed, so nothing appears to run backwards.
+const PHASE_MS: f32 = 130.0;
 
 /// How long splash dots linger after the dolphin breaks the waterline, in milliseconds.
 const SPLASH_MS: f32 = 620.0;
@@ -137,6 +154,9 @@ pub struct Dolphin {
     splash: Vec<f32>,
     /// Loop phase, 0..1. One loop is one traverse of the display.
     phase: f32,
+    /// Which tail phase is showing, and the unspent time toward the next.
+    tail: usize,
+    tail_due: f32,
     /// The flourish: the dolphin leaps clear of the display.
     flourish: crate::dsp::flourish::Trigger,
     leap: crate::dsp::flourish::Envelope,
@@ -269,7 +289,18 @@ impl Family for Dolphin {
         let base_top = water_row;
         let apex_top = (water_row - (SPRITE_H - 1) - (leap * LEAP_LIFT as f32).round() as i32).max(0);
         let sy = base_top - ((base_top - apex_top) as f32 * arc).round() as i32;
-        let mask: &[&str; SPRITE_H as usize] = if self.phase < 0.5 { &ASCEND } else { &DESCEND };
+        // The tail flicks on its own clock, independent of how fast the dolphin is crossing - a real
+        // tail beat does not slow down just because the animal is moving gently.
+        self.tail_due += dt;
+        if !self.tail_due.is_finite() {
+            self.tail_due = 0.0;
+        }
+        self.tail_due = self.tail_due.min(PHASE_MS * PHASES as f32);
+        while self.tail_due >= PHASE_MS {
+            self.tail_due -= PHASE_MS;
+            self.tail = (self.tail + 1) % PHASES;
+        }
+        let mask: &[&str; SPRITE_H as usize] = &BODY[self.tail.min(PHASES - 1)];
         let body = if leap > 0.01 { hot } else { lit };
         let on = |rx: i32, ry: i32| -> bool {
             ry >= 0

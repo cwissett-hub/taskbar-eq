@@ -95,7 +95,15 @@ const SURGE_MS: f32 = 900.0;
 
 #[derive(Default)]
 pub struct Mesh {
-    /// The history ring, `DEPTH` snapshots of `bars` levels. Index 0 is the NEAREST row.
+    /// The NEAREST row, updated every frame with the current spectrum.
+    ///
+    /// Separate from the history ring, and that separation is the whole reason this family animates.
+    /// The first version put the live spectrum INTO the ring and drew `rows[0]` as the near row - so the
+    /// front row, the one the eye actually reads a level from, only changed when the ring rotated. At a
+    /// 130ms interval that is 7.7 updates a second for the entire display, and it was reported
+    /// immediately as "very low fps". Nothing was slow: the render was fine and the DATA was stale.
+    live: Vec<f32>,
+    /// The history, `DEPTH - 1` snapshots of `bars` levels. Index 0 is the row just BEHIND the live one.
     rows: Vec<Vec<f32>>,
     /// Peak-hold accumulator since the last rotation. See the module docs, property 2.
     acc: Vec<f32>,
@@ -122,38 +130,50 @@ fn recede(c: Rgba, panel: Rgba, amount: f32) -> Rgba {
 
 impl Mesh {
     fn fit(&mut self, bars: usize) {
-        if self.acc.len() != bars {
+        if self.acc.len() != bars || self.live.len() != bars {
             self.acc = vec![0.0; bars];
-            self.rows = vec![vec![0.0; bars]; DEPTH];
+            self.live = vec![0.0; bars];
+            self.rows = vec![vec![0.0; bars]; DEPTH - 1];
         }
-        if self.rows.len() != DEPTH {
-            self.rows = vec![vec![0.0; bars]; DEPTH];
+        if self.rows.len() != DEPTH - 1 {
+            self.rows = vec![vec![0.0; bars]; DEPTH - 1];
         }
     }
 
-    /// Peak-holds this frame into the accumulator, and rotates the ring when its interval elapses.
-    fn advance(&mut self, d: &FrameData, sensitivity: f32, dt: f32, bars: usize) {
+    /// Advances the LIVE row every frame, peak-holds into the accumulator, and rotates the history
+    /// when its interval elapses.
+    ///
+    /// The live row is what makes this animate at the frame rate. The history behind it deliberately
+    /// does not - it is a record, and a record that changed continuously would not read as depth.
+    fn advance(&mut self, d: &FrameData, t: &Theme, dt: f32, bars: usize) {
+        let b = &t.ballistics;
         for i in 0..bars {
             let lo = (i * NUM_BANDS) / bars;
             let hi = (((i + 1) * NUM_BANDS) / bars).clamp(lo + 1, NUM_BANDS);
             let band = d.levels[lo..hi].iter().copied().fold(0.0f32, f32::max);
-            let v = resp(band, sensitivity);
-            if v > self.acc[i] {
-                self.acc[i] = v;
+            let target = resp(band, t.sensitivity);
+
+            // Live, with the colourway's own ballistics - fast up, slower down, per frame.
+            let cur = self.live[i];
+            let k = if target > cur { b.attack } else { b.decay };
+            let next = cur + (target - cur) * k.clamp(0.0, 1.0);
+            self.live[i] = if next.is_finite() { next.clamp(0.0, 1.0) } else { 0.0 };
+
+            // And the peak since the last rotation, which is what the history will keep.
+            if target > self.acc[i] {
+                self.acc[i] = target;
             }
         }
         self.due += dt;
         if !self.due.is_finite() {
             self.due = 0.0;
         }
-        // Bounded, so a long stall cannot rotate the whole ring in one frame and flush the history.
+        // Bounded, so a long stall cannot rotate the whole history in one frame and flush it.
         self.due = self.due.min(ROTATE_MS * DEPTH as f32);
         while self.due >= ROTATE_MS {
             self.due -= ROTATE_MS;
             self.rows.rotate_right(1);
             self.rows[0] = self.acc.clone();
-            // Reset to the CURRENT frame rather than to zero, so the new nearest row starts from where
-            // the music actually is instead of from silence.
             for i in 0..bars {
                 self.acc[i] = 0.0;
             }
@@ -190,7 +210,7 @@ impl Family for Mesh {
             return; // shed rather than smudge
         }
         self.fit(bars);
-        self.advance(d, t.sensitivity, dt, bars);
+        self.advance(d, t, dt, bars);
 
         let lit = Rgba::from_hex(&t.lit, 1.0);
         let hot = Rgba::from_hex(&t.hot, 1.0);
@@ -209,7 +229,8 @@ impl Family for Mesh {
             let face = recede(body, key, 0.42);
 
             for i in 0..bars {
-                let level = self.rows[depth][i];
+                // Depth 0 is the LIVE row; everything behind it is history.
+                let level = if depth == 0 { self.live[i] } else { self.rows[depth - 1][i] };
                 let bar_h = (level * max_bar as f32).round() as i32;
                 if bar_h <= 0 {
                     continue;
@@ -253,6 +274,154 @@ mod tests {
         d.rms_l = 0.30 * gain;
         d.rms_r = 0.27 * gain;
         d
+    }
+
+    fn bits(c: &Canvas) -> Vec<u8> {
+        let mut v = Vec::new();
+        for y in 0..c.height() {
+            for x in 0..c.width() {
+                let px = c.get(x, y);
+                v.extend_from_slice(&[px.r, px.g, px.b, px.a]);
+            }
+        }
+        v
+    }
+
+    #[test]
+    fn the_near_row_is_live_and_changes_every_frame() {
+        // THE BUG THIS EXISTS FOR, and it shipped: the first version put the live spectrum into the
+        // history ring and drew rows[0] as the near row, so the whole display only changed when the ring
+        // rotated - 7.7 updates a second at a 130ms interval. It was reported as "very low fps" and
+        // nothing was slow; the data was stale.
+        //
+        // Between two rotations the display must STILL change, because the near row is live. Putting the
+        // live data back into the ring makes consecutive frames identical and fails this.
+        let t = builtin::mesh_wmp_cyan();
+        let mut fam = Mesh::default();
+        let mut c = Canvas::new(380, 60);
+        for k in 0..40 {
+            fam.draw(&mut c, &t, &frame(0.6, k as f32 * 0.0167));
+        }
+        // ROTATE_MS is 130ms and a frame is 16.7ms, so these four frames sit inside one interval.
+        let mut seen: Vec<Vec<u8>> = Vec::new();
+        for k in 40..44 {
+            fam.draw(&mut c, &t, &frame(0.6, k as f32 * 0.0167));
+            seen.push(bits(&c));
+        }
+        let changes = seen.windows(2).filter(|w| w[0] != w[1]).count();
+        assert!(
+            changes >= 2,
+            "the display changed on only {changes} of 3 consecutive frames inside one rotation \
+             interval - the near row is not live, which is what 'very low fps' looks like"
+        );
+    }
+
+    #[test]
+    fn the_history_rows_hold_still_between_rotations() {
+        // The other half of the same design, and it must not be fixed by making everything live: the
+        // rows BEHIND the live one are a record. If they changed every frame the depth axis would stop
+        // reading as time and the stack would just be five copies of now.
+        let t = builtin::mesh_wmp_cyan();
+        let mut fam = Mesh::default();
+        let mut c = Canvas::new(380, 60);
+        for k in 0..60 {
+            fam.draw(&mut c, &t, &frame(0.6, k as f32 * 0.0167));
+        }
+        // Wait for a rotation to LAND rather than assuming where in the interval we are. Three frames
+        // is 50ms against a 130ms interval, but `due` could already be at 125ms - which is exactly how
+        // the first version of this test failed, on a rotation it had not accounted for rather than on
+        // the behaviour it was checking.
+        let mut prev = fam.rows.clone();
+        let mut rotated = false;
+        for k in 60..80 {
+            fam.draw(&mut c, &t, &frame(0.6, k as f32 * 0.0167));
+            if fam.rows != prev {
+                rotated = true;
+                break;
+            }
+            prev = fam.rows.clone();
+        }
+        assert!(rotated, "no rotation happened in 20 frames, so this test proved nothing");
+
+        // Now we are just past one, with a full interval ahead.
+        let before = fam.rows.clone();
+        for k in 80..84 {
+            fam.draw(&mut c, &t, &frame(0.6, k as f32 * 0.0167));
+        }
+        assert_eq!(
+            before, fam.rows,
+            "the history changed inside a rotation interval, so depth is no longer time"
+        );
+    }
+
+    #[test]
+    fn a_transient_enters_at_the_front_and_is_kept_by_the_peak_hold() {
+        // Property 2 from the module docs. The ring samples at 7.7Hz, so a snare landing between two
+        // rotations is dropped unless the accumulator holds the maximum. Replacing the peak-hold with
+        // "whatever the last frame happened to be" fails this.
+        let t = builtin::mesh_wmp_cyan();
+        let mut fam = Mesh::default();
+        let mut c = Canvas::new(380, 60);
+        let bars = BARS_WIDE;
+        // Quiet for a while, so the history is low everywhere.
+        for k in 0..80 {
+            fam.draw(&mut c, &t, &frame(0.18, k as f32 * 0.0167));
+        }
+        // ONE loud frame - a single-frame transient, the hardest case.
+        let mut d = frame(1.0, 1.4);
+        for v in d.levels.iter_mut() {
+            *v = 0.95;
+        }
+        fam.draw(&mut c, &t, &d);
+        // Then quiet again, long enough for exactly one rotation to carry it into the history.
+        for k in 0..9 {
+            fam.draw(&mut c, &t, &frame(0.18, 1.5 + k as f32 * 0.0167));
+        }
+        let peak = (0..bars).map(|i| fam.rows[0][i]).fold(0.0f32, f32::max);
+        assert!(
+            peak > 0.5,
+            "a single-frame transient reached only {peak:.2} in the row behind the front - the \
+             peak-hold is dropping it, which is what averaging or last-value sampling does"
+        );
+    }
+
+    /// Per-frame cost of the 3D families against the ones already measured.
+    ///
+    /// Run: cargo test --release probe_3d_cost -- --ignored --nocapture
+    ///
+    /// Exists because "very low fps" was reported and the cause turned out to be STALE DATA, not slow
+    /// rendering. That is a distinction worth being able to settle with a number rather than an opinion,
+    /// and the recorded figures for comparison are flame 2.02ms, segmented 1.75ms, tube 1.09ms and
+    /// waterfall 0.74ms against a 16.7ms frame - all at 190x60, so double them for the 380x60 the app
+    /// normally runs at.
+    #[test]
+    #[ignore]
+    fn probe_3d_cost() {
+        for (id, w, h) in [
+            ("mesh-wmp-cyan", 190, 60),
+            ("mesh-wmp-cyan", 380, 60),
+            ("pipes-win95-teal", 190, 60),
+            ("pipes-win95-teal", 380, 60),
+            ("vfd-ice", 380, 60),
+        ] {
+            let t = builtin::all().into_iter().find(|t| t.id == id).unwrap();
+            let mut fam = crate::render::family_for(&t.family);
+            let mut c = Canvas::new(w, h);
+            // Warm up, so allocation and first-touch are not in the measurement.
+            for k in 0..60 {
+                fam.draw(&mut c, &t, &frame(0.6, k as f32 * 0.0167));
+            }
+            let n = 400;
+            let start = std::time::Instant::now();
+            for k in 0..n {
+                fam.draw(&mut c, &t, &frame(0.6, k as f32 * 0.0167));
+            }
+            let per = start.elapsed().as_secs_f64() * 1000.0 / n as f64;
+            println!(
+                "  {id:20} {w}x{h}  {per:6.3} ms/frame  {:5.1}% of a 16.7ms budget",
+                per / 16.7 * 100.0
+            );
+        }
     }
 
     /// Run: cargo test --release dump_mesh -- --ignored --nocapture
