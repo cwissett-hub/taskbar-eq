@@ -62,6 +62,7 @@ pub fn all() -> Vec<Theme> {
         orbit_plasma(),
         orbit_ion(),
         orbit_lime(),
+        orbit_rainbow(),
         nixie_orange(),
         nixie_ice(),
         nixie_neon_green(),
@@ -3290,6 +3291,32 @@ pub fn mesh_white_stack() -> Theme {
     }
 }
 
+/// Every ball its own hue, taken from its position around the ring.
+///
+/// Because position IS the frequency slice a ball reads, the hue is a frequency legend rather than
+/// decoration: the bass balls are always at one end of the spectrum and the treble at the other. Uses the
+/// shared rainbow machinery, so `RAINBOW_SAT` applies - a MEASURED ceiling of 0.68, because at full
+/// saturation pure blue manages only 2.31:1 against a near-black panel and fails this project's 3:1 rule
+/// at every brightness.
+pub fn orbit_rainbow() -> Theme {
+    Theme {
+        id: "orbit-rainbow".into(),
+        name: "Rainbow".into(),
+        lit: "#ffffff".into(),
+        hot: "#ffffff".into(),
+        panel: "#05060a".into(),
+        edge: "#8899aa".into(),
+        edge_alpha: 0.14,
+        ghost: 0.10,
+        rainbow: 1.0,
+        // A full turn of hue around the ring, so each ball has its own colour and the sequence is a
+        // frequency legend rather than a cycling wash. `rainbow_spread` is documented as exactly this:
+        // 0 makes the whole display shift together, ~0.8 makes hue vary by POSITION.
+        rainbow_spread: 1.0,
+        ..orbit_base()
+    }
+}
+
 // ===================== 3D Pipes =====================
 //
 // The screensaver, driven. Brightness carries which AXIS a segment runs along - the three-tone shading
@@ -3302,8 +3329,8 @@ fn pipes_base() -> Theme {
         texture: Texture::None_,
         panel_alpha: 1.0,
         // Tight: a wide bloom fills the gaps between pipe runs and the lattice stops reading as depth.
-        bloom: 2.0,
-        glow_strength: 0.24,
+        bloom: 3.0,
+        glow_strength: 0.40,
         edge_glow: 1.0,
         ballistics: Ballistics { attack: 0.55, decay: 0.14, peak_fall: 0.006 },
         ..Theme::default()
@@ -3397,8 +3424,8 @@ fn orbit_base() -> Theme {
         texture: Texture::None_,
         panel_alpha: 1.0,
         // Modest. A wide bloom merges overlapping balls and destroys the occlusion that carries depth.
-        bloom: 2.0,
-        glow_strength: 0.30,
+        bloom: 4.0,
+        glow_strength: 0.46,
         edge_glow: 1.0,
         ballistics: Ballistics { attack: 0.60, decay: 0.14, peak_fall: 0.006 },
         ..Theme::default()

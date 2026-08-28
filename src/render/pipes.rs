@@ -137,8 +137,20 @@ const LEVEL_FLOOR: f32 = 0.119;
 const LEVEL_SPAN: f32 = 0.456;
 const LEVEL_GAMMA: f32 = 0.6;
 
-/// The flourish: every run is abandoned and fresh ones start, the way the screensaver resets.
+/// The flourish: a SURGE, not a reset.
+///
+/// It used to call `restart()` on every run, which cleared every segment - so the whole picture vanished
+/// in one frame and grew back from nothing. Reported as "jarring movement... like they're resetting",
+/// and that is exactly what it was: the screensaver's own behaviour, which is fine on a full screen once
+/// every few minutes and is a hard cut on a 60px strip every thirty seconds.
+///
+/// Now the runs simply lay pipe much faster and run hot while it lasts. Nothing is destroyed, so there is
+/// no discontinuity anywhere - the picture only ever grows and its tail only ever retreats one segment at
+/// a time, which it was already doing continuously.
 const RESET_MS: f32 = 1400.0;
+
+/// How much faster pipe is laid during the surge. 3x is visible without outrunning the aliasing bound.
+const SURGE_RATE: f32 = 3.0;
 
 /// A lattice cell. `x` runs across the panel, `j` is the vertical level (0 = top), `k` the depth plane.
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -333,11 +345,8 @@ impl Family for Pipes {
                 })
                 .collect();
         }
-        if fired {
-            for r in self.runs.iter_mut() {
-                r.restart(nx);
-            }
-        }
+        // Deliberately NOT a restart - see `RESET_MS`. Clearing the runs was the reported jarring cut.
+        let _ = fired;
 
         let turn = self.onset.update(&d.levels, dt, 2.8, 200.0);
         let bands = d.levels.len();
@@ -358,7 +367,9 @@ impl Family for Pipes {
             let lo = (ri * bands) / runs;
             let hi = (((ri + 1) * bands) / runs).clamp(lo + 1, bands);
             let band = d.levels[lo..hi].iter().copied().fold(0.0f32, f32::max);
-            let drive = resp(band, t.sensitivity);
+            // The surge feeds the growth rate rather than the geometry, so it can never move anything
+            // discontinuously - it only makes the next segment arrive sooner.
+            let drive = (resp(band, t.sensitivity) + reset * (SURGE_RATE - 1.0)).clamp(0.0, 1.0);
             self.runs[ri].grow(drive, turn, dt, nx);
             let seg = &self.runs[ri].seg;
             for i in 0..seg.len() {

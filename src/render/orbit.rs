@@ -113,8 +113,18 @@ const SWELL_PER_MS: f32 = 0.055;
 const SETTLE_PER_MS: f32 = 0.011;
 
 /// The flourish: the orbit scatters outward and is drawn back in.
-const SCATTER_MS: f32 = 1200.0;
-const SCATTER_GAIN: f32 = 0.85;
+const SCATTER_MS: f32 = 1800.0;
+const SCATTER_GAIN: f32 = 0.55;
+
+/// Milliseconds the scatter takes to RAMP, in both directions.
+///
+/// `Envelope` sets its level to 1.0 on the firing frame - it is a one-shot decay, not a shape - so
+/// applying it directly made the ring JUMP outward in a single frame and then glide back. Reported as
+/// "jarring movement... like they're resetting", and it was: a step function on a geometric quantity.
+///
+/// Chasing the envelope through a first-order ramp fixes it at both ends. 220ms is about thirteen frames,
+/// long enough that the eye reads it as the ring breathing out rather than as a cut.
+const SCATTER_RAMP_MS: f32 = 220.0;
 
 #[derive(Default)]
 pub struct Orbit {
@@ -123,6 +133,8 @@ pub struct Orbit {
     /// Orbit and tilt phase, in turns.
     phase: f32,
     tilt_t: f32,
+    /// The scatter as APPLIED: chases the envelope so the ring never steps. See `SCATTER_RAMP_MS`.
+    scatter_s: f32,
     flourish: crate::dsp::flourish::Trigger,
     scatter: crate::dsp::flourish::Envelope,
 }
@@ -186,7 +198,15 @@ impl Family for Orbit {
 
         let dt = if d.dt_ms.is_finite() { d.dt_ms.clamp(0.0, 200.0) } else { 16.7 };
         let fired = self.flourish.update(&d.levels, dt, t.flourish);
-        let scatter = self.scatter.update(fired, dt, SCATTER_MS);
+        let scatter_env = self.scatter.update(fired, dt, SCATTER_MS);
+        // Chase it rather than use it. A one-shot envelope is a STEP on the frame it fires, and a step
+        // applied to the orbit radius is the jarring snap this replaces.
+        let k = (dt / SCATTER_RAMP_MS).clamp(0.0, 1.0);
+        self.scatter_s += (scatter_env - self.scatter_s) * k;
+        if !self.scatter_s.is_finite() {
+            self.scatter_s = 0.0;
+        }
+        let scatter = self.scatter_s;
 
         let panel = Rgba::from_hex(&t.panel, t.panel_alpha);
         c.rounded_rect(1, 2, w - 2, h - 4, 3, panel);
@@ -240,8 +260,6 @@ impl Family for Orbit {
         let (st, ct) = (tilt.sin(), tilt.cos());
 
         let bands = d.levels.len();
-        let lit = Rgba::from_hex(&t.lit, 1.0);
-        let hot = Rgba::from_hex(&t.hot, 1.0);
         let key = Rgba::from_hex(&t.panel, 1.0);
         let blend = |a: Rgba, b: Rgba, k: f32| {
             let m = |p: u8, q: u8| (p as f32 * (1.0 - k.clamp(0.0, 1.0)) + q as f32 * k.clamp(0.0, 1.0)) as u8;
@@ -275,10 +293,19 @@ impl Family for Orbit {
         // FAR TO NEAR. This is the occlusion, and occlusion is the depth cue that cannot be faked.
         ball.sort_by(|p, q| q.2.partial_cmp(&p.2).unwrap_or(std::cmp::Ordering::Equal));
 
-        for (x, y, z, pulse, _) in ball {
+        for (x, y, z, pulse, i) in ball {
             let Some((col, row, inv)) = project(cx, cy, x, y, z) else {
                 continue;
             };
+            // COLOUR PER BALL, resolved through the shared rainbow resolver. On a fixed colourway this
+            // returns `t.lit` unchanged, so the single-hue themes are bit-for-bit what they were; on a
+            // rainbow one each ball takes the hue of its own position around the ring. Since position IS
+            // the frequency slice that ball reads, the hue doubles as a frequency legend - which is the
+            // reason `render::tint` takes a position in the first place.
+            let x01 = i as f32 / BALLS as f32;
+            let lit = crate::render::tint(t, x01, d.time_s, false, &t.lit, 1.0);
+            let hot = crate::render::tint(t, x01, d.time_s, true, &t.hot, 1.0);
+
             let r_world = R_REST + R_PULSE * pulse;
             let r = (r_world * inv).clamp(0.7, 14.0).round() as i32;
 
