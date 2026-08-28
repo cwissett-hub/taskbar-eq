@@ -177,6 +177,7 @@ families** have one, and each is that instrument's characteristic fault or ritua
 | Radar | Barrage jamming — the receiver saturates, so returns appear at every range at once |
 | Chroma field | An ink plate starves, and the dry patch travels across the stripes |
 | Flame organ | A flashback: every burner guts to its pilot, then an ignition front relights them |
+| Dolphin LCD | The dolphin leaps clear of the display and lands, throwing a splash along the waterline |
 | Fluid | Cavitation — the surface breaks into a patchy froth and the tank runs slack |
 
 **Every family has one.** The fluid tank was the last and the hardest, because it has the tightest
@@ -284,7 +285,7 @@ colourway files, which hot-reload on save and can replace a built-in by reusing 
 **Last updated: 2026-08-10.** Full test suite green (520 at the time of writing), release build
 warning-free. The colourway and family counts below are asserted by a test; the test count itself is
 a snapshot and can drift.
-**103 colourways across 14 families.**
+**108 colourways across 15 families.**
 
 | | Feature | State |
 |---|---|---|
@@ -379,6 +380,16 @@ than a quiet one and the display would read as brightness. Subtracting a constan
 linear, so the plumes are a profile you can compare across — the same position-over-intensity rule the
 nixie and valve families are built on. Faintness comes from **alpha**, not from a dark colour: the body is
 translucent throughout, which is what makes the flames read as ghostly rather than as solid shapes.
+
+**Dolphin LCD** — the 1990s aftermarket car head unit: Sony Xplod, Pioneer, JVC. The whole panel is one
+coarse dot-matrix display, 3px dots on a 4px pitch, and the **unlit dots are drawn too** — that faint
+lattice of dark wells is what makes it read as a display rather than as floating squares. A spectrum runs
+along the bottom with peak-hold caps that fall, a dotted waterline sits above it, and a dolphin arcs
+across the display and dips back through the line, its speed tracking loudness. One backlight hue per
+colourway at three levels: lit dot, peak cap, unlit well.
+
+The sprite carries a **hard dark keyline**, because without one it is lit dots on a lit lattice and reads
+as an amorphous cluster — which is how the first render came out.
 
 | Colourway | Character |
 |---|---|
@@ -545,7 +556,7 @@ The app also writes that log on every normal launch, so a failure can be reporte
 
 ## Themes
 
-**103 colourways across 14 families.** A *family* is a renderer with fixed geometry — code. A
+**108 colourways across 15 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
 **Segmented VFD** — a smoked-glass panel with discrete stacked segments, a faint dormant grid,

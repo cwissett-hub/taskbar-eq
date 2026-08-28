@@ -42,6 +42,11 @@ pub fn all() -> Vec<Theme> {
         flame_potassium(),
         flame_plasma(),
         flame_rainbow(),
+        dolphin_sony_amber(),
+        dolphin_jvc_ice(),
+        dolphin_pioneer_green(),
+        dolphin_xplod_orange(),
+        dolphin_kenwood_red(),
         nixie_orange(),
         nixie_ice(),
         nixie_neon_green(),
@@ -3041,6 +3046,136 @@ pub fn flame_rainbow() -> Theme {
             Zone { upto: 1.01, lit: "#ffffff".into(), hot: "#ffffff".into() },
         ],
         ..flame_base()
+    }
+}
+
+// ===================== Dolphin LCD =====================
+//
+// The 1990s aftermarket head unit. Every colourway is ONE hue at three brightness levels - lit dot,
+// peak-hold cap, unlit well - because that is what a single-backlight dot-matrix LCD is. No gradients,
+// no second accent.
+//
+// FIELD MAPPING, in the reel model (no params struct of its own):
+//   lit                 the lit dot
+//   hot                 the leap and the splash - the only place a fourth level appears
+//   ghost               the unlit dark-well alpha, as `segmented` uses it for dormant bars
+//   panel               the LCD substrate
+//   ballistics.peak_fall  how fast the peak caps fall
+//   bloom/glow_strength   backlight halo, kept LOW: a transmissive LCD barely has one
+//
+// The well alpha is the interesting number. Composited it must be VISIBLE as a lattice yet clearly
+// read as OFF, and those need different instruments: measured it lands +9.1 to +10.9 dL* above the
+// panel (4x the ~2.3 dL* floor of visibility `tube.rs:58` established) while sitting at 1.20-1.25:1
+// contrast against it - far below the 3.0:1 this project calls lit.
+fn dolphin_base() -> Theme {
+    Theme {
+        family: "dolphin".into(),
+        // The family draws its OWN lattice; a Glass or Scanlines overlay would double-screen it.
+        texture: Texture::None_,
+        panel_alpha: 1.0,
+        // Tight, and low. A backlight glows; it does not flare. A wide bloom also welds adjacent dots
+        // into a bar and destroys the one thing that makes this a dot-matrix display.
+        bloom: 2.0,
+        glow_strength: 0.22,
+        edge_glow: 1.0,
+        ballistics: Ballistics { attack: 0.55, decay: 0.11, peak_fall: 0.0055 },
+        // `flourish` is inherited from Theme::default(), which IS DEFAULT_FLOURISH - no colourway in
+        // this file sets it explicitly, and a copy here could drift from the calibrated value.
+        ..Theme::default()
+    }
+}
+
+/// Sony amber. The reference, and the one with the most room for a three-level ladder.
+///
+/// Chosen over a hotter Xplod orange on arithmetic rather than taste: a hotter orange has less L*
+/// headroom, so the ladder is squeezed from both ends. At CAP_ALPHA 0.60 the cap of `#ff5a1e` measures
+/// 2.92:1 against its panel and FAILS the 3.0 floor outright, and raising the alpha to rescue it
+/// collapses the other end - the cap starts merging into the lit dot.
+/// Measured ladder, dL*: panel 2.40 -> well 11.52 -> cap 47.05 -> lit 73.42 -> hot 88.44.
+pub fn dolphin_sony_amber() -> Theme {
+    Theme {
+        id: "dolphin-sony-amber".into(),
+        name: "Sony amber".into(),
+        lit: "#ff9e1f".into(),
+        hot: "#ffd8a2".into(),
+        panel: "#0d0803".into(),
+        edge: "#ff9e1f".into(),
+        edge_alpha: 0.13,
+        ghost: 0.13,
+        ..dolphin_base()
+    }
+}
+
+/// JVC ice blue. Deliberately more chromatic than `vfd-ice` so it is a new colour, not a third copy.
+///
+/// OKLab chroma 0.126 against vfd-ice's 0.090. Measured: lit 10.62:1 against panel, steps of
+/// 10.88 / 36.05 / 27.32 / 20.06 dL* up the ladder.
+pub fn dolphin_jvc_ice() -> Theme {
+    Theme {
+        id: "dolphin-jvc-ice".into(),
+        name: "JVC ice blue".into(),
+        lit: "#5cc8ff".into(),
+        hot: "#e8f8ff".into(),
+        panel: "#04090f".into(),
+        edge: "#5cc8ff".into(),
+        edge_alpha: 0.14,
+        ghost: 0.14,
+        ..dolphin_base()
+    }
+}
+
+/// Pioneer green. A yellow-green, distinct from `matrix-green` and `nixie-green`.
+///
+/// Chroma 0.214, the most saturated of the three. Measured: lit 12.77:1, a 4.3x margin on the floor.
+pub fn dolphin_pioneer_green() -> Theme {
+    Theme {
+        id: "dolphin-pioneer-green".into(),
+        name: "Pioneer green".into(),
+        lit: "#8fe63c".into(),
+        hot: "#e4ffb4".into(),
+        panel: "#040c07".into(),
+        edge: "#8fe63c".into(),
+        edge_alpha: 0.12,
+        ghost: 0.12,
+        ..dolphin_base()
+    }
+}
+
+/// Xplod orange - the hotter Sony, viable as its own colourway.
+///
+/// Measured at CAP_ALPHA 0.60: lit 7.66:1 against panel, cap 3.34:1, lit/cap 2.29:1. It clears the
+/// floor with less margin than amber, which is exactly why amber is the reference and this is the
+/// alternative rather than the other way round.
+pub fn dolphin_xplod_orange() -> Theme {
+    Theme {
+        id: "dolphin-xplod-orange".into(),
+        name: "Xplod orange".into(),
+        lit: "#ff7a1e".into(),
+        hot: "#ffcaa0".into(),
+        panel: "#0f0702".into(),
+        edge: "#ff7a1e".into(),
+        edge_alpha: 0.13,
+        ghost: 0.13,
+        ..dolphin_base()
+    }
+}
+
+/// Kenwood red. The hardest hue to make work here, and the reason is structural.
+///
+/// Red carries little luminance (0.2126 of the WCAG weighting against green's 0.7152), so a red that
+/// looks saturated is dark, and a red bright enough to clear the floor has to be pushed toward salmon.
+/// This is the same wall the rainbow hit with blue at 2.31:1.
+pub fn dolphin_kenwood_red() -> Theme {
+    Theme {
+        id: "dolphin-kenwood-red".into(),
+        name: "Kenwood red".into(),
+        lit: "#ff6b57".into(),
+        hot: "#ffc4bb".into(),
+        panel: "#0e0403".into(),
+        edge: "#ff6b57".into(),
+        edge_alpha: 0.13,
+        ghost: 0.13,
+        ..dolphin_base()
     }
 }
 
