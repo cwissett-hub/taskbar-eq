@@ -57,6 +57,11 @@ pub fn all() -> Vec<Theme> {
         pipes_neon_magenta(),
         pipes_copper(),
         pipes_chrome(),
+        orbit_chrome(),
+        orbit_sodium(),
+        orbit_plasma(),
+        orbit_ion(),
+        orbit_lime(),
         nixie_orange(),
         nixie_ice(),
         nixie_neon_green(),
@@ -3377,6 +3382,101 @@ pub fn pipes_chrome() -> Theme {
         edge_alpha: 0.14,
         ghost: 0.10,
         ..pipes_base()
+    }
+}
+
+// ===================== Orbit =====================
+//
+// Spheres circling in 3D, pulsing on size rather than brightness. Depth is cued three ways - size,
+// shading and occlusion - so these colourways need a `hot` well clear of `lit` (the lit cap is what
+// makes a disc read as a sphere rather than a hole) and a `panel` dark enough that dimming toward it
+// reads as distance.
+fn orbit_base() -> Theme {
+    Theme {
+        family: "orbit".into(),
+        texture: Texture::None_,
+        panel_alpha: 1.0,
+        // Modest. A wide bloom merges overlapping balls and destroys the occlusion that carries depth.
+        bloom: 2.0,
+        glow_strength: 0.30,
+        edge_glow: 1.0,
+        ballistics: Ballistics { attack: 0.60, decay: 0.14, peak_fall: 0.006 },
+        ..Theme::default()
+    }
+}
+
+/// Chrome: no hue, so the shading and the occlusion do all the work.
+pub fn orbit_chrome() -> Theme {
+    Theme {
+        id: "orbit-chrome".into(),
+        name: "Chrome".into(),
+        lit: "#c9d6e4".into(),
+        hot: "#ffffff".into(),
+        panel: "#06070a".into(),
+        edge: "#c9d6e4".into(),
+        edge_alpha: 0.14,
+        ghost: 0.10,
+        ..orbit_base()
+    }
+}
+
+/// Sodium: the streetlamp orange, warm and heavy.
+pub fn orbit_sodium() -> Theme {
+    Theme {
+        id: "orbit-sodium".into(),
+        name: "Sodium".into(),
+        lit: "#ff9d3c".into(),
+        hot: "#fff0d4".into(),
+        panel: "#0c0602".into(),
+        edge: "#ff9d3c".into(),
+        edge_alpha: 0.15,
+        ghost: 0.10,
+        ..orbit_base()
+    }
+}
+
+/// Plasma: hot magenta into white, the vaporwave end.
+pub fn orbit_plasma() -> Theme {
+    Theme {
+        id: "orbit-plasma".into(),
+        name: "Plasma".into(),
+        lit: "#ff5fd0".into(),
+        hot: "#ffe4f8".into(),
+        panel: "#0b0410".into(),
+        edge: "#ff5fd0".into(),
+        edge_alpha: 0.16,
+        ghost: 0.10,
+        ..orbit_base()
+    }
+}
+
+/// Ion: cold cyan, the cleanest read of the five.
+pub fn orbit_ion() -> Theme {
+    Theme {
+        id: "orbit-ion".into(),
+        name: "Ion".into(),
+        lit: "#5fd8ff".into(),
+        hot: "#e6faff".into(),
+        panel: "#03090e".into(),
+        edge: "#5fd8ff".into(),
+        edge_alpha: 0.15,
+        ghost: 0.10,
+        ..orbit_base()
+    }
+}
+
+/// Lime: the most saturated, and the one with the most room under `lit` for the depth shading.
+pub fn orbit_lime() -> Theme {
+    Theme {
+        id: "orbit-lime".into(),
+        name: "Lime".into(),
+        lit: "#a6f03c".into(),
+        hot: "#f0ffd0".into(),
+        panel: "#040a04".into(),
+        edge: "#a6f03c".into(),
+        edge_alpha: 0.14,
+        ghost: 0.10,
+        ..orbit_base()
     }
 }
 

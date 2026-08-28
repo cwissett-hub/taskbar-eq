@@ -180,6 +180,7 @@ families** have one, and each is that instrument's characteristic fault or ritua
 | Dolphin LCD | The dolphin leaps clear of the display and lands, throwing a splash along the waterline |
 | 3D spectrum | The whole stack surges one depth step forward and settles back |
 | 3D Pipes | Every run is abandoned at once and fresh pipes start, the way the screensaver resets |
+| Orbit | The ring scatters outward and is drawn back in |
 | Fluid | Cavitation — the surface breaks into a patchy froth and the tank runs slack |
 
 **Every family has one.** The fluid tank was the last and the hardest, because it has the tightest
@@ -287,7 +288,7 @@ colourway files, which hot-reload on save and can replace a built-in by reusing 
 **Last updated: 2026-08-10.** Full test suite green (520 at the time of writing), release build
 warning-free. The colourway and family counts below are asserted by a test; the test count itself is
 a snapshot and can drift.
-**118 colourways across 17 families.**
+**123 colourways across 18 families.**
 
 | | Feature | State |
 |---|---|---|
@@ -414,6 +415,18 @@ That choice was made twice. An isometric version was built first and rejected �
 3d then I think it's not really worth it"* — and it deserved to be: in isometric the x axis feeds both
 width and height, so a 56-row panel runs out of height after about 64px of width, and one lattice
 occupied 48px of a 380px panel. The workaround, several small lattices side by side, is fakery.
+
+**Orbit** — spheres circling in 3D space, pulsing to the music. The same real perspective as 3D Pipes,
+and a better fit for this panel for three reasons: a sphere has **no thin features to lose** at 48 rows,
+depth arrives three ways at once (size, shading and **occlusion** — a ball passing behind another is
+the one cue that cannot be faked in 2D), and a pulse is a **size** change rather than a brightness one,
+which is the channel that actually works here.
+
+The orbit is a **wide ellipse**, not a circle, and that is the letterbox talking rather than a fudge:
+`x` costs no vertical rows at all, while `z` costs about 2.9 rows per step of depth separation. Spending
+the panel's width on `x` and keeping `z` for as much depth as the rows will pay for is the correct trade
+— and it happens to be what an orbit seen from slightly above actually looks like. The plane tilts
+slowly, which stops the ring being a fixed shape and makes the changing ellipse its own depth cue.
 
 Perspective brings two hazards this project has already measured, and both are handled explicitly rather
 than hoped about. Depth planes must land on **distinct integer pixel rows** — at the vaporwave grid's
@@ -588,7 +601,7 @@ The app also writes that log on every normal launch, so a failure can be reporte
 
 ## Themes
 
-**118 colourways across 17 families.** A *family* is a renderer with fixed geometry — code. A
+**123 colourways across 18 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
 **Segmented VFD** — a smoked-glass panel with discrete stacked segments, a faint dormant grid,
