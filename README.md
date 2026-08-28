@@ -178,6 +178,7 @@ families** have one, and each is that instrument's characteristic fault or ritua
 | Chroma field | An ink plate starves, and the dry patch travels across the stripes |
 | Flame organ | A flashback: every burner guts to its pilot, then an ignition front relights them |
 | Dolphin LCD | The dolphin leaps clear of the display and lands, throwing a splash along the waterline |
+| 3D spectrum | The whole stack surges one depth step forward and settles back |
 | Fluid | Cavitation — the surface breaks into a patchy froth and the tank runs slack |
 
 **Every family has one.** The fluid tank was the last and the hardest, because it has the tightest
@@ -285,7 +286,7 @@ colourway files, which hot-reload on save and can replace a built-in by reusing 
 **Last updated: 2026-08-10.** Full test suite green (520 at the time of writing), release build
 warning-free. The colourway and family counts below are asserted by a test; the test count itself is
 a snapshot and can drift.
-**108 colourways across 15 families.**
+**113 colourways across 16 families.**
 
 | | Feature | State |
 |---|---|---|
@@ -390,6 +391,19 @@ colourway at three levels: lit dot, peak cap, unlit well.
 
 The sprite carries a **hard dark keyline**, because without one it is lit dots on a lit lattice and reads
 as an amorphous cluster — which is how the first render came out.
+
+**3D spectrum** — the Winamp / Windows Media Player *bars in depth*. Five rows of extruded bars
+staggered up and to the right, the nearest bright and crisp, each row behind it dimmer and drawn first
+so the near bars occlude it. **Depth is time**: every row is a spectrum snapshot from further back, so a
+transient visibly walks backwards into the display.
+
+The geometry is deliberately **oblique, not perspective** — a constant integer offset per row, no
+divide and no vanishing point. Perspective was refused on measurement: depth steps and amplitude compete
+for the same ~48 usable rows, and at the vaporwave family's tuned `persp` seven of sixteen depth lines
+collapsed onto two pixel rows, which also silently disabled its occlusion. An earlier oblique design was
+refused too, for a subtler reason — extruding a *curve* by a constant offset gives a visible depth
+face of `dy` minus the curve's own rise over the run, which collapses to zero wherever the slope matches
+the offset. Discrete boxes have no such term.
 
 | Colourway | Character |
 |---|---|
@@ -556,7 +570,7 @@ The app also writes that log on every normal launch, so a failure can be reporte
 
 ## Themes
 
-**108 colourways across 15 families.** A *family* is a renderer with fixed geometry — code. A
+**113 colourways across 16 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
 **Segmented VFD** — a smoked-glass panel with discrete stacked segments, a faint dormant grid,

@@ -47,6 +47,11 @@ pub fn all() -> Vec<Theme> {
         dolphin_pioneer_green(),
         dolphin_xplod_orange(),
         dolphin_kenwood_red(),
+        mesh_wmp_cyan(),
+        mesh_winamp_green(),
+        mesh_amber_stack(),
+        mesh_magenta_deck(),
+        mesh_white_stack(),
         nixie_orange(),
         nixie_ice(),
         nixie_neon_green(),
@@ -3176,6 +3181,102 @@ pub fn dolphin_kenwood_red() -> Theme {
         edge_alpha: 0.13,
         ghost: 0.13,
         ..dolphin_base()
+    }
+}
+
+// ===================== 3D spectrum =====================
+//
+// Depth is TIME here, so brightness carries DEPTH and height carries LEVEL. That split is why these
+// colourways need a `hot` that is clearly separable from `lit`: the near row goes hot during the
+// flourish, and if the two are close the surge is invisible.
+fn mesh_base() -> Theme {
+    Theme {
+        family: "mesh".into(),
+        // The bars ARE the texture; an overlay pattern on top of five staggered rows is noise.
+        texture: Texture::None_,
+        panel_alpha: 1.0,
+        // Tight. A wide bloom bleeds the depth rows into each other and destroys the occlusion that
+        // makes the stack read as depth at all.
+        bloom: 2.0,
+        glow_strength: 0.26,
+        edge_glow: 1.0,
+        ballistics: Ballistics { attack: 0.60, decay: 0.16, peak_fall: 0.006 },
+        ..Theme::default()
+    }
+}
+
+/// The WMP look: cyan bars receding into near-black.
+pub fn mesh_wmp_cyan() -> Theme {
+    Theme {
+        id: "mesh-wmp-cyan".into(),
+        name: "WMP cyan".into(),
+        lit: "#3fd6ff".into(),
+        hot: "#dff6ff".into(),
+        panel: "#05090d".into(),
+        edge: "#3fd6ff".into(),
+        edge_alpha: 0.16,
+        ghost: 0.10,
+        ..mesh_base()
+    }
+}
+
+/// Winamp green - the classic spectrum colour, on the classic near-black.
+pub fn mesh_winamp_green() -> Theme {
+    Theme {
+        id: "mesh-winamp-green".into(),
+        name: "Winamp green".into(),
+        lit: "#6ee85a".into(),
+        hot: "#e2ffd8".into(),
+        panel: "#040a05".into(),
+        edge: "#6ee85a".into(),
+        edge_alpha: 0.15,
+        ghost: 0.10,
+        ..mesh_base()
+    }
+}
+
+/// Amber, to sit beside the head-unit family.
+pub fn mesh_amber_stack() -> Theme {
+    Theme {
+        id: "mesh-amber-stack".into(),
+        name: "Amber stack".into(),
+        lit: "#ffab33".into(),
+        hot: "#ffe6bf".into(),
+        panel: "#0c0702".into(),
+        edge: "#ffab33".into(),
+        edge_alpha: 0.15,
+        ghost: 0.10,
+        ..mesh_base()
+    }
+}
+
+/// Magenta, the vaporwave end of the lineage.
+pub fn mesh_magenta_deck() -> Theme {
+    Theme {
+        id: "mesh-magenta-deck".into(),
+        name: "Magenta deck".into(),
+        lit: "#ff5fd0".into(),
+        hot: "#ffd9f4".into(),
+        panel: "#0c0410".into(),
+        edge: "#ff5fd0".into(),
+        edge_alpha: 0.16,
+        ghost: 0.10,
+        ..mesh_base()
+    }
+}
+
+/// Cold white, for when the colour should be the music and not the meter.
+pub fn mesh_white_stack() -> Theme {
+    Theme {
+        id: "mesh-white-stack".into(),
+        name: "White stack".into(),
+        lit: "#dfe9f5".into(),
+        hot: "#ffffff".into(),
+        panel: "#07080a".into(),
+        edge: "#dfe9f5".into(),
+        edge_alpha: 0.14,
+        ghost: 0.10,
+        ..mesh_base()
     }
 }
 
