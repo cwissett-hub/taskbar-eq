@@ -88,19 +88,33 @@ const LOOP_FAST_S: f32 = 2.2;
 /// The sprite, mid-leap, travelling right. `#` is a lit dot; a dot lets the well lattice show through.
 const SPRITE_W: i32 = 9;
 const SPRITE_H: i32 = 5;
+/// ASCEND: the arcing back breaking the water, nose up-right, tail dropping away left.
+///
+/// Chosen by the owner from four candidates rendered at true dot scale
+/// (`docs/review/dolphin-sprite-candidates.png`). The three rejected ones all failed the same way and
+/// it is worth recording: a SOLID body in 45 cells reads as a lump, not an animal. This one works
+/// because most of its cells are empty - the negative space is doing the drawing.
+///
+/// It is also the more faithful reading of the object. A real head unit at this resolution shows the
+/// arcing back and fin breaking the surface, not a full side-on dolphin.
 const ASCEND: [&str; SPRITE_H as usize] = [
-    "....#..##",
-    "...######",
-    "##.#####.",
-    ".######..",
+    ".....###.",
+    "...###..#",
+    ".###.....",
     "##.......",
+    "#........",
 ];
+/// DESCEND: the same arc inverted for the dive, still travelling right.
+///
+/// This IS the vertical flip of `ASCEND`, and unlike a side-on body that is legitimate here: an arc has
+/// no belly to put a fin on. Written out anyway rather than computed, because a flip in code invites a
+/// later "just patch the fin cell" fix, and a belly-fin dolphin is invisible to any pixel-count test.
 const DESCEND: [&str; SPRITE_H as usize] = [
-    "##..#....",
-    ".######..",
-    "##.#####.",
-    "...######",
-    ".......##",
+    "#........",
+    "##.......",
+    ".###.....",
+    "...###..#",
+    ".....###.",
 ];
 
 /// How long splash dots linger after the dolphin breaks the waterline, in milliseconds.
@@ -331,6 +345,189 @@ mod tests {
         d.rms_l = 0.30 * gain;
         d.rms_r = 0.27 * gain;
         d
+    }
+
+    /// Brightness of a pixel, for probes that ask whether a cell is lit.
+    fn lum(px: Rgba) -> f32 {
+        let a = px.a as f32 / 255.0;
+        (0.2126 * px.r as f32 + 0.7152 * px.g as f32 + 0.0722 * px.b as f32) * a
+    }
+
+    /// The geometry the renderer derives, recomputed once for every probe.
+    ///
+    /// In ONE place deliberately. The reel family had a probe that hard-coded a pixel window, and when
+    /// the strip height changed the probe silently sampled the wrong rows and failed a test about a lamp
+    /// that was working perfectly.
+    fn geom(w: i32, h: i32) -> (i32, i32, i32, i32, i32, i32) {
+        let rows = (h - 4) / PITCH;
+        let cols = (w - 2) / PITCH;
+        let ox = 1 + ((w - 2) - cols * PITCH) / 2;
+        let oy = 2 + ((h - 4) - rows * PITCH) / 2;
+        let spec_rows = SPEC_ROWS.min(rows - 3);
+        let water_row = rows - spec_rows - 1;
+        (rows, cols, ox, oy, spec_rows, water_row)
+    }
+
+    fn settled(t: &Theme, gain: f32, frames: usize, w: i32, h: i32) -> (Dolphin, Canvas) {
+        let mut fam = Dolphin::default();
+        let mut c = Canvas::new(w, h);
+        for k in 0..frames {
+            fam.draw(&mut c, t, &frame(gain, k as f32 * 0.0167));
+        }
+        (fam, c)
+    }
+
+    #[test]
+    fn the_unlit_lattice_is_drawn_and_reads_as_off() {
+        // The lattice is the whole illusion, and its requirement is two-sided, so it needs two
+        // assertions. A well must be brighter than the panel or there is no lattice at all; and much
+        // dimmer than a lit dot or it reads as lit. Deleting the lattice loop fails the first.
+        // Drawing the wells at full alpha fails the second.
+        let t = builtin::dolphin_sony_amber();
+        let (_, _, ox, oy, _, water_row) = geom(190, 60);
+        let (_, c) = settled(&t, 0.0, 30, 190, 60);
+        let well = lum(c.get(ox + 4 * PITCH, oy + PITCH));
+        let panel = lum(c.get(ox + 4 * PITCH + DOT, oy + PITCH + DOT));
+        assert!(
+            well > panel + 3.0,
+            "the unlit well ({well:.1}) must be visibly brighter than the panel ({panel:.1}), or the \
+             display reads as floating squares rather than as a dot matrix"
+        );
+        let (_, hot_c) = settled(&t, 0.9, 30, 190, 60);
+        let lit = lum(hot_c.get(ox + 4 * PITCH, oy + (water_row + 2) * PITCH));
+        assert!(
+            lit > well * 3.0,
+            "a lit dot ({lit:.1}) must clearly outrank a well ({well:.1}); at {:.1}x they read as the \
+             same state",
+            lit / well.max(0.01)
+        );
+    }
+
+    #[test]
+    fn column_height_tracks_level_because_level_is_position() {
+        // The house rule this family is built under: magnitude is POSITION, never brightness. Louder
+        // music must light MORE ROWS. A constant height fails this, and so does the tempting mistake of
+        // encoding level as alpha - which looks plausible on screen and is invisible at this size.
+        let t = builtin::dolphin_sony_amber();
+        let (_, _, ox, oy, spec_rows, water_row) = geom(190, 60);
+        let lit_rows = |gain: f32| -> i32 {
+            let (_, c) = settled(&t, gain, 60, 190, 60);
+            (0..spec_rows)
+                .filter(|k| lum(c.get(ox + PITCH, oy + (water_row + 1 + k) * PITCH)) > 60.0)
+                .count() as i32
+        };
+        let quiet = lit_rows(0.25);
+        let loud = lit_rows(0.95);
+        assert!(
+            loud > quiet + 1,
+            "louder music must light more rows: {quiet} at 0.25 gain against {loud} at 0.95"
+        );
+        assert!(loud <= spec_rows, "the column overflowed its band: {loud} rows of {spec_rows}");
+    }
+
+    #[test]
+    fn the_dolphin_arcs_and_dips_through_the_waterline() {
+        // Above the waterline the dolphin is the ONLY thing drawn, so the topmost lit row up there is
+        // its altitude. Two properties: the altitude must vary a lot over a loop (a frozen phase or a
+        // flat arc fails), and it must come back down to the water (an arc that never lands fails).
+        let t = builtin::dolphin_sony_amber();
+        let (_, cols, ox, oy, _, water_row) = geom(380, 60);
+        let mut fam = Dolphin::default();
+        let mut c = Canvas::new(380, 60);
+        let mut tops: Vec<i32> = Vec::new();
+        let mut ever_at_water = false;
+        for k in 0..400 {
+            fam.draw(&mut c, &t, &frame(0.55, k as f32 * 0.0167));
+            let mut top = None;
+            for row in 0..water_row {
+                for col in 0..cols {
+                    if lum(c.get(ox + col * PITCH, oy + row * PITCH)) > 90.0 {
+                        top = Some(row);
+                        break;
+                    }
+                }
+                if top.is_some() {
+                    break;
+                }
+            }
+            if let Some(r) = top {
+                tops.push(r);
+                if r >= water_row - 1 {
+                    ever_at_water = true;
+                }
+            }
+        }
+        assert!(!tops.is_empty(), "the dolphin never appeared above the waterline at all");
+        let hi = *tops.iter().min().unwrap();
+        let lo = *tops.iter().max().unwrap();
+        assert!(
+            lo - hi >= 3,
+            "the dolphin barely changed altitude over 400 frames: rows {hi}..{lo}"
+        );
+        assert!(ever_at_water, "the dolphin never dipped back down to the waterline");
+    }
+
+    #[test]
+    fn the_dolphin_travels_further_when_the_music_is_louder() {
+        // The owner chose speed-tracks-loudness. Ignoring `drive` in the loop duration leaves these two
+        // equal, which is the mutation this test exists for.
+        let t = builtin::dolphin_sony_amber();
+        let (_, cols, ox, oy, _, water_row) = geom(380, 60);
+        let reach = |gain: f32| -> i32 {
+            let mut fam = Dolphin::default();
+            let mut c = Canvas::new(380, 60);
+            let mut best = 0;
+            for k in 0..120 {
+                fam.draw(&mut c, &t, &frame(gain, k as f32 * 0.0167));
+                for col in 0..cols {
+                    for row in 0..water_row {
+                        if lum(c.get(ox + col * PITCH, oy + row * PITCH)) > 90.0 {
+                            best = best.max(col);
+                        }
+                    }
+                }
+            }
+            best
+        };
+        let quiet = reach(0.20);
+        let loud = reach(0.95);
+        assert!(
+            loud > quiet + 4,
+            "over the same 120 frames the dolphin reached column {quiet} on quiet music and {loud} on \
+             loud - speed is not tracking loudness"
+        );
+    }
+
+    #[test]
+    fn the_keyline_separates_the_sprite_from_the_lattice() {
+        // Without the keyline the sprite is lit dots on a lit lattice and reads as an amorphous
+        // cluster - which is exactly how the first render came out. The keyline is opaque panel, so a
+        // cell adjacent to the body must be DARKER than an ordinary well.
+        let t = builtin::dolphin_sony_amber();
+        let (_, cols, ox, oy, _, water_row) = geom(380, 60);
+        let (_, c) = settled(&t, 0.55, 70, 380, 60);
+        let well_ref = lum(c.get(ox, oy));
+        let mut found_body = false;
+        let mut found_key = false;
+        for row in 1..water_row {
+            for col in 1..cols - 1 {
+                if lum(c.get(ox + col * PITCH, oy + row * PITCH)) > 90.0 {
+                    found_body = true;
+                    for (dc, dr) in [(-1i32, 0i32), (1, 0), (0, -1), (0, 1)] {
+                        let n = lum(c.get(ox + (col + dc) * PITCH, oy + (row + dr) * PITCH));
+                        if n < well_ref * 0.5 {
+                            found_key = true;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(found_body, "no sprite was on screen, so the keyline had nothing to be tested against");
+        assert!(
+            found_key,
+            "nothing around the sprite was darker than an ordinary well ({well_ref:.1}), so the \
+             keyline is not being drawn and the dolphin has nothing separating it from the lattice"
+        );
     }
 
     /// Run: cargo test --release dump_dolphin -- --ignored --nocapture
