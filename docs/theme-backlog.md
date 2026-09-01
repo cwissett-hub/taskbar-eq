@@ -287,3 +287,58 @@ shows. Body-plus-rim gives it one contrast against each.
 A big moon overlap and a legible moon are not both available at this size. The castle is 41px wide and the
 disc 21px across, so at MOON_Y 0.55 the tiers cut the moon into fragments and it stopped reading as a moon
 at all. 0.42 crosses only its bottom edge, which is what "peeking out from behind" actually wants.
+
+---
+
+## 6. A frenchcore family: full-rate flashing at 200bpm (QUEUED, raised 2026-09-01)
+
+Asked for as "full 200bpm flashing visuals, something that could work for frenchcore". Queued behind the
+lightning; raised while that was still in flight.
+
+### Why this genre is actually easy for the DSP
+
+Every other family in this project fights the same problem: real music's transients are ambiguous, so
+onset detection needs a running median, a refractory period and a fixture that proves it fires. Frenchcore
+hands us the opposite - a 200-250bpm kick that dominates the spectrum, on the grid, every single beat.
+This is the one genre where a simple trigger is the CORRECT trigger, and where the risk flips from "never
+fires" to "fires so reliably that the visual has to survive firing constantly".
+
+Check before building: the shared onset detector's refractory is documented at 200ms, which caps it at
+300bpm. 200bpm is a 300ms period, so it clears - but only by 100ms, and a kick roll or a double-kick would
+be swallowed. Measure this rather than assume it, and consider a family-local refractory.
+
+### The accessibility arithmetic, which permits this
+
+200bpm is 3.33 beats/second. The general guidance threshold for flashing content is 3 flashes per second,
+so flashing on every kick is just OVER the general limit - but that limit carries a SIZE exemption, and a
+380x60 panel on a taskbar is very small in visual-field terms, which is exactly the exempt case. So
+full-rate flashing is defensible here in a way it would not be on a fullscreen visualiser.
+
+What that does and does not license:
+  - It does NOT license driving all ~22,800 pixels to peak white every 300ms. The exemption is about
+    small area; a small panel at maximum brightness alternating 3.3x/second is still the worst version of
+    this, and it sits in the user's peripheral vision all working day.
+  - It DOES license flashing ELEMENTS hard - bars, tiles, the field's colour, a strobed subset - while the
+    mean panel luminance stays roughly constant. Alternating hue at constant luminance is the trick worth
+    trying first: it reads as violent without actually being a luminance flash.
+  - Keep it off by default on the other families' colourways, and make the flash strength a theme field so
+    it can be turned down without a rebuild.
+
+### Design notes to start from
+
+  - Luminance-constant hue strobe as the base layer, luminance flash reserved for a sparser accent (every
+    4th or 8th kick) so there IS a dynamic range. Flashing every beat AND every bar means nothing is loud.
+  - The house rule that level is POSITION and never brightness still applies to the METER. A strobe is
+    brightness-as-an-event, not brightness-as-a-level, so it does not conflict - but the thing that tells
+    you the level must still be position, or the family is an ornament.
+  - 200bpm at 60fps is 18 frames per beat, so there is room for a real envelope per kick rather than a
+    1-frame spike. Nothing steps to full value on the firing frame - that mistake has now been made twice
+    in the blossom family alone.
+  - Worth asking the user: is the kick the only thing driving it, or does it also need the mid/high
+    content? Frenchcore's identity is the distorted kick, but the screamed/synth top end is what varies.
+
+### Unanswered
+
+Whether to build this as a new family or as an aggressive colourway set plus a flash param on an existing
+one. A new family is the honest answer if the MOTION is different; a colourway is right if the geometry
+would be the same. Decide by describing the motion first.
