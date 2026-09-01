@@ -238,3 +238,22 @@ branch, which is the right rate for a branch and far too often for lightning.
 - Whether the strike should be visible at all in the colourways whose sky is already bright (Lantern).
   The vaporwave family sets `bolt_bright = 0` on two colourways deliberately, and the storm code checks
   it - the precedent for opting a colourway out already exists.
+
+### Composition, decided 2026-09-01: the moon PEEKS OUT FROM BEHIND the castle
+
+Asked for directly, and it is the legibility choice as well as the aesthetic one - which is worth
+recording because it settles the one question the design pass was told to argue both ways.
+
+The castle is a flat silhouette drawn behind the branch and petals, so its OUTLINE is all it has; there is
+no interior detail to fall back on at 60px. The moon (radius 10) is the brightest thing on the panel. A
+dark tiered roofline crossing a bright disc is therefore the highest-contrast edge available anywhere in
+the frame, which is exactly where the castle most needs to be readable. Against bare dusk sky it is
+dark-on-dark and relies on a few tones of separation; against the moon it is unambiguous.
+
+So: draw order becomes sky -> moon -> castle -> branch -> petals, and the castle must be POSITIONED so
+its most distinctive feature - the stacked roofline, whichever design wins - crosses the disc rather than
+sitting clear of it. Roughly: castle centred near 0.78-0.85 across, base at the panel bottom, tall enough
+that its upper tiers reach the moon at 0.30 down.
+
+Corollary worth remembering when the lightning lands (item 5): the bolt should strike the part of the
+castle that is silhouetted against the MOON, because that is where a rim-lit edge will actually show.
