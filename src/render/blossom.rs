@@ -75,9 +75,45 @@ const FLUTTER_PX: f32 = 13.0;
 const BURST: usize = 7;
 const TRICKLE_PER_S: f32 = 3.0;
 
-/// How hard an onset snaps the branch, in pixels, and how fast that decays.
-const SHAKE_PX: f32 = 2.6;
-const SHAKE_MS: f32 = 320.0;
+/// The branch is a DAMPED SPRING, and an onset is an impulse into it. Peak tip travel in pixels, its
+/// natural frequency, and its damping ratio.
+///
+/// The first version set the deflection directly - `shake = SHAKE_PX` on the firing frame, then an
+/// exponential decay back to rest - and it was reported as juddering. Two faults, and the second is the
+/// one that matters:
+///
+/// - It STEPPED to full deflection in a single frame. A step on a geometric quantity reads as a snap;
+///   this project already learned that from the flourish envelope.
+/// - A decay toward rest NEVER CROSSES ZERO, so the branch could not spring back. It snapped out and
+///   crept home, which is the motion of something being dragged, not something elastic. Asked for as
+///   "it needs to spring back naturally then get hit again" - and springing back means overshooting.
+///
+/// So the onset now adds VELOCITY and the spring does the rest: the branch accelerates away, decelerates,
+/// comes back through rest, overshoots the other side, and settles. Nothing is ever assigned a position.
+///
+/// 3.4 Hz with a damping ratio of 0.22 puts the envelope at e^(-0.22*omega*t): about 7% of peak after
+/// 500ms, so it has visibly settled between beats at 120bpm while still showing roughly one and a half
+/// swings. Underdamped on purpose - at zeta >= 1 there is no overshoot and no spring-back to see.
+const SHAKE_PX: f32 = 4.2;
+const SHAKE_HZ: f32 = 3.4;
+const SHAKE_ZETA: f32 = 0.22;
+
+/// The largest slice the spring is integrated over, in seconds.
+///
+/// Explicit Euler on an oscillator goes unstable once omega*dt approaches 2, and omega here is 21.4, so
+/// dt must stay under ~93ms or the branch flies off the panel instead of settling. A 16.7ms frame is
+/// nowhere near that - but a stutter is, and this app has a KNOWN stutter on one machine. Sub-stepping
+/// costs a handful of multiplies and removes the failure mode entirely, so it is not worth reasoning
+/// about whether a long frame can happen.
+const SPRING_STEP_S: f32 = 0.006;
+
+/// How the shake and the bass bend taper from the trunk to the tip.
+///
+/// Both used to move the WHOLE spine by the same amount, which is a rigid translation - the trunk end
+/// teleported along with the tip, and that is a large part of what read as judder rather than as a
+/// branch. A real branch is anchored where it leaves frame and whips at its far end. Scaled by the
+/// normalised distance along the branch, so the base is fixed and the tip gets the full amplitude.
+const WHIP_GAMMA: f32 = 0.8;
 
 /// The flourish: a gust. The wind spikes and the branch lets go of a great deal at once.
 const GUST_MS: f32 = 2000.0;
@@ -93,6 +129,200 @@ const TUMBLE: [[&str; 3]; 3] = [
 const MASK_W: i32 = 3;
 const MASK_H: i32 = 3;
 
+/// How much of the theme's `glow_strength` the PETALS get, and the floor on the halo radius.
+///
+/// Petals are bloomed on their OWN layer rather than with the rest of the frame, which is the only way
+/// to get a halo that shows: `Canvas::bloom` composites its halo UNDERNEATH the content that made it, so
+/// a petal bloomed on the main canvas puts its glow behind an opaque sky and nothing reaches the screen.
+/// The same reason chroma builds a separate "film" layer.
+///
+/// Scaled to 1.6x rather than passed straight through because a petal is 2-3 pixels: at the frame's own
+/// strength the halo is too faint to see on something that small, where the moon - 21 pixels across -
+/// glows plenty at it. Per-colourway control comes for free, since `glow_strength` is already a theme
+/// field with a TOML binding: a colourway that wants no petal glow sets it to 0 and gets crisp petals.
+const PETAL_GLOW: f32 = 1.6;
+const PETAL_BLOOM_MIN: i32 = 3;
+
+/// The halo strength for the SKY, MOON AND BRANCH - a constant, deliberately NOT `t.glow_strength`.
+///
+/// Both were driven by `glow_strength` for one render, and it washed four of the seven skies out to a
+/// bright khaki or teal: the frame bloom spreads the sky GRADIENT into itself, so turning up the petal
+/// glow silently turned up the whole panel's brightness. The colourways with the most petal glow were
+/// exactly the ones that looked faded, which is what identified it.
+///
+/// So the two are separate now. This value is the old default, which is what every blossom colourway was
+/// tuned against, and it exists to give the moon its halo - blooming a full-panel gradient has nothing
+/// to gain and a washed-out sky to lose.
+const FRAME_GLOW: f32 = 0.35;
+
+/// The castle, as pixel masks. `#` is stone and roof, `.` is sky.
+///
+/// A SILHOUETTE with no interior detail, which is the only thing that works at this size: a tenshu's
+/// identity is entirely in its outline - the stacked, strictly narrowing roofs with upturned eaves over a
+/// battered stone base - and any interior marking at 30 rows just muddies that outline.
+///
+/// Four candidates, up for a decision. Their real differences are what each one SPENDS its pixels on:
+/// `TIERS` buys four roofs and their eave corners, `ISHIGAKI` buys the flared stone base (19 of its 30
+/// rows) on the grounds that the base is what separates a tenshu from a pagoda, `HIMEJI` is tall and
+/// narrow, and `TWOTIER` is the smallest thing that still reads as a castle.
+
+/// Candidate `tiers`: Four-tier tenshu (roofline-first) (41x28).
+// Held for the decision: three of the four candidates are unreferenced until one is chosen, and
+// the losers are deleted at that point rather than kept as dead weight.
+#[allow(dead_code)]
+const CASTLE_TIERS: [&str; 28] = [
+    "...................###...................",
+    "............##.....###.....##............",
+    "............#################............",
+    "..............#############..............",
+    ".................#######.................",
+    ".................#######.................",
+    ".........##....###########....##.........",
+    ".........#######################.........",
+    "...........###################...........",
+    "...............###########...............",
+    "...............###########...............",
+    "...............###########...............",
+    ".....##......###############......##.....",
+    ".....####..###################..####.....",
+    ".......###########################.......",
+    ".........#######################.........",
+    "............#################............",
+    "............#################............",
+    "............#################............",
+    ".........#######################.........",
+    "####...###########################...####",
+    "#########################################",
+    "..#####################################..",
+    "....#################################....",
+    ".......###########################.......",
+    ".......###########################.......",
+    "....#################################....",
+    "..#####################################..",
+];
+
+/// Candidate `ishigaki`: Ishigaki-first tenshu (stone base carries the read) (45x30).
+// Held for the decision: three of the four candidates are unreferenced until one is chosen, and
+// the losers are deleted at that point rather than kept as dead weight.
+#[allow(dead_code)]
+const CASTLE_ISHIGAKI: [&str; 30] = [
+    "....................#####....................",
+    "....................#####....................",
+    "................#############................",
+    "...............###############...............",
+    "...................#######...................",
+    "...................#######...................",
+    "...................#######...................",
+    ".............###################.............",
+    "...........#######################...........",
+    "........#############################........",
+    "........#############################........",
+    "............#####################............",
+    "............#####################............",
+    "............#####################............",
+    "............#####################............",
+    "...........#######################...........",
+    "...........#######################...........",
+    "...........#######################...........",
+    "..........#########################..........",
+    "..........#########################..........",
+    ".........###########################.........",
+    ".........###########################.........",
+    "........#############################........",
+    ".......###############################.......",
+    "......#################################......",
+    ".....###################################.....",
+    "....#####################################....",
+    "...#######################################...",
+    "..#########################################..",
+    ".###########################################.",
+];
+
+/// Candidate `himeji`: Tenshu-5 (tall narrow, Himeji-like) (25x30).
+const CASTLE_HIMEJI: [&str; 30] = [
+    "...........###...........",
+    "..........#####..........",
+    "........#########........",
+    "........#########........",
+    "..........#####..........",
+    "..........#####..........",
+    "......##..#####..##......",
+    "......#############......",
+    "........#########........",
+    "........#########........",
+    "....##..#########..##....",
+    "....#################....",
+    "......#############......",
+    "......#############......",
+    "......#############......",
+    "..##..#############..##..",
+    "..#####################..",
+    "....#################....",
+    "....#################....",
+    "....#################....",
+    "##..#################..##",
+    "#########################",
+    "..#####################..",
+    "..#####################..",
+    "..#####################..",
+    "..#####################..",
+    "..#####################..",
+    ".#######################.",
+    "#########################",
+    "#########################",
+];
+
+/// Candidate `twotier`: Tenshu, two tiers (31x19).
+// Held for the decision: three of the four candidates are unreferenced until one is chosen, and
+// the losers are deleted at that point rather than kept as dead weight.
+#[allow(dead_code)]
+const CASTLE_TWOTIER: [&str; 19] = [
+    "............#######............",
+    "..........###########..........",
+    "........###############........",
+    ".............#####.............",
+    ".............#####.............",
+    ".............#####.............",
+    ".......#################.......",
+    ".....#####################.....",
+    "...#########################...",
+    "...#########################...",
+    "......###################......",
+    ".........#############.........",
+    ".........#############.........",
+    ".........#############.........",
+    ".....#####################.....",
+    "....#######################....",
+    "...#########################...",
+    "..###########################..",
+    "###############################",
+];
+
+/// Which candidate ships. The others go once the choice is made.
+const CASTLE: &[&str] = &CASTLE_HIMEJI;
+
+/// Where the castle stands: the fraction of the panel its LEFT edge sits at, and the last sky row its
+/// foot rests on.
+///
+/// It overlaps the moon on purpose - asked for as "the moon can be peeking out behind the castle" - and
+/// that is the legibility choice as much as the composition one. The castle is a flat dark silhouette, so
+/// its outline is all it has; the moon is the brightest thing on the panel. A roofline crossing a bright
+/// disc is the highest-contrast edge available anywhere in the frame, and against bare dusk sky the same
+/// outline is dark-on-dark. The overlap is where the castle is most readable, not just prettiest.
+///
+/// Standing on the floor rather than floating, because the panel's own bottom row then reads as ground
+/// for free - the panel colour is within about 1 dL* of the castle body, so the foot merges into it.
+/// Anchored to the MOON, not to the panel - the castle's right edge lands this many pixels past the
+/// disc's centre.
+///
+/// It was a fraction of the panel width for one render, and that was wrong twice over: it put the castle
+/// ten columns short of the disc so there was no overlap at all, and because the four candidates are 25
+/// to 45 px wide, a fixed LEFT edge landed each of them in a different place - so the comparison was
+/// measuring position as much as design. Anchoring the right edge to the moon makes every candidate
+/// overlap by construction, whatever its width, and makes the overlap the thing being compared.
+const CASTLE_PAST_MOON: i32 = 4;
+const CASTLE_FOOT_INSET: i32 = 4;
+
 /// The moon: radius in pixels, and where it sits as a fraction of the panel.
 ///
 /// Upper RIGHT, deliberately opposite the branch, which enters from the left. Two focal points on the
@@ -102,9 +332,14 @@ const MASK_H: i32 = 3;
 /// indistinguishable from a bright petal, which is the one thing it must not look like. Ten is what it
 /// wants to BE: reported as "quite small" at six, and a moon is supposed to be the largest single thing
 /// in the sky. At ten it is a third of the panel height and still clears the branch.
+///
+/// MOON_Y moved from 0.30 to 0.42 when the castle arrived, and it had to: at 0.30 the disc spans rows
+/// 8-28, while a 30-row castle standing on the panel floor tops out at row 27 - they would have shared
+/// two rows, which is a touch, not a "peeking out from behind". At 0.42 the disc spans rows 15-35 and the
+/// castle's upper storeys cross its lower half.
 const MOON_R: i32 = 10;
 const MOON_X: f32 = 0.82;
-const MOON_Y: f32 = 0.30;
+const MOON_Y: f32 = 0.42;
 
 /// The twigs: where along the branch, which way, and how long.
 ///
@@ -160,6 +395,8 @@ struct Petal {
     spin_rate: f32,
     /// 0..1 depth-ish shade: petals nearer the front are lighter.
     shade: f32,
+    /// This petal's own stable hue offset, 0..1. Fixed for its whole life - see the draw loop.
+    hue: f32,
     live: bool,
 }
 
@@ -169,7 +406,12 @@ pub struct Blossom {
     /// Smoothed wind, in px/s.
     wind: f32,
     /// Branch shake and bass load, in pixels.
+    /// TEMPORARY, for the castle decision: which candidate mask to draw, `None` meaning `CASTLE`.
+    /// Goes away with the losing candidates once a design is picked.
+    castle_mask: Option<&'static [&'static str]>,
     shake: f32,
+    /// The spring's velocity in px/s. An onset kicks THIS, never `shake` - see `SHAKE_PX`.
+    shake_v: f32,
     bend: f32,
     /// Unspent time toward the next trickle release.
     trickle: f32,
@@ -208,7 +450,39 @@ impl Blossom {
         // near the TIP, which is where a real branch bends. The first version was t^2 over a shallow
         // drop and read as a cable strung across the panel rather than as a branch.
         let base = h * 0.09 + t.powf(1.7) * h * 0.44;
-        base + self.bend + self.shake
+        // Tapered, not rigid - see WHIP_GAMMA. The trunk end is anchored off-panel and does not move.
+        base + (self.bend + self.shake) * t.powf(WHIP_GAMMA)
+    }
+
+
+    /// The castle, behind the branch and the petals.
+    ///
+    /// Drawn straight after the moon so it OCCLUDES the disc - that occlusion is the whole point - and
+    /// before the branch, so bark and blossom pass in front of it and put it at a distance.
+    fn castle(&self, c: &mut Canvas, t: &Theme, w: i32, h: i32) {
+        let mask = self.castle_mask.unwrap_or(CASTLE);
+        let rows = mask.len() as i32;
+        let cols = mask.iter().map(|r| r.len()).max().unwrap_or(0) as i32;
+        // Shed rather than crop: a castle with its roofline cut off is not a castle, and this family
+        // already runs at widths where the branch itself is a thicket.
+        if rows + 6 > h || cols + 8 > w {
+            return;
+        }
+        // LIGHTER than the sky, not darker - which is the opposite of what "silhouette" suggests and is
+        // the physically right answer for something far away. Haze lifts a distant mass toward the sky's
+        // own brightness and drains its contrast; a distant ridge at dusk is a pale grey shape, not a
+        // black one. Drawn darker than the sky for one render, the castle was invisible except where it
+        // crossed the moon - the outline, which is the whole identity, only existed against the disc.
+        let body = Rgba::from_hex(&t.tube.internals, 1.0);
+        let x0 = (w as f32 * MOON_X) as i32 + CASTLE_PAST_MOON - cols;
+        let y0 = h - CASTLE_FOOT_INSET - rows;
+        for (ry, line) in mask.iter().enumerate() {
+            for (rx, ch) in line.chars().enumerate() {
+                if ch == '#' {
+                    c.fill_rect(x0 + rx as i32, y0 + ry as i32, 1, 1, body);
+                }
+            }
+        }
     }
 
     fn branch_len(w: f32) -> f32 {
@@ -247,6 +521,7 @@ impl Blossom {
             spin: rand01(s, i as u32 * 7) * 3.0,
             spin_rate: 1.6 + 3.4 * rand01(s, i as u32 * 11),
             shade: rand01(s, i as u32 * 13),
+            hue: rand01(s, i as u32 * 17),
             live: true,
         };
     }
@@ -310,6 +585,9 @@ impl Family for Blossom {
             let dx = (((MOON_R * MOON_R - dy * dy) as f32).max(0.0).sqrt() + 0.5) as i32;
             c.fill_rect(mx - dx, my + dy, dx * 2 + 1, 1, moon);
         }
+
+        // ---- the castle ----
+        self.castle(c, t, w, h);
         if self.petals.len() != PETALS {
             self.petals = vec![Petal::default(); PETALS];
         }
@@ -334,17 +612,39 @@ impl Family for Blossom {
 
         // The bass loads the branch; an onset snaps it. Both decay, so neither can stick.
         self.bend += (bass * 2.4 - self.bend) * (0.004 * dt).min(1.0);
-        self.shake -= self.shake * (dt / SHAKE_MS).min(1.0);
+
+        // The spring, sub-stepped for stability - see SPRING_STEP_S.
+        let omega = std::f32::consts::TAU * SHAKE_HZ;
+        let (k, damp) = (omega * omega, 2.0 * SHAKE_ZETA * omega);
+        let mut left = (dt / 1000.0).clamp(0.0, 0.25);
+        while left > 0.0 {
+            let step = left.min(SPRING_STEP_S);
+            let accel = -k * self.shake - damp * self.shake_v;
+            self.shake_v += accel * step;
+            self.shake += self.shake_v * step;
+            left -= step;
+        }
         if !self.bend.is_finite() {
             self.bend = 0.0;
         }
-        if !self.shake.is_finite() {
+        if !self.shake.is_finite() || !self.shake_v.is_finite() {
             self.shake = 0.0;
+            self.shake_v = 0.0;
         }
 
         let onset = self.onset.update(&d.levels, dt, 2.8, 200.0);
         if onset {
-            self.shake = SHAKE_PX;
+            // An IMPULSE, and upward. For an underdamped spring the peak displacement from a velocity
+            // kick is about v0/omega, so this is the kick that reaches SHAKE_PX at the tip.
+            //
+            // Upward because the first half-swing is the one the eye catches, and a branch flicking up
+            // throws its blossom off, where a branch pressed down would carry the petals with it. After
+            // that half-swing the direction stops mattering - it is oscillating either way.
+            //
+            // ADDED, not assigned: a beat landing while the branch is still moving should compound with
+            // it, which is what makes a run of hits build instead of restarting. Assigning velocity would
+            // reintroduce exactly the reset that the position-assignment version was reported for.
+            self.shake_v -= SHAKE_PX * std::f32::consts::TAU * SHAKE_HZ;
             self.release(BURST, wf, hf);
         }
         if fired {
@@ -375,9 +675,12 @@ impl Family for Blossom {
         }
         // The twigs - see `TWIGS`. Tapered 3px at the fork to 1px at the tip, and each one FORKS: a twig
         // that does not divide is a spike, and dividing is most of what makes a branch read as a branch.
-        let cluster_col = Rgba::from_hex(&t.lit, 0.85);
-        let cluster_hot = Rgba::from_hex(&t.hot, 1.0);
-        for (along, dx, dy, tlen) in TWIGS.iter() {
+        for (twig_i, (along, dx, dy, tlen)) in TWIGS.iter().enumerate() {
+            // Clusters vary by TWIG, so a rainbow tree blossoms in more than one colour along its length
+            // - and on a fixed colourway this is `t.lit` for every twig, exactly as before.
+            let twig01 = twig_i as f32 / TWIGS.len() as f32;
+            let cluster_col = crate::render::tint(t, twig01, d.time_s, false, &t.lit, 0.85);
+            let cluster_hot = crate::render::tint(t, twig01, d.time_s, true, &t.hot, 1.0);
             let at = len * along;
             let base_y = self.spine_y(at, wf, hf);
             // CLAMPED to the room that actually exists. The lengths in TWIGS are what the shape wants;
@@ -443,10 +746,24 @@ impl Family for Blossom {
             }
         }
 
+        // Bloom the SKY, MOON AND BRANCH here, before the petals exist - so the moon keeps the soft
+        // halo it has always had, and the petals are not bloomed twice (once with the frame and again
+        // on their own layer, which reads as a smear rather than a glow).
+        c.bloom(t.bloom as i32, FRAME_GLOW);
+
         // ---- petals ----
-        let petal = Rgba::from_hex(&t.lit, 1.0);
-        let petal_hot = Rgba::from_hex(&t.hot, 1.0);
-        let petal_dim = Rgba::from_hex(&t.lit, t.ghost.clamp(0.15, 1.0).max(0.45));
+        //
+        // On their own transparent layer so they can glow: see PETAL_GLOW.
+        let mut g = Canvas::new(w, h);
+        // Resolved PER PETAL through the shared rainbow resolver. On a fixed colourway `tint` returns
+        // `t.lit` unchanged, so those themes are bit-for-bit what they were.
+        //
+        // The position argument is the petal's OWN STABLE HUE OFFSET, not its screen position. That is a
+        // deliberate departure from how the other families use `tint`, and the reason is that a petal
+        // whose colour changed as it drifted across the panel would read as a rendering fault rather
+        // than as variety - real blossom on one tree varies from flower to flower, not from place to
+        // place. Each petal keeps its hue for its whole life and takes a new one when it is reseeded.
+        let petal_dim_a = t.ghost.clamp(0.15, 1.0).max(0.45);
         let secs = dt / 1000.0;
         for i in 0..self.petals.len() {
             if !self.petals[i].live {
@@ -470,13 +787,15 @@ impl Family for Blossom {
             let mask = &TUMBLE[((p.spin as i32).rem_euclid(3)) as usize];
             // Nearer petals lighter, and the very lightest catch the light - a shade split rather than a
             // level mapping, so it carries no information and cannot mislead.
-            let body = if p.shade > 0.86 {
-                petal_hot
-            } else if p.shade < 0.32 {
-                petal_dim
+            let (hue, shade) = (p.hue, p.shade);
+            let body = if shade > 0.86 {
+                crate::render::tint(t, hue, d.time_s, true, &t.hot, 1.0)
+            } else if shade < 0.32 {
+                crate::render::tint(t, hue, d.time_s, false, &t.lit, petal_dim_a)
             } else {
-                petal
+                crate::render::tint(t, hue, d.time_s, false, &t.lit, 1.0)
             };
+            let petal_hot = crate::render::tint(t, hue, d.time_s, true, &t.hot, 1.0);
             let (px, py) = (p.x as i32, p.y as i32);
             for (ry, line) in mask.iter().enumerate() {
                 for (rx, ch) in line.chars().enumerate() {
@@ -484,13 +803,24 @@ impl Family for Blossom {
                         continue;
                     }
                     let col = if ch == '+' { petal_hot } else { body };
-                    c.fill_rect(px + rx as i32, py + ry as i32, 1, 1, col);
+                    g.fill_rect(px + rx as i32, py + ry as i32, 1, 1, col);
                 }
             }
             let _ = (MASK_W, MASK_H);
         }
 
-        c.bloom(t.bloom as i32, t.glow_strength);
+        // The petal glow. Bloom the layer, then composite it over the frame - the halo lands behind the
+        // petals within the layer and over the sky outside them, which is what makes it visible at all.
+        let strength = (t.glow_strength * PETAL_GLOW).clamp(0.0, 1.0);
+        if t.bloom > 0.0 && strength > 0.0 {
+            g.bloom((t.bloom as i32).max(PETAL_BLOOM_MIN), strength);
+        }
+        c.draw_over(&g);
+
+        // The bloom spreads a halo outward from every petal, including the ones drifting past the edge,
+        // so the last thing that happens is clipping back inside the panel the family drew. Without this
+        // a glowing petal at the boundary squares off the rounded corner it just passed.
+        c.clip_to_rounded_rect(1, 2, w - 2, h - 4, 3);
     }
 }
 
@@ -566,7 +896,17 @@ mod tests {
             after > before,
             "an onset released nothing: {before} petals in flight before, {after} after"
         );
-        assert!(fam.shake > 0.5, "the branch did not snap: shake {:.2}px", fam.shake);
+        // The spring property, which is what was actually asked for: the branch must not merely move,
+        // it must come back THROUGH rest and out the other side. The old one-shot decay would pass a
+        // "did it move" assertion and fail this one, which is why the assertion is shaped this way.
+        let (mut lo, mut hi) = (0.0f32, 0.0f32);
+        for k in 0..90 {
+            fam.draw(&mut c, &t, &frame(0.0, 4.0 + k as f32 * 0.0167));
+            lo = lo.min(fam.shake);
+            hi = hi.max(fam.shake);
+        }
+        assert!(lo < -0.4, "the branch never sprang up: lowest {lo:.2}px");
+        assert!(hi > 0.4, "the branch never overshot back down: highest {hi:.2}px");
     }
 
     /// Petals must TUMBLE, not slide. A petal that never changes mask reads as a speck.
@@ -642,6 +982,22 @@ mod tests {
             }
             write(format!("blossom-{}", t.id), &c);
         }
+        // The four castle candidates, in the real scene at true scale with the moon behind them.
+        for (tag, mask) in [
+            ("tiers", &CASTLE_TIERS[..]),
+            ("ishigaki", &CASTLE_ISHIGAKI[..]),
+            ("himeji", &CASTLE_HIMEJI[..]),
+            ("twotier", &CASTLE_TWOTIER[..]),
+        ] {
+            let t = builtin::blossom_dusk();
+            let mut fam = Blossom { castle_mask: Some(mask), ..Default::default() };
+            let mut c = Canvas::new(380, 60);
+            for k in 0..420 {
+                fam.draw(&mut c, &t, &frame(0.62, k as f32 * 0.0167));
+            }
+            write(format!("blossom-castle-{tag}"), &c);
+        }
+
         // Quiet against loud, so the wind mapping is visible as a difference.
         let t = builtin::blossom_dusk();
         for (gain, tag) in [(0.15f32, "calm"), (0.95, "gale")] {

@@ -70,6 +70,8 @@ pub fn all() -> Vec<Theme> {
         blossom_lantern(),
         blossom_plum(),
         blossom_gold(),
+        blossom_jade(),
+        blossom_riot(),
         nixie_orange(),
         nixie_ice(),
         nixie_neon_green(),
@@ -3413,11 +3415,18 @@ pub fn blossom_dusk() -> Theme {
         edge: "#ffb7d2".into(),
         edge_alpha: 0.13,
         ghost: 0.52,
+        // Petal glow - scaled by PETAL_GLOW in the renderer, because a 2px petal needs more
+        // halo than the 21px moon to show any at all.
+        glow_strength: 0.35,
         tube: TubeParams {
             chassis_top: "#6b5240".into(),
             chassis_bottom: "#2e2218".into(),
             // The sky and the moon: this family borrows the three unused TubeParams slots rather
             // than growing a params struct for what is three hex values.
+            // The castle silhouette. `internals` is documented as "silhouetted against the
+            // glow, dark on purpose", which is exactly a tenshu against a dusk sky, and it was
+            // the one TubeParams slot this family had not already borrowed.
+            internals: "#3a2547".into(),
             socket: "#120b22".into(),
             collar: "#2a1430".into(),
             glass: "#f3ddc8".into(),
@@ -3438,11 +3447,18 @@ pub fn blossom_night() -> Theme {
         edge: "#dfe4ff".into(),
         edge_alpha: 0.12,
         ghost: 0.50,
+        // Petal glow - scaled by PETAL_GLOW in the renderer, because a 2px petal needs more
+        // halo than the 21px moon to show any at all.
+        glow_strength: 0.22,
         tube: TubeParams {
             chassis_top: "#4a4a5e".into(),
             chassis_bottom: "#1c1c26".into(),
             // The sky and the moon: this family borrows the three unused TubeParams slots rather
             // than growing a params struct for what is three hex values.
+            // The castle silhouette. `internals` is documented as "silhouetted against the
+            // glow, dark on purpose", which is exactly a tenshu against a dusk sky, and it was
+            // the one TubeParams slot this family had not already borrowed.
+            internals: "#1e2740".into(),
             socket: "#04050e".into(),
             collar: "#101a30".into(),
             glass: "#eef2ff".into(),
@@ -3457,19 +3473,26 @@ pub fn blossom_lantern() -> Theme {
     Theme {
         id: "blossom-lantern".into(),
         name: "Lantern".into(),
-        lit: "#ff9ec0".into(),
-        hot: "#ffe6d8".into(),
-        panel: "#100608".into(),
-        edge: "#ff9ec0".into(),
+        lit: "#ffc46a".into(),
+        hot: "#fff2cf".into(),
+        panel: "#180705".into(),
+        edge: "#ffc46a".into(),
         edge_alpha: 0.15,
         ghost: 0.55,
+        // Petal glow - scaled by PETAL_GLOW in the renderer, because a 2px petal needs more
+        // halo than the 21px moon to show any at all.
+        glow_strength: 0.62,
         tube: TubeParams {
             chassis_top: "#7a4f38".into(),
             chassis_bottom: "#331d14".into(),
             // The sky and the moon: this family borrows the three unused TubeParams slots rather
             // than growing a params struct for what is three hex values.
-            socket: "#180608".into(),
-            collar: "#3a1010".into(),
+            // The castle silhouette. `internals` is documented as "silhouetted against the
+            // glow, dark on purpose", which is exactly a tenshu against a dusk sky, and it was
+            // the one TubeParams slot this family had not already borrowed.
+            internals: "#45201c".into(),
+            socket: "#180705".into(),
+            collar: "#3a1408".into(),
             glass: "#ffcf9a".into(),
             ..TubeParams::default()
         },
@@ -3482,20 +3505,27 @@ pub fn blossom_plum() -> Theme {
     Theme {
         id: "blossom-plum".into(),
         name: "White plum".into(),
-        lit: "#f6f2ff".into(),
-        hot: "#ffffff".into(),
-        panel: "#07070c".into(),
-        edge: "#f6f2ff".into(),
+        lit: "#d7a2ff".into(),
+        hot: "#f6e6ff".into(),
+        panel: "#0d0716".into(),
+        edge: "#d7a2ff".into(),
         edge_alpha: 0.12,
         ghost: 0.48,
+        // Petal glow - scaled by PETAL_GLOW in the renderer, because a 2px petal needs more
+        // halo than the 21px moon to show any at all.
+        glow_strength: 0.50,
         tube: TubeParams {
-            chassis_top: "#565064".into(),
-            chassis_bottom: "#211f28".into(),
+            chassis_top: "#4a3a5e".into(),
+            chassis_bottom: "#1d1628".into(),
             // The sky and the moon: this family borrows the three unused TubeParams slots rather
             // than growing a params struct for what is three hex values.
-            socket: "#06060e".into(),
-            collar: "#141426".into(),
-            glass: "#ffffff".into(),
+            // The castle silhouette. `internals` is documented as "silhouetted against the
+            // glow, dark on purpose", which is exactly a tenshu against a dusk sky, and it was
+            // the one TubeParams slot this family had not already borrowed.
+            internals: "#2c2242".into(),
+            socket: "#0d0716".into(),
+            collar: "#241344".into(),
+            glass: "#efe2ff".into(),
             ..TubeParams::default()
         },
         ..blossom_base()
@@ -3507,20 +3537,98 @@ pub fn blossom_gold() -> Theme {
     Theme {
         id: "blossom-gold".into(),
         name: "Sakura gold".into(),
-        lit: "#ffc2d6".into(),
-        hot: "#fff6dc".into(),
-        panel: "#0b0709".into(),
-        edge: "#ffc2d6".into(),
+        lit: "#ffe27a".into(),
+        hot: "#fffbe0".into(),
+        panel: "#0f0c05".into(),
+        edge: "#ffe27a".into(),
         edge_alpha: 0.14,
         ghost: 0.52,
+        // Petal glow - scaled by PETAL_GLOW in the renderer, because a 2px petal needs more
+        // halo than the 21px moon to show any at all.
+        glow_strength: 0.55,
         tube: TubeParams {
             chassis_top: "#a8843c".into(),
             chassis_bottom: "#3d2f16".into(),
             // The sky and the moon: this family borrows the three unused TubeParams slots rather
             // than growing a params struct for what is three hex values.
-            socket: "#100a10".into(),
-            collar: "#2c1a18".into(),
+            // The castle silhouette. `internals` is documented as "silhouetted against the
+            // glow, dark on purpose", which is exactly a tenshu against a dusk sky, and it was
+            // the one TubeParams slot this family had not already borrowed.
+            internals: "#342c18".into(),
+            socket: "#0f0c05".into(),
+            collar: "#2e2410".into(),
             glass: "#ffe9b0".into(),
+            ..TubeParams::default()
+        },
+        ..blossom_base()
+    }
+}
+
+/// Jade: pale green-white blossom over a deep teal dusk. The coldest of the set, and the furthest from
+/// what cherry blossom "is" - which is the point.
+pub fn blossom_jade() -> Theme {
+    Theme {
+        id: "blossom-jade".into(),
+        name: "Jade".into(),
+        lit: "#9df0c8".into(),
+        hot: "#e8fff5".into(),
+        panel: "#04100c".into(),
+        edge: "#9df0c8".into(),
+        edge_alpha: 0.13,
+        ghost: 0.50,
+        // Petal glow - scaled by PETAL_GLOW in the renderer, because a 2px petal needs more
+        // halo than the 21px moon to show any at all.
+        glow_strength: 0.30,
+        tube: TubeParams {
+            chassis_top: "#41645a".into(),
+            chassis_bottom: "#152520".into(),
+            // The castle silhouette. `internals` is documented as "silhouetted against the
+            // glow, dark on purpose", which is exactly a tenshu against a dusk sky, and it was
+            // the one TubeParams slot this family had not already borrowed.
+            internals: "#17342c".into(),
+            socket: "#04100c".into(),
+            collar: "#0d3630".into(),
+            glass: "#dcfff2".into(),
+            ..TubeParams::default()
+        },
+        ..blossom_base()
+    }
+}
+
+/// EVERY PETAL ITS OWN COLOUR, from its own stable hue - a tree in every shade at once.
+///
+/// This is the one that answers the complaint most directly, because the sameness was WITHIN a frame as
+/// well as between colourways: every petal on screen used to be the same colour as every other. Uses the
+/// shared rainbow machinery, so `RAINBOW_SAT`'s measured ceiling of 0.68 applies - at full saturation
+/// pure blue reaches only 2.31:1 against a near-black panel and fails the 3:1 rule at every brightness.
+///
+/// `rainbow_spread` is 1.0 so hue varies per PETAL rather than cycling the whole tree together. The
+/// clusters on the branch vary by twig for the same reason.
+pub fn blossom_riot() -> Theme {
+    Theme {
+        id: "blossom-riot".into(),
+        name: "Riot".into(),
+        lit: "#ffffff".into(),
+        hot: "#ffffff".into(),
+        panel: "#08060d".into(),
+        edge: "#b8a8c8".into(),
+        edge_alpha: 0.13,
+        ghost: 0.52,
+        rainbow: 1.0,
+        rainbow_spread: 1.0,
+        // Petal glow - scaled by PETAL_GLOW in the renderer, because a 2px petal needs more
+        // halo than the 21px moon to show any at all.
+        glow_strength: 0.58,
+        tube: TubeParams {
+            chassis_top: "#5c4a52".into(),
+            chassis_bottom: "#251d22".into(),
+            // The castle silhouette. `internals` is documented as "silhouetted against the
+            // glow, dark on purpose", which is exactly a tenshu against a dusk sky, and it was
+            // the one TubeParams slot this family had not already borrowed.
+            internals: "#2b2439".into(),
+            socket: "#08060d".into(),
+            collar: "#1e1430".into(),
+            glass: "#fff4fa".into(),
             ..TubeParams::default()
         },
         ..blossom_base()
