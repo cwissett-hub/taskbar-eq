@@ -120,6 +120,110 @@ const GUST_MS: f32 = 2000.0;
 const GUST_WIND: f32 = 1.9;
 const GUST_RELEASE: usize = 26;
 
+/// LIGHTNING. Bands fed to the shared flourish trigger, so what it ranks is a BASS hit.
+///
+/// Three - bins 2..5, roughly 47-117 Hz, the kick's fundamental and nothing else.
+///
+/// MEASURED, and the measurement is the whole point. Strikes per minute over 300 seconds of each of the
+/// repo's three real-music fixtures, driven through blossom's own ballistics at strength 0.10, from
+/// `probe_strike_rate` in this file:
+///
+///   bands 3   2.40 / 4.40 / 2.20   <- shipped: all three fixtures fire
+///   bands 4   4.60 / 6.60 / 4.40
+///   bands 5   2.20 / 6.60 / 0.00   <- the flat-mastered fixture stops firing entirely
+///   bands 6   0.00 / 6.60 / 0.00   <- and so does the steady groove
+///   bands 8   0.00 / 2.20 / 0.00   <- two of three never fire at all
+///
+/// Note where that puts the cliff: at SIX bands two of the three fixtures go silent, and at eight only
+/// the drum-and-bass one survives. A design pass recommended eight on measured grounds and reported
+/// 1.75/6.50/1.50 for it; that did not reproduce against the real crate, and the numbers above are what
+/// this code actually does. Widening the window does not make a bass trigger more reliable - it dilutes
+/// the kick with everything above it until the median stops seeing a kick at all.
+///
+/// This is the failure this project has now hit three times, and the vaporwave family shipped a version
+/// of it. Hence the test that drives each fixture SEPARATELY: an aggregate passes while two of three
+/// give nothing.
+const STRIKE_BASS_BANDS: usize = 3;
+
+/// The strike envelope's total length, and its rise.
+///
+/// `flourish::Envelope` STEPS to 1.0 on the frame it fires, and a step on a geometric quantity has now
+/// been reported twice in this family alone - the gust envelope and the branch shake. So the envelope is
+/// used as a CLOCK and `strike_shape` is the curve: `strike_shape(0.0)` is exactly 0.0, so the firing
+/// frame draws nothing at all. Measured at dt 16.7ms the first eight frames are
+/// 0.000 0.189 0.585 0.927 0.988 0.959 0.931 0.903.
+const STRIKE_MS: f32 = 1200.0;
+const STRIKE_RISE_MS: f32 = 60.0;
+
+/// A gap in DRAWN time longer than this means frames were skipped, so the trigger's history is stale.
+///
+/// `Smoother::update` runs whether or not the family draws, while the trigger only advances when it does,
+/// and the reveal gate needs 400ms above threshold before the family draws at all - so the first drawn
+/// frame after the panel comes back reads a whole returning track as one jump. MEASURED: it fires on 4 of
+/// 4 hide/reveal cycles on every fixture, at a gate opacity of 0.037. The one guaranteed strike would be
+/// invisible AND would spend the 2500ms minimum gap.
+///
+/// 0.25s sits above the 100ms cap main.rs puts on `dt_ms` and below the 400ms reveal delay.
+const STALE_GAP_S: f32 = 0.25;
+
+/// The sky flash: its peak, and the mix coefficient.
+///
+/// ONLY THE TOP STOP IS LIFTED. `vertical_gradient` interpolates linearly, so the lift falls off to
+/// nothing by the horizon for free - which keeps it off the castle standing in the lower rows, off the
+/// petals that pile up near the bottom, and byte-identical to the shipped gradient whenever nothing has
+/// struck. Measured: 0 pixels differ on all seven colourways at both widths when nothing is striking.
+///
+/// 0.15 raises mean sky luminance 1.33x (jade) to 1.65x (night), which is below the excursion the
+/// vaporwave family already accepts. The cost to the reading is essentially nil: the worst dim-petal
+/// contrast anywhere moves by 0.11 of a point (dusk 3.79 -> 3.68), because the lift is largest exactly
+/// where the sky is darkest and the petal has the most headroom. Lifting BOTH stops instead takes dusk to
+/// 3.41 and plum to 2.73, and a full-sky sheet at vaporwave's own strength takes dusk to 2.17.
+const FLASH_PEAK: f32 = 0.15;
+const FLASH_MIX: f32 = 0.55;
+
+/// The bolt. Anchor column as an offset from the moon's centre, and the path's shape.
+///
+/// THE CORRIDOR IS TEN COLUMNS WIDE and that is the hard constraint. The columns that are both clear of
+/// the moon disc and land on castle stone are exactly 291..300 at w=380: the disc starts at 301, and
+/// cols 269..290 hold no stone at all, so a bolt left of 291 would end in mid-air. Hence an anchor 15
+/// columns left of the moon's centre - col 296, which has 39 clear sky rows above its roofline.
+///
+/// SWING IS IN ABSOLUTE PIXELS, deliberately not a fraction of the width. The vaporwave family's bolt
+/// jitters by `w * 0.06`, which is +/-22.8px at w=380 - ported as-is it puts a vertex over the disc on
+/// essentially every seed. The upper clamp is DERIVED from `MOON_R` so it cannot drift onto the disc if
+/// someone later raises the swing.
+/// The sky gradient's first row, which is where a bolt starts.
+const SKY_TOP_ROW: i32 = 3;
+const BOLT_ANCHOR_OFF: i32 = -15;
+const BOLT_SWING_PX: i32 = 4;
+const BOLT_SEGS: i32 = 7;
+const BOLT_FORK_AT: f32 = 0.55;
+const BOLT_FORK_SEGS: u32 = 2;
+const BOLT_FORK_SWING_PX: i32 = 5;
+
+/// How far LEFT of the anchor the fork may reach, in pixels.
+///
+/// Wider than the main bolt's corridor on purpose, and the asymmetry is the point. The main path is
+/// boxed in on both sides - it must clear the moon on the right and must land on stone on the left - so
+/// clamping the fork to the same 10 columns drew it directly on top of the trunk, where it was
+/// invisible. A fork does not have to land on anything, and real lightning forks end in mid-air, so it
+/// is only bounded on the moon side. Left is free.
+const BOLT_FORK_REACH: i32 = 13;
+const BOLT_WIDE_A: f32 = 0.30;
+
+/// The bolt's halo. A FIXED radius, deliberately not `t.bloom`.
+///
+/// `t.bloom` is a TOML-bindable f32 with no validation and no upper clamp anywhere in the schema, and
+/// `Canvas::bloom` iterates `-radius..=radius` per pixel per pass. Measured at 380x60: r=4 is 1.03ms,
+/// r=12 is 2.09ms, r=64 is 8.17ms - and `1e300` in a TOML deserialises to infinity, which as an `i32`
+/// cast is 2147483647. A constant removes that exposure from this path entirely.
+///
+/// Counter-intuitively a LARGER radius gives a DIMMER halo for a thin source, because the box blur
+/// divides by the full kernel count. The brightness lever is the wide pass, not the radius.
+const BOLT_BLOOM_R: i32 = 4;
+const BOLT_GLOW: f32 = 0.85;
+
+
 /// The three tumble masks: face, angled, edge. `#` is the petal body, `+` its lit edge.
 const TUMBLE: [[&str; 3]; 3] = [
     ["+##", "###", ".#."],  // face on
@@ -143,17 +247,6 @@ const MASK_H: i32 = 3;
 const PETAL_GLOW: f32 = 1.6;
 const PETAL_BLOOM_MIN: i32 = 3;
 
-/// The halo strength for the SKY, MOON AND BRANCH - a constant, deliberately NOT `t.glow_strength`.
-///
-/// Both were driven by `glow_strength` for one render, and it washed four of the seven skies out to a
-/// bright khaki or teal: the frame bloom spreads the sky GRADIENT into itself, so turning up the petal
-/// glow silently turned up the whole panel's brightness. The colourways with the most petal glow were
-/// exactly the ones that looked faded, which is what identified it.
-///
-/// So the two are separate now. This value is the old default, which is what every blossom colourway was
-/// tuned against, and it exists to give the moon its halo - blooming a full-panel gradient has nothing
-/// to gain and a washed-out sky to lose.
-const FRAME_GLOW: f32 = 0.35;
 
 /// The castle, as pixel masks. `#` is stone and roof, `.` is sky.
 ///
@@ -347,6 +440,13 @@ pub struct Blossom {
     onset: crate::dsp::onset::Flux,
     flourish: crate::dsp::flourish::Trigger,
     gust: crate::dsp::flourish::Envelope,
+    /// The strike's clock. Read as an AGE, never as a level - see `strike_shape`.
+    strike: crate::dsp::flourish::Envelope,
+    /// The bolt's path seed, bumped on every fire so consecutive strikes differ. Deterministic, so a
+    /// given seed always draws the same bolt.
+    bolt_seed: u32,
+    /// `d.time_s` on the previous DRAWN frame. `None` until the family has drawn once - see STALE_GAP_S.
+    last_seen_s: Option<f32>,
 }
 
 fn resp(level: f32, sensitivity: f32) -> f32 {
@@ -387,6 +487,140 @@ impl Blossom {
     ///
     /// Drawn straight after the moon so it OCCLUDES the disc - that occlusion is the whole point - and
     /// before the branch, so bark and blossom pass in front of it and put it at a distance.
+    /// Deterministic value hash, the same one the vaporwave family uses, so a given seed always draws
+    /// the same bolt and a golden stays reproducible.
+    fn bolt_hash(mut x: u32) -> u32 {
+        x ^= x >> 16;
+        x = x.wrapping_mul(0x7feb_352d);
+        x ^= x >> 15;
+        x = x.wrapping_mul(0x846c_a68b);
+        x ^= x >> 16;
+        x
+    }
+
+    fn bolt_signed(seed: u32, n: u32) -> f32 {
+        (Self::bolt_hash(seed ^ n.wrapping_mul(0x9e37_79b9)) as f32 / u32::MAX as f32) * 2.0 - 1.0
+    }
+
+    /// The panel row of the first stone pixel in panel column `col`, or `None` if that column holds no
+    /// stone. Same mask, same origin and same shed rule as `castle`, so the bolt cannot land where the
+    /// castle is not drawn.
+    fn roof_row(w: i32, h: i32, col: i32) -> Option<i32> {
+        let rows = CASTLE.len() as i32;
+        let cols = CASTLE.iter().map(|r| r.len()).max().unwrap_or(0) as i32;
+        if rows + 6 > h || cols + 8 > w {
+            return None; // no castle drawn, so there is nothing to strike
+        }
+        let x0 = (w as f32 * MOON_X) as i32 + CASTLE_PAST_MOON - cols;
+        let y0 = h - CASTLE_FOOT_INSET - rows;
+        let rx = col - x0;
+        if rx < 0 || rx >= cols {
+            return None;
+        }
+        for ry in 0..rows {
+            let line = CASTLE[ry as usize].as_bytes();
+            if (rx as usize) < line.len() && line[rx as usize] == b'#' {
+                return Some(y0 + ry);
+            }
+        }
+        None
+    }
+
+    /// The strike's brightness from its AGE in milliseconds.
+    ///
+    /// A smoothstep rise then a quadratic fall. `strike_shape(0.0)` is exactly 0.0, which is the whole
+    /// point: the frame that fires draws nothing, so nothing steps.
+    fn strike_shape(age_ms: f32) -> f32 {
+        if !age_ms.is_finite() || age_ms < 0.0 {
+            return 0.0;
+        }
+        if age_ms < STRIKE_RISE_MS {
+            let u = (age_ms / STRIKE_RISE_MS).clamp(0.0, 1.0);
+            u * u * (3.0 - 2.0 * u)
+        } else {
+            let u = ((age_ms - STRIKE_RISE_MS) / (STRIKE_MS - STRIKE_RISE_MS)).clamp(0.0, 1.0);
+            (1.0 - u) * (1.0 - u)
+        }
+    }
+
+    /// The strike on its own transparent layer, or `None` if there is nothing to strike.
+    ///
+    /// Its own layer because `Canvas::bloom` composites its halo UNDERNEATH the content that made it, and
+    /// this family's sky is fully opaque - a bolt drawn straight onto the panel would get no halo at all.
+    fn bolt_layer(&self, w: i32, h: i32, t: &Theme, bright: f32) -> Option<Canvas> {
+        if !(bright > 0.0) {
+            return None; // false for NaN, which is the point
+        }
+        let mx = (w as f32 * MOON_X) as i32;
+        let x0 = mx + BOLT_ANCHOR_OFF;
+        let end = Self::roof_row(w, h, x0)? - 1; // the last sky row under the anchor
+        if end <= SKY_TOP_ROW + 4 {
+            return None;
+        }
+        let seed = self.bolt_seed;
+        let wide = Rgba::from_hex(&t.hot, (bright * BOLT_WIDE_A).clamp(0.0, 1.0));
+        let core = Rgba::from_hex(&t.hot, bright.clamp(0.0, 1.0));
+        // The corridor. `hi` is derived from MOON_R so the wide pass's +1 offset can never reach the
+        // disc's left edge, whatever BOLT_SWING_PX is later set to.
+        let lo = x0 - BOLT_SWING_PX;
+        let hi = (mx - MOON_R - 2).min(x0 + BOLT_SWING_PX);
+        if hi < lo {
+            return None;
+        }
+        let mut pts: Vec<(i32, i32)> = Vec::with_capacity(BOLT_SEGS as usize + 1);
+        for seg in 0..=BOLT_SEGS {
+            let f = seg as f32 / BOLT_SEGS as f32;
+            let y = SKY_TOP_ROW + (f * (end - SKY_TOP_ROW) as f32).round() as i32;
+            let j = (Self::bolt_signed(seed, seg as u32 + 1) * BOLT_SWING_PX as f32).round() as i32;
+            pts.push(((x0 + j).clamp(lo, hi), y.clamp(SKY_TOP_ROW, end)));
+        }
+        pts[0].1 = SKY_TOP_ROW; // starts at the top of the sky
+        let n = pts.len();
+        pts[n - 1] = (x0.clamp(lo, hi), end); // and ends ON the roofline
+        let mut b = Canvas::new(w, h);
+        for pair in pts.windows(2) {
+            // The wide pass first, the core on top of it.
+            for dx in -1..=1 {
+                b.line(pair[0].0 + dx, pair[0].1, pair[1].0 + dx, pair[1].1, wide);
+            }
+        }
+        for pair in pts.windows(2) {
+            b.line(pair[0].0, pair[0].1, pair[1].0, pair[1].1, core);
+        }
+        let start = ((pts.len() as f32) * BOLT_FORK_AT) as usize;
+        if start + 1 < pts.len() {
+            let (mut fx, mut fy) = pts[start];
+            // The fork leans LEFT, away from the moon, into the room the main path does not have. Its
+            // own lower bound, not the corridor's - see BOLT_FORK_REACH.
+            let fork_lo = x0 - BOLT_FORK_REACH;
+            for k in 0..BOLT_FORK_SEGS {
+                let swing = Self::bolt_signed(seed, 100 + k).abs() * BOLT_FORK_SWING_PX as f32;
+                let nx = (fx - swing.round() as i32).clamp(fork_lo, hi);
+                let ny = (fy + (((end - fy) as f32) * 0.40).round().max(1.0) as i32).min(end);
+                b.line(fx, fy, nx, ny, core);
+                fx = nx;
+                fy = ny;
+            }
+        }
+        // A SAFETY NET, not a nicety: whatever the path did, no bolt pixel may land on castle stone. The
+        // castle's outline is its entire identity and this layer composites over it at full alpha.
+        // Punching BEFORE the bloom leaves the halo free to spill down onto the roof, which is the
+        // strike lighting it.
+        let rows = CASTLE.len() as i32;
+        let cols = CASTLE.iter().map(|r| r.len()).max().unwrap_or(0) as i32;
+        let cx0 = mx + CASTLE_PAST_MOON - cols;
+        let cy0 = h - CASTLE_FOOT_INSET - rows;
+        for ry in 0..rows {
+            let line = CASTLE[ry as usize].as_bytes();
+            for rx in 0..cols {
+                if (rx as usize) < line.len() && line[rx as usize] == b'#' {
+                    b.punch_rect(cx0 + rx, cy0 + ry, 1, 1);
+                }
+            }
+        }
+        Some(b)
+    }
+
     fn castle(&self, c: &mut Canvas, t: &Theme, w: i32, h: i32) {
         let mask = CASTLE;
         let rows = mask.len() as i32;
@@ -504,7 +738,36 @@ impl Family for Blossom {
         if self.seed == 0 {
             self.seed = 0x9e37_79b9;
         }
-        let fired = self.flourish.update(&d.levels, dt, t.flourish);
+        // The trigger is fed the LOW EIGHT BANDS only, so what it ranks is a bass hit rather than a
+        // snare or a chord stab. Everything else is the shared machinery unchanged - the
+        // median-of-recent-candidates rule, the minimum gap, the global on/off and the "flourish now"
+        // button all still apply, because this is still `dsp::flourish::Trigger`.
+        //
+        // The strike and the GUST are therefore the same event, and that is deliberate: a gust of wind
+        // and a lightning strike together is a storm, which is a better scene than either alone. The
+        // honest cost is that a colourway cannot have one without the other.
+        let nb = STRIKE_BASS_BANDS.min(d.levels.len());
+        let mut fired = self.flourish.update(&d.levels[..nb], dt, t.flourish);
+        // A gap in DRAWN time means the panel was hidden - see STALE_GAP_S.
+        let stale = match self.last_seen_s {
+            Some(prev) => (d.time_s - prev).rem_euclid(3600.0) > STALE_GAP_S,
+            None => false, // the first flux update seeds its own history and returns false
+        };
+        self.last_seen_s = Some(d.time_s);
+        if stale {
+            fired = false;
+        }
+        if fired {
+            self.bolt_seed = self.bolt_seed.wrapping_add(1);
+        }
+        let strike_lvl = self.strike.update(fired, dt, STRIKE_MS);
+        let bright = {
+            let b = Self::strike_shape((1.0 - strike_lvl) * STRIKE_MS);
+            // Sanitised ONCE, here. `f32::clamp` returns NaN unchanged and `NaN <= 0.0` is false, so a
+            // non-finite value reaching the flash below would turn the sky solid white - because
+            // `f32::NAN.min(255.0)` is 255. Measured: without this, mix(0x12, NaN) is 0xff.
+            if b.is_finite() { b.clamp(0.0, 1.0) } else { 0.0 }
+        };
         let gust = self.gust.update(fired, dt, GUST_MS);
 
         let panel = Rgba::from_hex(&t.panel, t.panel_alpha);
@@ -522,8 +785,17 @@ impl Family for Blossom {
         // Dithered: `vertical_gradient`'s 4x4 Bayer pass exists because a smooth ramp over ~56 rows in 8
         // bits per channel bands visibly, and a banded sky reads as a rendering fault rather than as sky.
         // Drawn INSIDE the rounded panel so it cannot square off the corners the panel just rounded.
+        // THE FLASH. Only the TOP stop is lifted - see FLASH_PEAK.
         let sky_top = Rgba::from_hex(&t.tube.socket, 1.0);
         let sky_low = Rgba::from_hex(&t.tube.collar, 1.0);
+        // `bright > 0.0` is FALSE for NaN, which is why it is written this way and not `!= 0.0`.
+        let sky_top = if bright > 0.0 {
+            let flash = bright * FLASH_PEAK;
+            let mix = |v: u8| (v as f32 + (255.0 - v as f32) * flash * FLASH_MIX).min(255.0) as u8;
+            Rgba::new(mix(sky_top.r), mix(sky_top.g), mix(sky_top.b), 255)
+        } else {
+            sky_top
+        };
         c.vertical_gradient(2, 3, w - 4, h - 6, &[(0.0, sky_top), (1.0, sky_low)], true);
 
         // ---- the moon ----
@@ -539,6 +811,22 @@ impl Family for Blossom {
 
         // ---- the castle ----
         self.castle(c, t, w, h);
+
+        // ---- the strike ----
+        //
+        // HERE, after the castle and before the branch, so the branch, the twigs, the clusters and the
+        // petals all pass in FRONT of it. That is the right depth for a sky event, and at the narrow
+        // width it is what stops the bolt being drawn over the branch tip.
+        //
+        // Gated on `bright`: `Canvas::bloom` costs the same on an empty layer as on a full one -
+        // measured 1.1724ms against 1.1742ms - so an ungated layer would blur nothing on the ~87% of
+        // frames with no strike, and allocate 91KB four times over while doing it.
+        if bright > 0.0 {
+            if let Some(mut b) = self.bolt_layer(w, h, t, bright) {
+                b.bloom(BOLT_BLOOM_R, BOLT_GLOW);
+                c.draw_over(&b);
+            }
+        }
         if self.petals.len() != PETALS {
             self.petals = vec![Petal::default(); PETALS];
         }
@@ -700,7 +988,21 @@ impl Family for Blossom {
         // Bloom the SKY, MOON AND BRANCH here, before the petals exist - so the moon keeps the soft
         // halo it has always had, and the petals are not bloomed twice (once with the frame and again
         // on their own layer, which reads as a smear rather than a glow).
-        c.bloom(t.bloom as i32, FRAME_GLOW);
+        // NO FRAME BLOOM HERE, and the reason is measured. There used to be a
+        // `c.bloom(t.bloom as i32, FRAME_GLOW)` on this line, documented as existing "to give the moon
+        // its halo". It was doing nothing at all.
+        //
+        // `Canvas::bloom` composites its halo UNDERNEATH its own source, and `blend_over` returns the
+        // source unchanged at full alpha. This family's panel is opaque and its sky gradient is drawn at
+        // alpha 1.0, so the entire interior is opaque and the only pixels the bloom could write were in
+        // the transparent margin - which `clip_to_rounded_rect` at the end of this function then zeroes.
+        // CENSUS at 380x60 on blossom-dusk: 21152 opaque, 0 semi-transparent, 1648 transparent; the call
+        // changed 1648 pixels, ZERO of them inside the sky rect, and after the clip exactly 0 pixels
+        // differed with it and without it. It cost ~1.03ms per frame for a provably empty result.
+        //
+        // So the moon has no halo today, and never did. Giving it one needs the same treatment the petals
+        // and the bolt get - its own transparent layer, bloomed, composited over - which is a change
+        // worth making deliberately rather than by leaving a dead call in place. Logged in the backlog.
 
         // ---- petals ----
         //
@@ -934,6 +1236,493 @@ mod tests {
         );
     }
 
+
+    // ================= LIGHTNING =================
+
+    /// Rec.709 relative luminance and the WCAG contrast ratio, local so this test depends on nothing
+    /// private elsewhere.
+    fn rel_lum(c: Rgba) -> f32 {
+        let f = |v: u8| {
+            let x = v as f32 / 255.0;
+            if x <= 0.03928 { x / 12.92 } else { ((x + 0.055) / 1.055).powf(2.4) }
+        };
+        0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b)
+    }
+
+    fn wcag(a: Rgba, b: Rgba) -> f32 {
+        let (x, y) = (rel_lum(a), rel_lum(b));
+        let (hi, lo) = if x > y { (x, y) } else { (y, x) };
+        (hi + 0.05) / (lo + 0.05)
+    }
+
+    fn over(bg: Rgba, fg: Rgba) -> Rgba {
+        let a = fg.a as f32 / 255.0;
+        let m = |f: u8, b: u8| (f as f32 * a + b as f32 * (1.0 - a)).round().clamp(0.0, 255.0) as u8;
+        Rgba { r: m(fg.r, bg.r), g: m(fg.g, bg.g), b: m(fg.b, bg.b), a: 255 }
+    }
+
+    fn music_fixtures() -> Vec<(&'static str, Vec<Vec<f32>>)> {
+        let parse = |csv: &str| -> Vec<Vec<f32>> {
+            csv.lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| l.split(',').filter_map(|v| v.parse::<f32>().ok()).collect())
+                .collect()
+        };
+        vec![
+            ("steady groove", parse(include_str!("../../tests/fixtures/real-music-bands.csv"))),
+            ("dnb, dynamic", parse(include_str!("../../tests/fixtures/real-music-dynamic.csv"))),
+            ("flat-mastered", parse(include_str!("../../tests/fixtures/real-music-flat.csv"))),
+        ]
+    }
+
+    /// Drives the real trigger over a band sequence and returns how many times it fired.
+    ///
+    /// Goes through `Smoother` with blossom's OWN ballistics, because that is what stands between the
+    /// analyser and the family in production - a trigger tested on raw band values is being tested on
+    /// data the family never sees.
+    fn strikes_over(rows: &[Vec<f32>], frames: usize, strength: f32) -> u32 {
+        let nb = crate::dsp::bands::NUM_BANDS;
+        let mut sm = crate::dsp::ballistics::Smoother::new(builtin::blossom_dusk().ballistics);
+        let mut trig = crate::dsp::flourish::Trigger::default();
+        let mut fires = 0;
+        for i in 0..frames {
+            // Palindromic, so the loop seam is not itself a transient the detector could fire on.
+            let period = (rows.len() * 2).max(2);
+            let k = i % period;
+            let idx = if k < rows.len() { k } else { period - 1 - k };
+            let row = &rows[idx.min(rows.len() - 1)];
+            let mut target = [0.0f32; crate::dsp::bands::NUM_BANDS];
+            for (j, v) in target.iter_mut().enumerate() {
+                *v = row.get(j).copied().unwrap_or(0.0);
+            }
+            sm.update(&target);
+            let lv = sm.levels();
+            if trig.update(&lv[..STRIKE_BASS_BANDS.min(nb)], 16.7, strength) {
+                fires += 1;
+            }
+        }
+        fires
+    }
+
+    /// THE guard, and the one this project has failed three times: the trigger must actually FIRE on
+    /// real music, and must NOT fire on something merely loud.
+    ///
+    /// Each fixture is asserted SEPARATELY and never as an aggregate. An aggregate passes while two of
+    /// three fixtures give zero, which is exactly how the vaporwave family shipped lightning that never
+    /// fired - and how bands 0..12 would pass here while giving 0.00/min on the steady groove.
+    ///
+    /// Mutation: change STRIKE_BASS_BANDS from 8 to 12 and the steady groove drops to zero. Replace the
+    /// median rule with any absolute flux threshold and the same happens.
+    #[test]
+    fn a_bass_hit_strikes_on_every_kind_of_music_and_a_sustained_level_never_does() {
+        let _g = crate::dsp::flourish::test_guard();
+        // 300 seconds at 16.7ms.
+        let frames = 17_964;
+        let mins = frames as f32 * 16.7 / 60_000.0;
+        for (name, rows) in music_fixtures() {
+            assert!(!rows.is_empty(), "{name}: fixture did not load");
+            // The SHIPPED rate, read from the theme rather than written here - otherwise this test
+            // passes while the value that actually ships fires zero times.
+            let n = strikes_over(&rows, frames, builtin::blossom_dusk().flourish);
+            let per_min = n as f32 / mins;
+            assert!(
+                n > 0,
+                "{name}: the strike NEVER fires over {mins:.0} minutes of real music - this is the \
+                 failure mode this test exists for"
+            );
+            // An upper bound too: the minimum gap caps it at 24/min, and anything near that is a strobe
+            // rather than weather.
+            assert!(
+                per_min < 15.0,
+                "{name}: strikes far too often at {per_min:.2}/min ({n} in {mins:.0} min)"
+            );
+        }
+
+        // Loud but structureless must give nothing. The median rule makes this structural rather than
+        // tuned: a steady hit has a ratio of 1.0 against its own median, and the floor is above 1.0.
+        for (tag, v) in [("pinned", 1.0f32), ("held loud", 0.85), ("silence", 0.0)] {
+            let rows = vec![vec![v; crate::dsp::bands::NUM_BANDS]; 64];
+            let n = strikes_over(&rows, 6_000, 1.0);
+            assert_eq!(n, 0, "{tag}: a sustained level fired {n} strikes");
+        }
+        // And a metronome - the case a naive detector fires on every beat.
+        for period_frames in [15usize, 20, 30, 36, 45] {
+            let mut rows = Vec::new();
+            for i in 0..(period_frames * 8) {
+                let hit = i % period_frames == 0;
+                rows.push(vec![if hit { 0.95 } else { 0.18 }; crate::dsp::bands::NUM_BANDS]);
+            }
+            let n = strikes_over(&rows, 6_000, 1.0);
+            assert_eq!(n, 0, "a metronome at {period_frames} frames fired {n} strikes");
+        }
+    }
+
+    /// Nothing steps. The firing frame draws NOTHING, the rise takes several frames, and the strike then
+    /// gets out of the way rather than lingering.
+    ///
+    /// Mutation: use the envelope level directly instead of `strike_shape` of its age - the first value
+    /// becomes 1.0 and the first assertion fails.
+    #[test]
+    fn the_strike_ramps_rather_than_stepping_and_then_gets_out_of_the_way() {
+        assert_eq!(Blossom::strike_shape(0.0), 0.0, "the firing frame is not blank");
+        assert_eq!(Blossom::strike_shape(STRIKE_MS), 0.0, "the strike does not end at zero");
+        assert_eq!(Blossom::strike_shape(f32::NAN), 0.0, "NaN age leaked a brightness");
+        assert_eq!(Blossom::strike_shape(f32::INFINITY), 0.0, "infinite age leaked a brightness");
+        assert_eq!(Blossom::strike_shape(-1.0), 0.0, "a negative age leaked a brightness");
+
+        for dt in [16.7f32, 28.4, 33.3, 50.0] {
+            let mut env = crate::dsp::flourish::Envelope::default();
+            let mut series = Vec::new();
+            let lvl = env.update(true, dt, STRIKE_MS);
+            series.push(Blossom::strike_shape((1.0 - lvl) * STRIKE_MS));
+            for _ in 0..90 {
+                let lvl = env.update(false, dt, STRIKE_MS);
+                series.push(Blossom::strike_shape((1.0 - lvl) * STRIKE_MS));
+            }
+            assert_eq!(series[0], 0.0, "dt {dt}: the firing frame was not blank");
+            let peak = series.iter().cloned().fold(0.0f32, f32::max);
+            assert!(peak > 0.85, "dt {dt}: the strike never got bright, peak {peak:.3}");
+            // The rise must take more than one frame at the production rate.
+            if dt < 20.0 {
+                assert!(
+                    series[1] < 0.5,
+                    "dt {dt}: the strike jumped to {:.3} in one frame - that is a step",
+                    series[1]
+                );
+            }
+            let tail = series.last().copied().unwrap_or(1.0);
+            assert!(tail < 0.02, "dt {dt}: the strike never let go, tail {tail:.3}");
+        }
+    }
+
+    /// The bolt must never cross the moon and never paint on castle stone, at every seed and every size.
+    ///
+    /// Both are load-bearing. Over the disc the core is measurably INVISIBLE - three of seven colourways
+    /// put `hot` within 2.26 dL* of the moon, against the ~2.3 dL* floor this project measured for a
+    /// difference being noticeable at all - and the castle's outline is its entire identity.
+    ///
+    /// Mutation: raise BOLT_SWING_PX to 12, or use the vaporwave family's fractional `w * 0.06` swing
+    /// (22.8px at w=380), and pixels land on the disc. Delete the punch loop and they land on stone -
+    /// the path crosses stone on EVERY seed, so the punch is load-bearing, not decorative.
+    #[test]
+    fn the_bolt_never_crosses_the_moon_and_never_paints_on_the_castle() {
+        let t = builtin::blossom_dusk();
+        let rows = CASTLE.len() as i32;
+        let cols = CASTLE.iter().map(|r| r.len()).max().unwrap_or(0) as i32;
+        let mut checked = 0;
+        for (w, h) in [(380, 60), (190, 60), (120, 60), (380, 40), (380, 34)] {
+            let (mx, my) = ((w as f32 * MOON_X) as i32, (h as f32 * MOON_Y) as i32);
+            let cx0 = mx + CASTLE_PAST_MOON - cols;
+            let cy0 = h - CASTLE_FOOT_INSET - rows;
+            for seed in 0..256u32 {
+                let mut fam = Blossom { bolt_seed: seed, ..Default::default() };
+                fam.bolt_seed = seed;
+                let layer = fam
+                    .bolt_layer(w, h, &t, 1.0)
+                    .unwrap_or_else(|| panic!("{w}x{h} seed {seed}: no bolt built"));
+                let mut lit = 0;
+                let mut lowest = -1;
+                for y in 0..h {
+                    for x in 0..w {
+                        if layer.get(x, y).a == 0 {
+                            continue;
+                        }
+                        lit += 1;
+                        lowest = lowest.max(y);
+                        let (dx, dy) = (x - mx, y - my);
+                        assert!(
+                            dx * dx + dy * dy > MOON_R * MOON_R,
+                            "{w}x{h} seed {seed}: bolt pixel ({x},{y}) is on the moon disc"
+                        );
+                        let (rx, ry) = (x - cx0, y - cy0);
+                        if ry >= 0 && ry < rows && rx >= 0 && rx < cols {
+                            let line = CASTLE[ry as usize].as_bytes();
+                            let stone = (rx as usize) < line.len() && line[rx as usize] == b'#';
+                            assert!(!stone, "{w}x{h} seed {seed}: bolt pixel ({x},{y}) is on stone");
+                        }
+                    }
+                }
+                assert!(lit > 20, "{w}x{h} seed {seed}: the bolt is only {lit} px");
+                // It has to actually REACH the castle, or it is a streak in the sky.
+                let roof = Blossom::roof_row(w, h, mx + BOLT_ANCHOR_OFF).unwrap();
+                assert_eq!(
+                    lowest,
+                    roof - 1,
+                    "{w}x{h} seed {seed}: the bolt stops at row {lowest}, roofline is {roof}"
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked >= 1280, "the seed sweep barely ran: {checked}");
+
+        // Where the castle sheds, there must be no bolt hanging in empty sky.
+        for (w, h) in [(380, 33), (380, 30), (120, 28)] {
+            let fam = Blossom::default();
+            assert!(
+                fam.bolt_layer(w, h, &t, 1.0).is_none(),
+                "{w}x{h}: a bolt was drawn with no castle to strike"
+            );
+        }
+    }
+
+    /// A strike must do BOTH things: light the sky and mark it. Two independent metrics, so deleting
+    /// either half fails.
+    ///
+    /// Mutation: delete the top-stop lift and (a) fails while (b) passes. Delete the `draw_over` of the
+    /// bolt layer and (b) fails while (a) passes.
+    #[test]
+    fn a_strike_both_lights_the_sky_and_marks_it() {
+        let t = builtin::blossom_dusk();
+        let (w, h) = (380, 60);
+        let mut fam = Blossom::default();
+        let mut c = Canvas::new(w, h);
+        for k in 0..60 {
+            fam.draw(&mut c, &t, &frame(0.6, k as f32 * 0.0167));
+        }
+        // (a) the sky's own brightness, sampled where nothing else is drawn: the top rows, taking the
+        // MINIMUM across the row so a petal drifting through can only be brighter, never darker.
+        let sky_floor = |c: &Canvas| -> f32 {
+            let mut lo = f32::MAX;
+            for x in 150..300 {
+                lo = lo.min(rel_lum(c.get(x, SKY_TOP_ROW)));
+            }
+            lo
+        };
+        let calm_sky = sky_floor(&c);
+        let calm_bits: Vec<u32> = c.bits().to_vec();
+
+        fam.flourish.force_next();
+        let mut best_sky = calm_sky;
+        let mut most_changed = 0;
+        for k in 0..90 {
+            fam.draw(&mut c, &t, &frame(0.6, 1.02 + k as f32 * 0.0167));
+            best_sky = best_sky.max(sky_floor(&c));
+            let changed = c.bits().iter().zip(calm_bits.iter()).filter(|(a, b)| a != b).count();
+            most_changed = most_changed.max(changed);
+        }
+        assert!(
+            best_sky > calm_sky * 1.20,
+            "the sky never lit: calm {calm_sky:.5} -> peak {best_sky:.5}"
+        );
+        // (b) the bolt itself: a corridor of pixels near the anchor column must go bright.
+        let mx = (w as f32 * MOON_X) as i32;
+        let anchor = mx + BOLT_ANCHOR_OFF;
+        let mut bolt_px = 0;
+        for y in SKY_TOP_ROW..40 {
+            for x in anchor - BOLT_SWING_PX - 2..=anchor + BOLT_SWING_PX + 2 {
+                if rel_lum(c.get(x, y)) > 0.35 {
+                    bolt_px += 1;
+                }
+            }
+        }
+        assert!(most_changed > 400, "the strike barely changed the panel: {most_changed} px");
+        assert!(bolt_px > 15, "no bolt was drawn in the corridor: {bolt_px} bright px");
+    }
+
+    /// The flash must not eat the reading. The load-bearing element here is the PETAL field, and no
+    /// sky-only metric can see it - so this scores the DIMMEST petal against the lit sky behind it, on
+    /// every colourway and at several heights.
+    ///
+    /// Mutation: raise FLASH_PEAK to 1.0 and six of seven colourways fail. Lift BOTH sky stops and dusk
+    /// drops 3.79 -> 3.41.
+    #[test]
+    fn the_dim_petals_still_read_at_the_flash_peak_on_every_colourway() {
+        for t in builtin::all().into_iter().filter(|t| t.family == "blossom") {
+            let (w, h) = (380, 60);
+            let mut fam = Blossom::default();
+            let mut c = Canvas::new(w, h);
+            for k in 0..60 {
+                fam.draw(&mut c, &t, &frame(0.6, k as f32 * 0.0167));
+            }
+            // Score the calm frame first, then the peak, and compare the DELTA - an absolute floor would
+            // fail on a colourway whose calm value is already low, which is a pre-existing property and
+            // not something the flash causes.
+            let dim = Rgba::from_hex(&t.lit, t.ghost.clamp(0.15, 1.0).max(0.45));
+            let score = |c: &Canvas| -> f32 {
+                let mut worst = f32::MAX;
+                for row in [4, 12, 20, 28, 40, 52] {
+                    // The sky behind, taken as the row minimum so a petal cannot flatter it.
+                    let mut sky = Rgba::new(255, 255, 255, 255);
+                    let mut lo = f32::MAX;
+                    for x in 150..300 {
+                        let px = c.get(x, row);
+                        if rel_lum(px) < lo {
+                            lo = rel_lum(px);
+                            sky = px;
+                        }
+                    }
+                    worst = worst.min(wcag(over(sky, dim), sky));
+                }
+                worst
+            };
+            let calm = score(&c);
+            fam.flourish.force_next();
+            let mut flashed = calm;
+            for k in 0..8 {
+                fam.draw(&mut c, &t, &frame(0.6, 1.02 + k as f32 * 0.0167));
+                flashed = flashed.min(score(&c));
+            }
+            assert!(
+                calm - flashed < 0.20,
+                "{}: the flash cost the dim petal {:.2} of contrast (calm {calm:.2} -> {flashed:.2})",
+                t.id,
+                calm - flashed
+            );
+        }
+    }
+
+    /// The flash must leave NO RESIDUE: once the strike has decayed, the sky is exactly what it was.
+    ///
+    /// That is what makes the calm frame byte-identical to the shipped gradient - the lift is applied to
+    /// the top stop only and reduces to the identity at zero, so there is nothing to leak.
+    ///
+    /// Mutation: implement the falloff with an extra interpolated stop instead of lifting the top one,
+    /// and the calm frame stops matching. Clamp `bright` to a floor above 0 and this fails.
+    #[test]
+    fn the_flash_leaves_no_residue_once_the_strike_has_decayed() {
+        for t in builtin::all().into_iter().filter(|t| t.family == "blossom") {
+            for (w, h) in [(380, 60), (190, 60)] {
+                let mut fam = Blossom::default();
+                let mut c = Canvas::new(w, h);
+                for k in 0..60 {
+                    fam.draw(&mut c, &t, &frame(0.6, k as f32 * 0.0167));
+                }
+                let row_of = |c: &Canvas| -> Vec<(u8, u8, u8)> {
+                    (20..(w - 40)).map(|x| {
+                        let p = c.get(x, SKY_TOP_ROW);
+                        (p.r, p.g, p.b)
+                    }).collect()
+                };
+                // The row minimum is the sky; petals only brighten. Compare the whole row's darkest
+                // value, which is petal-proof.
+                let darkest = |c: &Canvas| -> (u8, u8, u8) {
+                    row_of(c).into_iter().min_by(|a, b| {
+                        let la = rel_lum(Rgba::new(a.0, a.1, a.2, 255));
+                        let lb = rel_lum(Rgba::new(b.0, b.1, b.2, 255));
+                        la.partial_cmp(&lb).unwrap_or(std::cmp::Ordering::Equal)
+                    }).unwrap_or((0, 0, 0))
+                };
+                let calm = darkest(&c);
+                fam.flourish.force_next();
+                // Well past STRIKE_MS: 200 frames at 16.7ms is 3.34 seconds.
+                for k in 0..200 {
+                    fam.draw(&mut c, &t, &frame(0.6, 1.02 + k as f32 * 0.0167));
+                }
+                let after = darkest(&c);
+                assert_eq!(
+                    calm, after,
+                    "{} at {w}x{h}: the sky did not return to its calm colour after the strike",
+                    t.id
+                );
+            }
+        }
+    }
+
+    /// The first drawn frame after the panel was hidden must not spend a strike.
+    ///
+    /// The smoother runs while the family does not draw, and the reveal gate holds the family off for
+    /// 400ms, so that frame reads a whole returning track as one jump. MEASURED before the guard: it
+    /// fired on 4 of 4 hide/reveal cycles on every fixture, at a gate opacity of 0.037 - guaranteed
+    /// invisible, and it would spend the 2500ms minimum gap on the way.
+    ///
+    /// Mutation: delete the `if stale { fired = false; }` block and the first assertion fails.
+    #[test]
+    fn the_first_drawn_frame_after_the_panel_was_hidden_does_not_spend_a_strike() {
+        let t = builtin::blossom_dusk();
+        let mut fam = Blossom::default();
+        let mut c = Canvas::new(380, 60);
+
+        // Frame 1 establishes `last_seen_s`.
+        fam.draw(&mut c, &t, &frame(0.6, 0.0));
+        // Frame 2 arrives five seconds later in DRAWN time - the panel was hidden - and asks to fire.
+        fam.flourish.force_next();
+        fam.draw(&mut c, &t, &frame(0.6, 5.0));
+        assert_eq!(
+            fam.strike.level(),
+            0.0,
+            "a strike was spent on the first frame back after the panel was hidden"
+        );
+        // Frame 3 follows normally, and the strike must work again.
+        fam.flourish.force_next();
+        fam.draw(&mut c, &t, &frame(0.6, 5.0167));
+        assert!(
+            fam.strike.level() > 0.0,
+            "the stale guard suppressed a legitimate strike on the very next frame"
+        );
+    }
+
+    /// A hostile frame must not turn the sky white. This is a real mechanism, not a hypothetical:
+    /// `f32::clamp` returns NaN unchanged, `NaN <= 0.0` is false, and `f32::NAN.min(255.0)` is 255 - so
+    /// an unsanitised brightness reaching the flash makes 89% of the panel solid white every frame,
+    /// with no error anywhere.
+    #[test]
+    fn a_hostile_frame_cannot_whiten_the_sky() {
+        let t = builtin::blossom_dusk();
+        let mut fam = Blossom::default();
+        let mut c = Canvas::new(380, 60);
+        for k in 0..30 {
+            fam.draw(&mut c, &t, &frame(0.6, k as f32 * 0.0167));
+        }
+        for bad_dt in [f32::NAN, f32::INFINITY, -1.0, 1.0e30] {
+            let mut d = frame(0.6, 1.0);
+            d.dt_ms = bad_dt;
+            d.levels[0] = f32::NAN;
+            d.levels[2] = f32::INFINITY;
+            fam.draw(&mut c, &t, &d);
+            let mut white = 0;
+            for y in 3..56 {
+                for x in 20..340 {
+                    let p = c.get(x, y);
+                    if p.r > 250 && p.g > 250 && p.b > 250 {
+                        white += 1;
+                    }
+                }
+            }
+            assert!(white < 400, "dt {bad_dt}: {white} pixels went white - the sky was whitened");
+        }
+    }
+
+
+    /// What the strike trigger actually does over the real-music fixtures. A measurement, not a gate.
+    #[test]
+    #[ignore]
+    fn probe_strike_rate() {
+        let _g = crate::dsp::flourish::test_guard();
+        println!("enabled() = {}", crate::dsp::flourish::enabled());
+        let frames = 17_964;
+        let mins = frames as f32 * 16.7 / 60_000.0;
+        for bands in [2usize, 3, 4, 5, 6, 8, 12, 64] {
+            for strength in [0.05f32, 0.10, 0.20, 0.45, 1.0] {
+                let mut out = String::new();
+                for (name, rows) in music_fixtures() {
+                    let nb = crate::dsp::bands::NUM_BANDS;
+                    let mut sm =
+                        crate::dsp::ballistics::Smoother::new(builtin::blossom_dusk().ballistics);
+                    let mut trig = crate::dsp::flourish::Trigger::default();
+                    let mut fires = 0;
+                    for i in 0..frames {
+                        let period = (rows.len() * 2).max(2);
+                        let k = i % period;
+                        let idx = if k < rows.len() { k } else { period - 1 - k };
+                        let row = &rows[idx.min(rows.len() - 1)];
+                        let mut target = [0.0f32; crate::dsp::bands::NUM_BANDS];
+                        for (j, v) in target.iter_mut().enumerate() {
+                            *v = row.get(j).copied().unwrap_or(0.0);
+                        }
+                        sm.update(&target);
+                        let lv = sm.levels();
+                        if trig.update(&lv[..bands.min(nb)], 16.7, strength) {
+                            fires += 1;
+                        }
+                    }
+                    out += &format!("{:>6.2} ", fires as f32 / mins);
+                    let _ = name;
+                }
+                println!("bands {bands:>2} strength {strength:<5} -> {out}(groove dnb flat)");
+            }
+        }
+    }
+
     /// Mutation: gate the branch on level, or let the bend/shake carry it off the panel.
     #[test]
     fn the_branch_is_drawn_at_every_level_and_stays_on_the_panel() {
@@ -981,6 +1770,15 @@ mod tests {
                 fam.draw(&mut c, &t, &frame(0.62, k as f32 * 0.0167));
             }
             write(format!("blossom-{}", t.id), &c);
+            // FORCED, because the fixture cannot produce a strike: `frame` builds a 120bpm metronome of
+            // identical hits, and a steady hit has a ratio of 1.0 against its own median while the
+            // flourish floor is 1.30 - so it can never fire, and an unforced dump would show a
+            // lightning-free panel on every colourway and look entirely correct.
+            fam.flourish.force_next();
+            for k in 420..425 {
+                fam.draw(&mut c, &t, &frame(0.62, k as f32 * 0.0167));
+            }
+            write(format!("blossom-strike-{}", t.id), &c);
         }
         // Quiet against loud, so the wind mapping is visible as a difference.
         let t = builtin::blossom_dusk();

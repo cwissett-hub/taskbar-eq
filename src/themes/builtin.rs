@@ -3515,6 +3515,14 @@ fn blossom_base() -> Theme {
         // Soft, and the one family where that is right: a petal catching light HAS a halo, and the marks
         // are 3px so there is nothing fine for a bloom to weld together.
         bloom: 4.0,
+        // The strike rate. MEASURED over the three real-music fixtures at this setting: 2.40, 4.40 and
+        // 2.20 strikes per minute - one every 14 to 27 seconds, which is weather rather than a strobe.
+        // This is also the GUST rate, because they are the same event by design.
+        //
+        // Not lower: below 0.10 the knob loses authority (0.05 and 0.10 measure identically on two of
+        // the three fixtures). Not higher: 0.20 gives 4.60/6.60/4.40 and 0.30 gives 4.60/6.60/6.60,
+        // which is a strike every 9 seconds on the busiest material.
+        flourish: 0.10,
         glow_strength: 0.34,
         edge_glow: 1.0,
         ballistics: Ballistics { attack: 0.50, decay: 0.10, peak_fall: 0.005 },

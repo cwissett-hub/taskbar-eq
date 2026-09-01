@@ -458,3 +458,40 @@ One thing to watch: flipping orientation destroys frame-to-frame comparability o
 intended - the slam is the point - but it means the peak-hold marks, if this family has any, should be
 anchored to the block's own base rather than to a fixed panel row, or they will appear to jump the full
 height of the panel on every beat.
+
+---
+
+## Status, 2026-09-01: item 5 (lightning) is DONE
+
+Shipped. The trigger is the shared `flourish::Trigger` fed the LOW THREE BANDS, at a theme flourish of
+0.10, measured at 2.40 / 4.40 / 2.20 strikes per minute over the three real-music fixtures.
+
+The recorded trap held and then some. A design pass recommended eight bands on measured grounds and
+reported 1.75/6.50/1.50 for it; that did not reproduce against the real crate - eight bands measures
+0.00/2.20/0.00, so two of three fixtures never fire. The cliff is at SIX bands. Widening a bass window
+does not make a bass trigger more reliable, it dilutes the kick with everything above it until the median
+stops seeing a kick at all. The test that drives each fixture separately is what caught it.
+
+### A pre-existing bug found on the way: blossom's frame bloom did nothing
+
+`c.bloom(t.bloom as i32, FRAME_GLOW)` was documented as existing "to give the moon its halo". It was a
+measured no-op: `Canvas::bloom` composites its halo UNDERNEATH its own source and `blend_over` returns the
+source unchanged at full alpha, so with an opaque panel and an alpha-1.0 sky gradient the only pixels it
+could write were in the transparent margin that `clip_to_rounded_rect` then zeroes. Census at 380x60:
+21152 opaque, 0 semi-transparent, 1648 transparent; the call changed 1648 pixels, ZERO inside the sky,
+and after the clip exactly 0 pixels differed with it and without it. It cost ~1.03ms per frame.
+
+Removed. Which means: THE MOON HAS NO HALO, and never did.
+
+### Open, and needing eyes rather than measurement
+
+  - Whether 2.40-4.40 strikes per minute is right in peripheral vision all day. Lower `flourish` in
+    `blossom_base()` if not; do not go below 0.10, where the knob loses authority.
+  - Whether FLASH_PEAK 0.15 registers as the sky lighting up. The ceiling is measured (petal contrast,
+    castle non-inversion); the floor is not. Headroom to 0.20 exists on every colourway except plum and
+    jade.
+  - Jade's castle at the flash peak is thin - body-minus-sky falls to 1.044:1 - and its keyline is what
+    carries the shape there.
+  - GIVING THE MOON A REAL HALO. It needs the same treatment the petals and the bolt get: its own
+    transparent layer, bloomed, composited over. About 1ms, which is exactly what deleting the dead call
+    gave back.

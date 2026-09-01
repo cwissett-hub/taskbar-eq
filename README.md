@@ -181,7 +181,7 @@ families** have one, and each is that instrument's characteristic fault or ritua
 | 3D spectrum | The whole stack surges one depth step forward and settles back |
 | 3D Pipes | Every run is abandoned at once and fresh pipes start, the way the screensaver resets |
 | Orbit | The ring scatters outward and is drawn back in |
-| Cherry blossom | A gust: the wind spikes and the branch lets go of a great deal at once |
+| Cherry blossom | A storm: lightning strikes the castle and a gust lets the branch go of a great deal at once |
 | Kaleidoscope | The mirrors multiply: the fold count doubles and the pattern crowds the strip |
 | Fluid | Cavitation — the surface breaks into a patchy froth and the tank runs slack |
 
@@ -441,6 +441,18 @@ the branch**, giving a slow motion under the fast one.
 
 The branch is the *anchor*, not decoration: a solid, static, recognisable shape that tells the eye what
 it is looking at before it has resolved a single petal — and somewhere for the petals to come from.
+
+The flourish is a **storm**: lightning strikes the castle and the gust lets go of the branch at the same
+moment, because they are the same event. Getting it to fire at all was the whole problem. This project has
+now three times shipped or nearly shipped a bass trigger that *provably cannot fire* — so the band window
+was measured against the repo's real-music fixtures rather than chosen, and there is a test that drives
+each fixture **separately**, because an aggregate passes while two of three give zero. At six bands two of
+the three fixtures go silent; at eight, only the drum-and-bass one survives. Three bands — the kick's
+fundamental, roughly 47–117 Hz — fires on all three, about once every 14 to 27 seconds.
+
+The bolt lives in a corridor exactly ten columns wide: the only columns that both clear the moon disc and
+land on castle stone. Its fork is allowed further left, because a fork does not have to land on anything
+and clamping it to the same corridor drew it invisibly on top of the trunk.
 
 **Kaleidoscope** — mirrored, repeating psychedelic symmetry. A kaleidoscope normally means *rosette*
 symmetry, rotation about one centre, and that does not fit this panel: at 380x60 a centred disc is 60px
