@@ -98,9 +98,11 @@ const MASK_H: i32 = 3;
 /// Upper RIGHT, deliberately opposite the branch, which enters from the left. Two focal points on the
 /// same side would fight; on opposite sides they frame the petals drifting between them.
 ///
-/// Six pixels is the smallest disc that still reads as a moon rather than a dot at this size - below that
-/// it is indistinguishable from a bright petal, which is the one thing it must not look like.
-const MOON_R: i32 = 6;
+/// Six was the smallest disc that still reads as a moon rather than a dot - below that it is
+/// indistinguishable from a bright petal, which is the one thing it must not look like. Ten is what it
+/// wants to BE: reported as "quite small" at six, and a moon is supposed to be the largest single thing
+/// in the sky. At ten it is a third of the panel height and still clears the branch.
+const MOON_R: i32 = 10;
 const MOON_X: f32 = 0.82;
 const MOON_Y: f32 = 0.30;
 
@@ -113,16 +115,38 @@ const MOON_Y: f32 = 0.30;
 ///
 /// `(along, dx, dy, len)`: `along` is the fraction of the branch, `dx`/`dy` the direction per step
 /// (negative `dy` is up the screen), `len` the number of steps.
+///
+/// **Lengths were roughly doubled** after the first version was reported as too small: at 4-10 steps and
+/// 1-2px thick they read as scratches on the branch rather than as limbs coming off it. Now 9-17 steps,
+/// 3px at the fork, and each one FORKS near its end - see `FORK_AT`. A twig that does not divide is a
+/// spike; dividing is most of what makes a branch look like a branch.
 const TWIGS: [(f32, f32, f32, f32); 8] = [
-    (0.14, 0.55, -1.00, 8.0),
-    (0.24, -0.45, -1.00, 5.0),
-    (0.33, 0.80, -1.00, 10.0),
-    (0.44, 0.40, 1.00, 5.0),   // downward - a branch forks both ways
-    (0.55, 0.70, -1.00, 8.0),
-    (0.67, -0.35, -1.00, 6.0),
-    (0.79, 0.85, -1.00, 7.0),
-    (0.90, 0.30, 1.00, 4.0),   // downward, near the tip
+    (0.10, 0.50, -1.00, 14.0),
+    (0.21, -0.55, -1.00, 10.0),
+    (0.31, 0.75, -1.00, 17.0),
+    (0.42, 0.45, 1.00, 9.0),   // downward - a branch forks both ways
+    (0.53, 0.65, -1.00, 15.0),
+    (0.64, -0.40, -1.00, 11.0),
+    (0.76, 0.80, -1.00, 13.0),
+    (0.88, 0.35, 1.00, 9.0),   // downward, near the tip
 ];
+
+/// Where along a twig its fork leaves, and how the fork's direction differs from its parent.
+///
+/// 0.55 rather than nearer the tip: a fork that splits in the last quarter reads as a frayed end, where
+/// one at just over half reads as two limbs. The fork swings the horizontal component the other way,
+/// which is what stops the pair looking like one thick line.
+const FORK_AT: f32 = 0.55;
+const FORK_SWING: f32 = -1.25;
+const FORK_LEN: f32 = 0.45;
+
+/// Blossom clusters at every twig tip.
+///
+/// A real cherry branch is COVERED in blossom, and this is the change that makes the twigs distinctive
+/// rather than merely bigger. It also fixes something that was quietly wrong: petals were being released
+/// from twig tips that had nothing on them, so blossom appeared out of bare wood. Now the wood is
+/// blossoming and the petals come off the clusters.
+
 
 #[derive(Clone, Copy, Default)]
 struct Petal {
@@ -349,23 +373,74 @@ impl Family for Blossom {
             c.fill_rect(x as i32, y as i32, 2, 1, bark_lit);
             x += 1.5;
         }
-        // The twigs - see `TWIGS`. Tapered like the branch: 2px at the fork, 1px past halfway, because a
-        // twig of uniform thickness reads as a scratch rather than as wood.
-        for (k, (along, dx, dy, tlen)) in TWIGS.iter().enumerate() {
+        // The twigs - see `TWIGS`. Tapered 3px at the fork to 1px at the tip, and each one FORKS: a twig
+        // that does not divide is a spike, and dividing is most of what makes a branch read as a branch.
+        let cluster_col = Rgba::from_hex(&t.lit, 0.85);
+        let cluster_hot = Rgba::from_hex(&t.hot, 1.0);
+        for (along, dx, dy, tlen) in TWIGS.iter() {
             let at = len * along;
             let base_y = self.spine_y(at, wf, hf);
+            // CLAMPED to the room that actually exists. The lengths in TWIGS are what the shape wants;
+            // near the trunk the spine sits at 9% of the height, so an upward twig there has only a few
+            // rows before it leaves the panel - and the first version of these longer twigs ran straight
+            // off the top edge. A branch near the top of a frame grows sideways, which is what this
+            // produces: the clamp shortens the vertical run rather than the horizontal one.
+            let room = if *dy < 0.0 { base_y - 4.0 } else { hf - 5.0 - base_y };
+            let tlen = &tlen.min((room / dy.abs()).max(3.0));
+
+            // The twig itself.
             let mut step = 0.0f32;
             while step < *tlen {
                 let tx = at + dx * step;
                 let ty = base_y + dy * step;
-                let thick = if step < tlen * 0.5 { 2 } else { 1 };
-                c.fill_rect(tx as i32, ty as i32, 1, thick, bark);
+                let f = step / tlen;
+                let thick = if f < 0.35 {
+                    3
+                } else if f < 0.72 {
+                    2
+                } else {
+                    1
+                };
+                c.fill_rect(tx as i32, ty as i32, 2, thick, bark);
                 step += 1.0;
             }
-            // A single lit pixel at the fork, which is what makes a twig read as JOINED to the branch
-            // rather than as a mark lying across it.
-            let _ = k;
-            c.fill_rect(at as i32, base_y as i32, 1, 1, bark_lit);
+
+            // Its fork, leaving at FORK_AT and swinging the other way.
+            let fx0 = at + dx * tlen * FORK_AT;
+            let fy0 = base_y + dy * tlen * FORK_AT;
+            let flen = tlen * FORK_LEN;
+            let mut fs = 0.0f32;
+            while fs < flen {
+                let tx = fx0 + (dx + FORK_SWING) * 0.55 * fs;
+                let ty = fy0 + dy * fs;
+                let thick = if fs < flen * 0.5 { 2 } else { 1 };
+                c.fill_rect(tx as i32, ty as i32, 1, thick, bark);
+                fs += 1.0;
+            }
+
+            // A lit pixel where the twig meets the branch, which is what makes it read as JOINED rather
+            // than as a mark lying across it.
+            c.fill_rect(at as i32, base_y as i32, 2, 1, bark_lit);
+
+            // Blossom clusters at both tips. Drawn with the wood, BEFORE the falling petals, so a petal
+            // in flight passes in front of the cluster it came from.
+            for (cx0, cy0) in [
+                (at + dx * tlen, base_y + dy * tlen),
+                (fx0 + (dx + FORK_SWING) * 0.55 * flen, fy0 + dy * flen),
+            ] {
+                // A tight PLUS, not a ring. The first version placed CLUSTER points on a circle of
+                // radius 2.2 and drew each as a 2x2 block, which at this scale is a scatter of four
+                // separate marks - it read as a symbol, not as blossom. Five single pixels in a plus,
+                // with a lit centre, is the smallest thing that reads as one clump.
+                let (bx, by) = (cx0 as i32, cy0 as i32);
+                for (dx2, dy2) in [(0i32, 0i32), (-1, 0), (1, 0), (0, -1), (0, 1)] {
+                    let col = if dx2 == 0 && dy2 == 0 { cluster_hot } else { cluster_col };
+                    c.fill_rect(bx + dx2, by + dy2, 1, 1, col);
+                }
+                // Two more pixels off the diagonal so it is not a perfect cross, which reads as a mark.
+                c.fill_rect(bx - 1, by - 1, 1, 1, cluster_col);
+                c.fill_rect(bx + 1, by + 1, 1, 1, cluster_col);
+            }
         }
 
         // ---- petals ----

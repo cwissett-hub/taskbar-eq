@@ -196,3 +196,45 @@ Also worth knowing before tuning: the shipped contrast test compares `lit` again
 not against the sky gradient drawn over it. The current five have 8.6:1 in the worst case, so they are
 fine - but the test is not what establishes that, and a bolder sky plus a darker petal could pass the
 suite while being hard to read.
+
+---
+
+## 5. Lightning striking the castle on a bass hit (blossom)
+
+Asked for 2026-09-01, straight after the castle. Queued behind it because the bolt needs a TARGET - it
+terminates on the castle, so it cannot be built until the castle's anchor point exists.
+
+### The trap, and it is measured rather than theoretical
+
+The obvious trigger - a threshold on the single-frame rise in the bass mean - PROVABLY CANNOT FIRE on
+real music in this project. The vaporwave family shipped exactly that and its lightning fired ZERO times:
+the largest single-frame bass-mean rise anywhere in the 8-second fixture is 0.140 against a threshold of
+0.157. It went unnoticed because the synthetic tests passed. That measurement is recorded in
+`render/fluid.rs`'s droplet-rate test, which asserts it as a second claim precisely so the number does
+not get lost.
+
+So the trigger must be a BASS-WEIGHTED SPECTRAL FLUX detector judged against a RUNNING MEDIAN, the
+mechanism `dsp::flourish` documents: "judge a hit against the median of recent hits, not against a
+constant". Relative, so it means the same thing on a compressed pop master and on drum-and-bass.
+
+Concretely: a second `dsp::onset::Flux` over the low quarter of the bands, ratio around 3.2 and a
+refractory around 1500ms, which gives a strike every few seconds on bassy material rather than on every
+kick. NOT the family's existing `onset` (ratio 2.8, 200ms) - that fires ~3 times a second and shakes the
+branch, which is the right rate for a branch and far too often for lightning.
+
+### What it should draw
+
+- A bolt from the top of the panel to a point on the castle - jagged, 1-2px, with a brighter core.
+- A SKY FLASH: brighten the gradient for a few frames. The vaporwave family has `sky_flash` and
+  `bolt_bright` as tunable fields and its bolt drawing is worth reading before writing a new one.
+- The castle rim-lit on the struck side for the duration, which is what sells the bolt as hitting rather
+  than passing behind.
+- Optionally the petals briefly catching the light.
+
+### Two things to decide when building
+
+- Whether lightning REPLACES the gust flourish or coexists with it. Two whole-display events with
+  different triggers may read as noise; the gust is currently the family's flourish.
+- Whether the strike should be visible at all in the colourways whose sky is already bright (Lantern).
+  The vaporwave family sets `bolt_bright = 0` on two colourways deliberately, and the storm code checks
+  it - the precedent for opting a colourway out already exists.
