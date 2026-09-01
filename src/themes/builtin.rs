@@ -212,6 +212,109 @@ pub fn rave_hardance() -> Theme {
         ..rave_base()
     }
 }
+
+// ===================== Brutalist =====================
+//
+// Heavy concrete blocks that slam between hanging from the ceiling and standing on the floor, on the beat.
+// See `render/brutal.rs`: the flip is a strobe made of POSITION rather than brightness, which is what lets
+// it look violent without touching the house rule.
+//
+// EVERY COLOURWAY HERE SETS `bloom` TO 0, and there is a test that enforces it. A halo softens exactly the
+// edges this family is about - the same reasoning the chroma family uses. These are also the most
+// restrained palettes in the project on purpose: this is the counterweight to the rave and kaleidoscope
+// families, and concrete with one accent is the whole idea.
+
+fn brutal_base() -> Theme {
+    Theme {
+        family: "brutal".into(),
+        texture: Texture::None_,
+        panel_alpha: 1.0,
+        // No glow. Not "a little" - none. See the module note.
+        bloom: 0.0,
+        glow_strength: 0.0,
+        edge_glow: 0.0,
+        // Heavy. A slab has mass, so it does not snap to a transient and it does not fall away quickly -
+        // this is the slowest ballistics in the project, deliberately, and it is what makes the FLIP the
+        // fast event rather than the block lengths.
+        ballistics: Ballistics { attack: 0.34, decay: 0.07, peak_fall: 0.004 },
+        ..Theme::default()
+    }
+}
+
+/// Concrete: the reference. Raw grey on near-black with a white accent - the Barbican palette.
+pub fn brutal_concrete() -> Theme {
+    Theme {
+        id: "brutal-concrete".into(),
+        name: "Concrete".into(),
+        lit: "#9aa0a4".into(),
+        hot: "#eef1f3".into(),
+        panel: "#0b0c0d".into(),
+        edge: "#9aa0a4".into(),
+        edge_alpha: 0.12,
+        ghost: 0.20,
+        ..brutal_base()
+    }
+}
+
+/// Blueprint: drawing-office cyan on ink blue. The one that reads as a plan rather than a building.
+pub fn brutal_blueprint() -> Theme {
+    Theme {
+        id: "brutal-blueprint".into(),
+        name: "Blueprint".into(),
+        lit: "#6fa8d0".into(),
+        hot: "#e6f4ff".into(),
+        panel: "#050a12".into(),
+        edge: "#6fa8d0".into(),
+        edge_alpha: 0.13,
+        ghost: 0.20,
+        ..brutal_base()
+    }
+}
+
+/// Rust: weathered steel. The warmest, and the only one here that is not cold.
+pub fn brutal_rust() -> Theme {
+    Theme {
+        id: "brutal-rust".into(),
+        name: "Rust".into(),
+        lit: "#b5714a".into(),
+        hot: "#ffdcc0".into(),
+        panel: "#0d0806".into(),
+        edge: "#b5714a".into(),
+        edge_alpha: 0.13,
+        ghost: 0.20,
+        ..brutal_base()
+    }
+}
+
+/// Hazard: site yellow on black. The loudest thing this family allows itself, and it is still two colours.
+pub fn brutal_hazard() -> Theme {
+    Theme {
+        id: "brutal-hazard".into(),
+        name: "Hazard".into(),
+        lit: "#d9b310".into(),
+        hot: "#fff4c0".into(),
+        panel: "#0a0902".into(),
+        edge: "#d9b310".into(),
+        edge_alpha: 0.14,
+        ghost: 0.20,
+        ..brutal_base()
+    }
+}
+
+/// Monochrome: no hue whatsoever, so the mass and the flip carry it alone. The honest test of the family.
+pub fn brutal_mono() -> Theme {
+    Theme {
+        id: "brutal-mono".into(),
+        name: "Monochrome".into(),
+        lit: "#b8b8b8".into(),
+        hot: "#ffffff".into(),
+        panel: "#080808".into(),
+        edge: "#b8b8b8".into(),
+        edge_alpha: 0.12,
+        ghost: 0.18,
+        ..brutal_base()
+    }
+}
 /// one is deliberately a light cyan rather than a saturated blue.
 pub fn kaleido_deep() -> Theme {
     Theme {
@@ -303,6 +406,11 @@ pub fn kaleido_deep() -> Theme {
         rave_uv(),
         rave_strobe(),
         rave_hardance(),
+        brutal_concrete(),
+        brutal_blueprint(),
+        brutal_rust(),
+        brutal_hazard(),
+        brutal_mono(),
         nixie_orange(),
         nixie_ice(),
         nixie_neon_green(),

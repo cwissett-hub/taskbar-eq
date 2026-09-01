@@ -182,6 +182,7 @@ families** have one, and each is that instrument's characteristic fault or ritua
 | 3D Pipes | Every run is abandoned at once and fresh pipes start, the way the screensaver resets |
 | Orbit | The ring scatters outward and is drawn back in |
 | Cherry blossom | A storm: lightning strikes the castle and a gust lets the branch go of a great deal at once |
+| Brutalist | The monolith: every block slams to full height and figure and ground invert |
 | Rave lasers | The rig blacks out, then every beam snaps to full spread at once |
 | Kaleidoscope | The mirrors multiply: the fold count doubles and the pattern crowds the strip |
 | Fluid | Cavitation — the surface breaks into a patchy froth and the tank runs slack |
@@ -291,7 +292,7 @@ colourway files, which hot-reload on save and can replace a built-in by reusing 
 **Last updated: 2026-08-10.** Full test suite green (520 at the time of writing), release build
 warning-free. The colourway and family counts below are asserted by a test; the test count itself is
 a snapshot and can drift.
-**143 colourways across 21 families.**
+**148 colourways across 22 families.**
 
 | | Feature | State |
 |---|---|---|
@@ -503,6 +504,22 @@ flux detector on the kick's fundamental with a 130ms refractory (about 460bpm), 
 engineered is a visual that survives firing three times a second rather than one that fires at all. The
 shared flourish machinery's 180ms would cap at 333bpm and swallow a kick roll, which is exactly the
 material this is for.
+
+**Brutalist** — heavy concrete blocks that slam between two orientations on the beat. In one state they
+rise from the floor, in the other they hang from the ceiling, and an onset toggles between them, so the
+whole panel slams between configurations one to three times a second.
+
+That is a strobe made of **position** rather than brightness, which is what lets it look violent while
+leaving the house rule intact. The consequence is intended: flipping destroys frame-to-frame comparability
+of the block *tops* — you cannot track a tip across a flip, because it moves the height of the panel. What
+stays comparable is block **length**, which is what encodes the level, so the meter is unharmed and the
+slam is free. It does mean the peak-hold caps are anchored to each block's own base; anchored to a panel
+row they would appear to leap the full height on every beat.
+
+No glow, no gradient, no ornament: `bloom` is 0 on every colourway here and a test enforces it, because a
+halo softens exactly the edges this family is about. Half the band count at double the width, because the
+subject is mass and a thin bar has none, and the 5px gaps do the work a keyline does elsewhere — at 1–2px
+a gap closes up under any halo and the blocks weld into one mass.
 Petals **tumble** through three masks (face, angled, edge), because a petal that slides without turning
 reads as a speck, and each carries its own flutter sine at its own rate so the field never organises
 itself into rain.
@@ -684,7 +701,7 @@ The app also writes that log on every normal launch, so a failure can be reporte
 
 ## Themes
 
-**143 colourways across 21 families.** A *family* is a renderer with fixed geometry — code. A
+**148 colourways across 22 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
 **Segmented VFD** — a smoked-glass panel with discrete stacked segments, a faint dormant grid,

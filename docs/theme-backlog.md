@@ -343,7 +343,7 @@ would be the same. Decide by describing the motion first.
 
 ---
 
-## 7. A kaleidoscope family: psychedelic symmetry (QUEUED, raised 2026-09-01)
+## 7. A kaleidoscope family: psychedelic symmetry (DONE 2026-09-01)
 
 Asked for as "a kaleidoscope type thing for more psychedelic visuals", after the frenchcore family.
 
@@ -432,7 +432,7 @@ movement as well as in the flash.
 
 ---
 
-## 8. A brutalist-bars family (QUEUED, raised 2026-09-01)
+## 8. A brutalist-bars family (DONE 2026-09-01)
 
 Asked for as "also can do the brutalist bars as a separate theme after" - promoting the design that was
 cut from the frenchcore family when that turned into rave visuals. It is a genuinely different look, so it
@@ -528,3 +528,31 @@ is caught beat-for-beat, and so are 160, 240 and 300bpm.
 A fan of beams is the one piece of rave imagery a 6:1 letterbox flatters, and that is now demonstrated
 rather than argued. The zooming tunnel and checkerboard floor remain unbuilt and should stay that way -
 they want a vanishing point, and they fail here exactly as a rosette kaleidoscope does.
+
+---
+
+## Status, 2026-09-01: items 7 and 8 are DONE
+
+Item 7 shipped as the `kaleido` family (5 colourways, 0.755 ms/frame) and item 8 as `brutal` (5
+colourways). With `rave` that is three new families in one pass, plus the lightning; 148 colourways across
+22 families.
+
+The frieze prediction held: a row of four-fold rosettes fills a 6:1 strip where a centred rosette would
+use 16% of it. The precomputed-table prediction held too - the naive per-pixel version would have wanted
+22,800 `atan2` and `sqrt` calls per frame.
+
+One correction the render forced, worth keeping: halving the fold cell's WIDTH alone stretched every
+rosette into a tall ellipse, and the doubled pattern rendered as a bright horizontal band rather than as
+more flowers. Both axes have to subdivide together for the rosettes to stay round, and the y fold has to
+be written as a general repeat that REDUCES to a single centre mirror at the coarse size.
+
+For `brutal`, the peak-cap warning in the original note was correct and load-bearing: the caps are
+anchored to each block's own base, and there is a test that checks the cap sits on the block's far side
+from its base in BOTH orientations. Anchored to a panel row they would leap the full height every beat.
+
+### What remains unbuilt from this pass
+
+  - The zooming tunnel and checkerboard floor (mentioned under item 6). They want a vanishing point and
+    fail on a letterbox exactly as a rosette kaleidoscope does. Recommend leaving them.
+  - Giving the blossom moon a real halo, now that the dead frame bloom is gone.
+  - Blossom's remaining eye judgements: strike cadence, FLASH_PEAK's floor, jade's castle at peak.
