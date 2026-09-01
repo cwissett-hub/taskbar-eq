@@ -182,6 +182,7 @@ families** have one, and each is that instrument's characteristic fault or ritua
 | 3D Pipes | Every run is abandoned at once and fresh pipes start, the way the screensaver resets |
 | Orbit | The ring scatters outward and is drawn back in |
 | Cherry blossom | A gust: the wind spikes and the branch lets go of a great deal at once |
+| Kaleidoscope | The mirrors multiply: the fold count doubles and the pattern crowds the strip |
 | Fluid | Cavitation — the surface breaks into a patchy froth and the tank runs slack |
 
 **Every family has one.** The fluid tank was the last and the hardest, because it has the tightest
@@ -289,7 +290,7 @@ colourway files, which hot-reload on save and can replace a built-in by reusing 
 **Last updated: 2026-08-10.** Full test suite green (520 at the time of writing), release build
 warning-free. The colourway and family counts below are asserted by a test; the test count itself is
 a snapshot and can drift.
-**133 colourways across 19 families.**
+**138 colourways across 20 families.**
 
 | | Feature | State |
 |---|---|---|
@@ -440,6 +441,30 @@ the branch**, giving a slow motion under the fast one.
 
 The branch is the *anchor*, not decoration: a solid, static, recognisable shape that tells the eye what
 it is looking at before it has resolved a single petal — and somewhere for the petals to come from.
+
+**Kaleidoscope** — mirrored, repeating psychedelic symmetry. A kaleidoscope normally means *rosette*
+symmetry, rotation about one centre, and that does not fit this panel: at 380x60 a centred disc is 60px
+across and uses 16% of the width. It is the same failure the isometric experiment hit, and it is not
+fixable by tuning.
+
+So the symmetry **group** changes rather than the design shrinking. The symmetry groups of an infinite
+strip are the seven *frieze* groups, and those are the groups a 6:1 letterbox actually has — here,
+vertical mirror lines every cell plus one horizontal mirror down the middle. The result is a row of
+complete four-fold rosettes marching across the panel at full height. A real kaleidoscope's tube view,
+unrolled along its length, *is* a frieze; this is not a compromise shape.
+
+**Radius is frequency**, which is what makes it a meter rather than an ornament: the band a pixel reads
+is chosen by its distance from the nearest rosette centre, so bass swells the centres and treble lights
+the rims, and every rosette is a full radial spectrum. Level stays *position* — it moves where the facet
+edges fall, and it drives how fast the pattern turns.
+
+Values are quantised into four flat facets. A smooth radial gradient reads as a lens flare; a
+kaleidoscope is coloured glass, and glass has edges — and the quantising is also what makes the mirror
+lines visible, which is the entire point.
+
+The geometry is precomputed into tables keyed on the canvas size, because the naive version wants an
+`atan2` and a `sqrt` per pixel per frame — 22,800 of each. The tables are per *cell*, a quarter of one
+rosette at about 28x28, so the per-frame work is one `sin` per cell pixel and a lookup per panel pixel.
 Petals **tumble** through three masks (face, angled, edge), because a petal that slides without turning
 reads as a speck, and each carries its own flutter sine at its own rate so the field never organises
 itself into rain.
@@ -621,7 +646,7 @@ The app also writes that log on every normal launch, so a failure can be reporte
 
 ## Themes
 
-**133 colourways across 19 families.** A *family* is a renderer with fixed geometry — code. A
+**138 colourways across 20 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
 **Segmented VFD** — a smoked-glass panel with discrete stacked segments, a faint dormant grid,

@@ -85,6 +85,7 @@ pub fn family_label(family: &str) -> String {
         "pipes" => "3D Pipes".into(),
         "orbit" => "Orbit".into(),
         "blossom" => "Cherry blossom".into(),
+        "kaleido" => "Kaleidoscope".into(),
         other => {
             let mut c = other.chars();
             match c.next() {

@@ -4,7 +4,120 @@ use super::{OrbitParams,
 };
 use crate::dsp::ballistics::Ballistics;
 
-pub fn all() -> Vec<Theme> {
+
+
+// ===================== Kaleidoscope =====================
+//
+// A frieze-symmetry kaleidoscope: a row of four-fold rosettes marching across the strip, with radius
+// standing for frequency so each rosette is a full radial spectrum. See `render/kaleido.rs` for why the
+// symmetry group is a frieze rather than a rosette - a centred disc uses 16% of a 6.3:1 panel.
+//
+// This is the family the rainbow machinery was waiting for. Most families ship one rainbow colourway as a
+// novelty; here a fixed hue is the novelty, and three of the five vary `rainbow_spread` because that
+// single field is what separates broad oil-slick sweeps from tight psychedelic banding.
+
+fn kaleido_base() -> Theme {
+    Theme {
+        family: "kaleido".into(),
+        texture: Texture::None_,
+        panel_alpha: 1.0,
+        // Small. The family is built on hard quantised facet edges, and a wide bloom is exactly what
+        // dissolves them - the same reasoning that has chroma set bloom to zero. Enough to soften the
+        // stepping between facets, not enough to merge two.
+        bloom: 2.0,
+        glow_strength: 0.22,
+        edge_glow: 1.0,
+        ballistics: Ballistics { attack: 0.55, decay: 0.16, peak_fall: 0.006 },
+        ..Theme::default()
+    }
+}
+
+/// Prism: the reference. Hue walks once per petal and once more across the radius, so a rosette holds a
+/// full colour wheel crossed with colour rings.
+pub fn kaleido_prism() -> Theme {
+    Theme {
+        id: "kaleido-prism".into(),
+        name: "Prism".into(),
+        lit: "#ffffff".into(),
+        hot: "#ffffff".into(),
+        panel: "#05040a".into(),
+        edge: "#b0a8d0".into(),
+        edge_alpha: 0.13,
+        ghost: 0.40,
+        rainbow: 1.0,
+        rainbow_spread: 1.0,
+        ..kaleido_base()
+    }
+}
+
+/// Acid: the same geometry with the hue banding tightened, so each petal crosses several hues instead of
+/// sitting in one. Harsher and busier - the closest this family gets to a rave colourway.
+pub fn kaleido_acid() -> Theme {
+    Theme {
+        id: "kaleido-acid".into(),
+        name: "Acid".into(),
+        lit: "#ffffff".into(),
+        hot: "#ffffff".into(),
+        panel: "#04060a".into(),
+        edge: "#a8ffd0".into(),
+        edge_alpha: 0.14,
+        ghost: 0.44,
+        rainbow: 1.0,
+        rainbow_spread: 2.4,
+        ..kaleido_base()
+    }
+}
+
+/// Oil: the hue sweep stretched far wider than one rosette, so neighbouring rosettes sit in different
+/// colours and the whole strip reads as one slick rather than as a row of repeats.
+pub fn kaleido_oil() -> Theme {
+    Theme {
+        id: "kaleido-oil".into(),
+        name: "Oil slick".into(),
+        lit: "#ffffff".into(),
+        hot: "#ffffff".into(),
+        panel: "#04040c".into(),
+        edge: "#8fa8ff".into(),
+        edge_alpha: 0.12,
+        ghost: 0.38,
+        rainbow: 1.0,
+        rainbow_spread: 0.42,
+        ..kaleido_base()
+    }
+}
+
+/// Lava: a FIXED hue, where the facet steps are carried by the lit-to-hot ramp instead of by colour. The
+/// restrained one, and the proof that the geometry reads without the rainbow doing the work.
+pub fn kaleido_lava() -> Theme {
+    Theme {
+        id: "kaleido-lava".into(),
+        name: "Lava".into(),
+        lit: "#ff5a1e".into(),
+        hot: "#ffe8b0".into(),
+        panel: "#0d0402".into(),
+        edge: "#ff5a1e".into(),
+        edge_alpha: 0.15,
+        ghost: 0.34,
+        ..kaleido_base()
+    }
+}
+
+/// Deep: the cold fixed hue. Blue is the worst case for contrast in this project - pure blue reaches only
+/// 2.31:1 against a near-black panel, which is why `RAINBOW_SAT` is capped at a measured 0.68 - so this
+/// one is deliberately a light cyan rather than a saturated blue.
+pub fn kaleido_deep() -> Theme {
+    Theme {
+        id: "kaleido-deep".into(),
+        name: "Deep".into(),
+        lit: "#4fd6ff".into(),
+        hot: "#e8fbff".into(),
+        panel: "#02080d".into(),
+        edge: "#4fd6ff".into(),
+        edge_alpha: 0.15,
+        ghost: 0.34,
+        ..kaleido_base()
+    }
+}pub fn all() -> Vec<Theme> {
     vec![
         vfd_ice(),
         matrix_green(),
@@ -72,6 +185,11 @@ pub fn all() -> Vec<Theme> {
         blossom_gold(),
         blossom_jade(),
         blossom_riot(),
+        kaleido_prism(),
+        kaleido_acid(),
+        kaleido_oil(),
+        kaleido_lava(),
+        kaleido_deep(),
         nixie_orange(),
         nixie_ice(),
         nixie_neon_green(),
