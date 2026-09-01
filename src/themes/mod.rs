@@ -128,6 +128,41 @@ impl Default for TubeParams {
     }
 }
 
+/// Scene parameters for the orbit family.
+///
+/// Two fields, and both exist because the owner asked for the same family in three characters rather
+/// than one: the full ring, a single ball, and a ring whose SIZE answers the music.
+#[derive(Debug, Clone)]
+pub struct OrbitParams {
+    /// How many balls the ring holds, 1..16.
+    ///
+    /// At 1 the family is one sphere on a long elliptical path - the original ask, and a different thing
+    /// to watch: with nothing to compare it against, the depth is carried entirely by its own size and
+    /// the tilt of its path rather than by occlusion.
+    pub balls: i32,
+    /// Ball size multiplier.
+    ///
+    /// Exists because a single ball needs to be bigger than one of twelve. A lone sphere has nothing
+    /// beside it to give a sense of scale, so at the size that reads correctly in a ring it reads as a
+    /// stray dot - and its depth has to be carried by its own taper rather than by comparison with its
+    /// neighbours, which needs pixels to be visible in.
+    pub scale: f32,
+    /// Whether the ACTIVE count answers the music instead of staying at `balls`.
+    ///
+    /// With this set, `balls` becomes a ceiling: one ball orbits in the quiet passages and the rest fade
+    /// in as the track opens up. Fade, not appear - each ball has its own presence envelope, because a
+    /// ball popping into existence is exactly the kind of discontinuity that got the flourishes reworked.
+    pub reactive: bool,
+}
+
+impl Default for OrbitParams {
+    fn default() -> Self {
+        // Twelve and fixed: the character the family shipped with, which is not being changed under
+        // anyone who already chose one of those colourways.
+        OrbitParams { balls: 12, scale: 1.0, reactive: false }
+    }
+}
+
 /// Scene parameters for the vaporwave grid family.
 ///
 /// Every default here was tuned by the user in a live browser tuner, not chosen by me - see
@@ -846,6 +881,8 @@ pub struct Theme {
     /// gives the "rainbow wave", where hue also varies by position. On a spectrum analyser that
     /// second one doubles as a frequency legend, which is why it is the default.
     pub rainbow_spread: f32,
+    /// Orbit-only scene parameters; inert for the other families.
+    pub orbit: OrbitParams,
     /// Vaporwave-only scene parameters; inert for the other families.
     pub vapor: VaporParams,
     /// Tube-row-only material colours; inert for the other families.
@@ -903,6 +940,7 @@ inks: 0,
             flourish: DEFAULT_FLOURISH,
             rainbow: 0.0,
             rainbow_spread: 0.8,
+            orbit: OrbitParams::default(),
             vapor: VaporParams::default(),
             fluid: FluidParams::default(),
             tube: TubeParams::default(),

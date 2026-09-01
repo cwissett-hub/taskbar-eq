@@ -86,8 +86,27 @@ const RZ: f32 = 6.0;
 const R_REST: f32 = 1.30;
 const R_PULSE: f32 = 0.90;
 
-/// Balls on the ring. Twelve fills a wide ellipse without the near ones overlapping into one mass.
-const BALLS: usize = 12;
+/// Most balls a colourway may ask for. The actual count is `Theme::orbit.balls`.
+///
+/// Sixteen is the ceiling rather than the number: at a 380px panel that is one ball every 23px of the
+/// ring's widest span, which is where the near ones start merging into a band instead of reading as
+/// separate spheres.
+const MAX_BALLS: usize = 16;
+
+/// Milliseconds a ball takes to fade in or out when the reactive count changes.
+///
+/// Fade, not appear. A ball popping into existence is the same class of discontinuity as the flourish
+/// snap that was reported as jarring, and the fix is the same shape: ramp a presence value and multiply
+/// the radius by it, so a ball arriving grows out of nothing and a ball leaving shrinks away.
+///
+/// 260ms is deliberately slower than the swell, so a ball joining the ring never looks like a beat.
+const PRESENCE_MS: f32 = 260.0;
+
+/// How much of the ring the quietest passages keep, as a fraction, when `reactive` is set.
+///
+/// Not zero: one ball always orbits, so the display never goes empty and never has to "start". That also
+/// makes the reactive variant a superset of the single-ball one rather than a different thing.
+const REACTIVE_FLOOR: f32 = 0.0;
 
 /// Orbit rate in revolutions per second, and the tilt.
 ///
@@ -130,6 +149,9 @@ const SCATTER_RAMP_MS: f32 = 220.0;
 pub struct Orbit {
     /// Smoothed pulse per ball, 0..1.
     pulse: Vec<f32>,
+    /// How present each ball is, 0..1 - see `PRESENCE_MS`. Multiplies the radius, so a ball fades by
+    /// SHRINKING rather than by going transparent, which is the cue that reads at this size.
+    presence: Vec<f32>,
     /// Orbit and tilt phase, in turns.
     phase: f32,
     tilt_t: f32,
@@ -240,9 +262,24 @@ impl Family for Orbit {
             return; // shed rather than smudge
         }
 
-        if self.pulse.len() != BALLS {
-            self.pulse = vec![0.0; BALLS];
+        let balls = (t.orbit.balls.clamp(1, MAX_BALLS as i32)) as usize;
+        if self.pulse.len() != balls {
+            self.pulse = vec![0.0; balls];
+            self.presence = vec![0.0; balls];
         }
+
+        // How many are ACTIVE. Fixed colourways use all of them; a reactive one lets the music decide,
+        // with one ball always kept so the ring never empties and never has to restart.
+        let overall = {
+            let n = d.levels.len().max(1);
+            d.levels.iter().map(|v| resp(*v, t.sensitivity)).sum::<f32>() / n as f32
+        };
+        let active = if t.orbit.reactive {
+            let f = REACTIVE_FLOOR + (1.0 - REACTIVE_FLOOR) * overall.clamp(0.0, 1.0);
+            (1.0 + (balls as f32 - 1.0) * f).round().clamp(1.0, balls as f32) as usize
+        } else {
+            balls
+        };
 
         // ---- advance ----
         self.phase += dt / 1000.0 * ORBIT_HZ;
@@ -268,10 +305,10 @@ impl Family for Orbit {
 
         // Each ball reads its OWN slice of the spectrum, low to high around the ring, so twelve balls
         // are not twelve copies of one signal - the same lesson the pipes runs needed.
-        let mut ball: Vec<(f32, f32, f32, f32, usize)> = Vec::with_capacity(BALLS);
-        for i in 0..BALLS {
-            let lo = (i * bands) / BALLS;
-            let hi = (((i + 1) * bands) / BALLS).clamp(lo + 1, bands);
+        let mut ball: Vec<(f32, f32, f32, f32, usize)> = Vec::with_capacity(balls);
+        for i in 0..balls {
+            let lo = (i * bands) / balls;
+            let hi = (((i + 1) * bands) / balls).clamp(lo + 1, bands);
             let band = d.levels[lo..hi].iter().copied().fold(0.0f32, f32::max);
             let target = resp(band, t.sensitivity);
             let cur = self.pulse[i];
@@ -281,7 +318,15 @@ impl Family for Orbit {
 
             // Position on the ring, then the plane tilted about the x axis. With the local y zero this
             // reduces to two terms, which is why there is no matrix here.
-            let a = tau * (self.phase + i as f32 / BALLS as f32);
+            // Presence ramps toward 1 for the active balls and 0 for the rest - see `PRESENCE_MS`.
+            let want = if i < active { 1.0 } else { 0.0 };
+            let pk = (dt / PRESENCE_MS).clamp(0.0, 1.0);
+            self.presence[i] += (want - self.presence[i]) * pk;
+            if !self.presence[i].is_finite() {
+                self.presence[i] = 0.0;
+            }
+
+            let a = tau * (self.phase + i as f32 / balls as f32);
             let spread = 1.0 + SCATTER_GAIN * scatter;
             let x = rx * a.cos() * spread;
             let ring = RZ * a.sin() * spread;
@@ -302,11 +347,17 @@ impl Family for Orbit {
             // rainbow one each ball takes the hue of its own position around the ring. Since position IS
             // the frequency slice that ball reads, the hue doubles as a frequency legend - which is the
             // reason `render::tint` takes a position in the first place.
-            let x01 = i as f32 / BALLS as f32;
+            let x01 = i as f32 / balls.max(1) as f32;
             let lit = crate::render::tint(t, x01, d.time_s, false, &t.lit, 1.0);
             let hot = crate::render::tint(t, x01, d.time_s, true, &t.hot, 1.0);
 
-            let r_world = R_REST + R_PULSE * pulse;
+            // Presence multiplies the radius, so a fading ball shrinks away rather than dissolving.
+            let present = self.presence[i].clamp(0.0, 1.0);
+            if present < 0.02 {
+                continue;
+            }
+            let r_world =
+                (R_REST + R_PULSE * pulse) * present * t.orbit.scale.clamp(0.3, 3.0);
             let r = (r_world * inv).clamp(0.7, 14.0).round() as i32;
 
             // Depth cue by shading as well as by size. The far side is already 2.56x smaller; dimming it

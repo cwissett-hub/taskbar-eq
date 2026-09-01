@@ -1,4 +1,4 @@
-use super::{
+use super::{OrbitParams, 
     ChromaParams, FluidParams, PantoneParams, RadarParams, Texture, Theme, TubeParams, VaporParams,
     Zone,
 };
@@ -63,6 +63,8 @@ pub fn all() -> Vec<Theme> {
         orbit_ion(),
         orbit_lime(),
         orbit_rainbow(),
+        orbit_solo(),
+        orbit_swarm(),
         nixie_orange(),
         nixie_ice(),
         nixie_neon_green(),
@@ -3313,6 +3315,53 @@ pub fn orbit_rainbow() -> Theme {
         // frequency legend rather than a cycling wash. `rainbow_spread` is documented as exactly this:
         // 0 makes the whole display shift together, ~0.8 makes hue vary by POSITION.
         rainbow_spread: 1.0,
+        ..orbit_base()
+    }
+}
+
+/// ONE ball on a long elliptical path - the original ask, kept as its own colourway.
+///
+/// A different thing to watch rather than a smaller version of the ring. With nothing to compare itself
+/// against, its depth is carried entirely by its own size and the tilt of its path, so the near/far taper
+/// does more work here than anywhere else in the family - which is why it takes a 1.55x ball.
+///
+/// That multiplier is the whole reason `OrbitParams::scale` exists. An earlier version of this comment
+/// claimed the bigger ball while the code did nothing of the kind, which is worse than either having it
+/// or not having it: a doc describing behaviour the code lacks is a trap for whoever reads it next.
+pub fn orbit_solo() -> Theme {
+    Theme {
+        id: "orbit-solo".into(),
+        name: "Solo".into(),
+        lit: "#7fe3ff".into(),
+        hot: "#f0fbff".into(),
+        panel: "#04080d".into(),
+        edge: "#7fe3ff".into(),
+        edge_alpha: 0.15,
+        ghost: 0.10,
+        orbit: OrbitParams { balls: 1, scale: 1.55, reactive: false },
+        ..orbit_base()
+    }
+}
+
+/// The ring GROWS with the music: one ball in the quiet, up to twelve when the track opens up.
+///
+/// The count is the meter here, which is a mapping nothing else in the family has - and it is a legible
+/// one, because a count is read at a glance where a brightness is not. Each ball fades in by growing from
+/// nothing rather than appearing, since a ball popping into existence is the same discontinuity that got
+/// both flourishes reworked.
+pub fn orbit_swarm() -> Theme {
+    Theme {
+        id: "orbit-swarm".into(),
+        name: "Swarm".into(),
+        lit: "#ffffff".into(),
+        hot: "#ffffff".into(),
+        panel: "#05060a".into(),
+        edge: "#8899aa".into(),
+        edge_alpha: 0.14,
+        ghost: 0.10,
+        rainbow: 1.0,
+        rainbow_spread: 1.0,
+        orbit: OrbitParams { balls: 12, scale: 1.0, reactive: true },
         ..orbit_base()
     }
 }

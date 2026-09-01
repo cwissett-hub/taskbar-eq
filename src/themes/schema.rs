@@ -1,4 +1,4 @@
-use super::{FluidParams, ChromaParams, PantoneParams, RadarParams, Texture, Theme, TubeParams, VaporParams, Zone};
+use super::{FluidParams, ChromaParams, OrbitParams, PantoneParams, RadarParams, Texture, Theme, TubeParams, VaporParams, Zone};
 use crate::dsp::ballistics::Ballistics;
 use serde::Deserialize;
 use std::fmt;
@@ -159,6 +159,26 @@ fn vapor_from(raw: Option<RawVapor>, d: VaporParams) -> VaporParams {
         sun_upper: r.sun_upper.unwrap_or(d.sun_upper),
         sun_lower: r.sun_lower.unwrap_or(d.sun_lower),
         sun_base: r.sun_base.unwrap_or(d.sun_base),
+    }
+}
+
+/// The `[orbit]` table. Ring size and whether it answers the music; both optional.
+#[derive(Deserialize, Default)]
+struct RawOrbit {
+    balls: Option<i32>,
+    scale: Option<f32>,
+    reactive: Option<bool>,
+}
+
+fn orbit_from(raw: Option<RawOrbit>, d: OrbitParams) -> OrbitParams {
+    let Some(r) = raw else { return d };
+    OrbitParams {
+        // Clamped here as well as in the renderer. A TOML author writing `balls = 500` should get a
+        // usable display and not a smear, and the renderer should not be the only thing standing between
+        // a typo and 500 draw calls.
+        balls: r.balls.unwrap_or(d.balls).clamp(1, 16),
+        scale: r.scale.unwrap_or(d.scale).clamp(0.3, 3.0),
+        reactive: r.reactive.unwrap_or(d.reactive),
     }
 }
 
@@ -346,6 +366,7 @@ struct RawTheme {
     #[serde(default)]
     dual: Option<RawDual>,
     vaporwave: Option<RawVapor>,
+    orbit: Option<RawOrbit>,
     tube: Option<RawTube>,
     fluid: Option<RawFluid>,
     chroma: Option<RawChroma>,
@@ -441,6 +462,7 @@ pub fn parse(src: &str) -> Result<Theme, ThemeError> {
             dl.trail.map(|t| (t, dl.fade.unwrap_or(0.20)))
         }),
         vapor: vapor_from(raw.vaporwave, d.vapor),
+        orbit: orbit_from(raw.orbit, d.orbit),
         tube: tube_from(raw.tube, d.tube),
         fluid: fluid_from(raw.fluid, d.fluid),
         chroma: chroma_from(raw.chroma, d.chroma),
@@ -625,6 +647,36 @@ family = \"{fam}\"
             let t = parse(&toml).unwrap_or_else(|e| panic!("family {fam:?} must parse, got: {e}"));
             assert_eq!(t.family, fam);
         }
+    }
+
+        #[test]
+    fn an_orbit_theme_round_trips_its_own_table() {
+        // The site most easily forgotten when adding a params struct is the one line in `parse()`. Miss
+        // it and an `[orbit]` table PARSES cleanly and is then silently ignored - a setting that looks
+        // like a setting and is not. No other test in this file would notice, which is why this exists.
+        let toml = r##"
+schema = 1
+id = "my-orbit"
+name = "My Orbit"
+family = "orbit"
+[orbit]
+balls = 1
+scale = 1.6
+reactive = true
+"##;
+        let t = parse(toml).expect("an orbit theme must parse");
+        assert_eq!(t.orbit.balls, 1, "the [orbit] table was parsed and then ignored");
+        assert!(t.orbit.reactive, "reactive was parsed and then ignored");
+        assert!((t.orbit.scale - 1.6).abs() < 1e-6, "scale was parsed and then ignored");
+
+        // And an absurd count is clamped rather than trusted.
+        let big = parse(&toml.replace("balls = 1", "balls = 500")).expect("must still parse");
+        assert_eq!(big.orbit.balls, 16, "balls = 500 was not clamped");
+
+        // A theme with no [orbit] table keeps the shipped character.
+        let bare = parse(&toml.replace("[orbit]\nballs = 1\nscale = 1.6\nreactive = true\n", "")).unwrap();
+        assert_eq!(bare.orbit.balls, 12, "a theme without an [orbit] table must keep the default 12");
+        assert!(!bare.orbit.reactive);
     }
 
     #[test]
