@@ -429,3 +429,32 @@ glitch unless the steps are far apart.
 
 The kick still drives the strobe and snaps the fan to a new angle, so the rhythm is in the rig's
 movement as well as in the flash.
+
+---
+
+## 8. A brutalist-bars family (QUEUED, raised 2026-09-01)
+
+Asked for as "also can do the brutalist bars as a separate theme after" - promoting the design that was
+cut from the frenchcore family when that turned into rave visuals. It is a genuinely different look, so it
+earns its own family rather than being a colourway of anything.
+
+The design as it stood, which is worth building as specified:
+
+  - Thick blocks, not thin bars. Half the band count at double width, with a hard dark gap between them.
+    Concrete and steel, no glow, no gradient - a candidate for `bloom = 0`, the way chroma sets it to zero
+    on the grounds that a halo softens exactly the edges the family is about.
+  - THE ORIENTATION FLIPS ON THE BEAT. In one state the blocks hang from the top, in the other they rise
+    from the floor, and an onset toggles between them. The whole panel slams between two configurations,
+    which is a strobe made of POSITION rather than brightness - so it looks violent while keeping the
+    house rule intact, and it is the idea worth keeping from the original sketch.
+  - Level stays the block length, so it is a working meter in either state.
+  - Monochrome or near it: concrete greys, one accent. This is the family where restraint is the point,
+    which also makes it the natural opposite number to the rave and kaleidoscope families.
+
+Sequencing: build it AFTER frenchcore, because frenchcore's per-kick trigger is exactly what the
+orientation flip needs, and after the kaleidoscope only because that one is already in progress.
+
+One thing to watch: flipping orientation destroys frame-to-frame comparability of the bar tops. That is
+intended - the slam is the point - but it means the peak-hold marks, if this family has any, should be
+anchored to the block's own base rather than to a fixed panel row, or they will appear to jump the full
+height of the panel on every beat.
