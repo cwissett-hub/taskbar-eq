@@ -65,6 +65,11 @@ pub fn all() -> Vec<Theme> {
         orbit_rainbow(),
         orbit_solo(),
         orbit_swarm(),
+        blossom_dusk(),
+        blossom_night(),
+        blossom_lantern(),
+        blossom_plum(),
+        blossom_gold(),
         nixie_orange(),
         nixie_ice(),
         nixie_neon_green(),
@@ -3363,6 +3368,134 @@ pub fn orbit_swarm() -> Theme {
         rainbow_spread: 1.0,
         orbit: OrbitParams { balls: 12, scale: 1.0, reactive: true },
         ..orbit_base()
+    }
+}
+
+// ===================== Cherry blossom =====================
+//
+// FIELD MAPPING, borrowing TubeParams for the branch the way the reel family borrows it for a chassis -
+// no params struct of its own, because two colours is not a schema:
+//   lit                 the petal
+//   hot                 a petal catching the light, and the lit edge of every petal
+//   ghost               how dark the furthest petals go (floored at 0.45 - a petal that dim is a smudge)
+//   tube.chassis_top    the lit top of the branch
+//   tube.chassis_bottom the branch in shadow
+//
+// Every colourway is a DUSK: a pale petal needs a dark sky to clear the 3:1 rule, and pale-pink-on-white
+// is the one cherry blossom picture this panel cannot draw. A near-black sky with lantern-pale petals is
+// both legal and, as it turns out, the more evocative of the two.
+fn blossom_base() -> Theme {
+    Theme {
+        family: "blossom".into(),
+        texture: Texture::None_,
+        panel_alpha: 1.0,
+        // Soft, and the one family where that is right: a petal catching light HAS a halo, and the marks
+        // are 3px so there is nothing fine for a bloom to weld together.
+        bloom: 4.0,
+        glow_strength: 0.34,
+        edge_glow: 1.0,
+        ballistics: Ballistics { attack: 0.50, decay: 0.10, peak_fall: 0.005 },
+        ..Theme::default()
+    }
+}
+
+/// Dusk: the reference. Pale pink against deep indigo, brown branch.
+pub fn blossom_dusk() -> Theme {
+    Theme {
+        id: "blossom-dusk".into(),
+        name: "Dusk".into(),
+        lit: "#ffb7d2".into(),
+        hot: "#fff0f6".into(),
+        panel: "#0a0710".into(),
+        edge: "#ffb7d2".into(),
+        edge_alpha: 0.13,
+        ghost: 0.52,
+        tube: TubeParams {
+            chassis_top: "#6b5240".into(),
+            chassis_bottom: "#2e2218".into(),
+            ..TubeParams::default()
+        },
+        ..blossom_base()
+    }
+}
+
+/// Night: cooler, almost white petals under moonlight.
+pub fn blossom_night() -> Theme {
+    Theme {
+        id: "blossom-night".into(),
+        name: "Moonlit".into(),
+        lit: "#dfe4ff".into(),
+        hot: "#ffffff".into(),
+        panel: "#05060d".into(),
+        edge: "#dfe4ff".into(),
+        edge_alpha: 0.12,
+        ghost: 0.50,
+        tube: TubeParams {
+            chassis_top: "#4a4a5e".into(),
+            chassis_bottom: "#1c1c26".into(),
+            ..TubeParams::default()
+        },
+        ..blossom_base()
+    }
+}
+
+/// Lantern: warm, festival-lit - the deepest pink of the three.
+pub fn blossom_lantern() -> Theme {
+    Theme {
+        id: "blossom-lantern".into(),
+        name: "Lantern".into(),
+        lit: "#ff9ec0".into(),
+        hot: "#ffe6d8".into(),
+        panel: "#100608".into(),
+        edge: "#ff9ec0".into(),
+        edge_alpha: 0.15,
+        ghost: 0.55,
+        tube: TubeParams {
+            chassis_top: "#7a4f38".into(),
+            chassis_bottom: "#331d14".into(),
+            ..TubeParams::default()
+        },
+        ..blossom_base()
+    }
+}
+
+/// White plum: the paler cousin, and the coldest branch.
+pub fn blossom_plum() -> Theme {
+    Theme {
+        id: "blossom-plum".into(),
+        name: "White plum".into(),
+        lit: "#f6f2ff".into(),
+        hot: "#ffffff".into(),
+        panel: "#07070c".into(),
+        edge: "#f6f2ff".into(),
+        edge_alpha: 0.12,
+        ghost: 0.48,
+        tube: TubeParams {
+            chassis_top: "#565064".into(),
+            chassis_bottom: "#211f28".into(),
+            ..TubeParams::default()
+        },
+        ..blossom_base()
+    }
+}
+
+/// Sakura gold: pink petals, gilded branch - the most ornamental of the five.
+pub fn blossom_gold() -> Theme {
+    Theme {
+        id: "blossom-gold".into(),
+        name: "Sakura gold".into(),
+        lit: "#ffc2d6".into(),
+        hot: "#fff6dc".into(),
+        panel: "#0b0709".into(),
+        edge: "#ffc2d6".into(),
+        edge_alpha: 0.14,
+        ghost: 0.52,
+        tube: TubeParams {
+            chassis_top: "#a8843c".into(),
+            chassis_bottom: "#3d2f16".into(),
+            ..TubeParams::default()
+        },
+        ..blossom_base()
     }
 }
 

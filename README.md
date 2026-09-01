@@ -181,6 +181,7 @@ families** have one, and each is that instrument's characteristic fault or ritua
 | 3D spectrum | The whole stack surges one depth step forward and settles back |
 | 3D Pipes | Every run is abandoned at once and fresh pipes start, the way the screensaver resets |
 | Orbit | The ring scatters outward and is drawn back in |
+| Cherry blossom | A gust: the wind spikes and the branch lets go of a great deal at once |
 | Fluid | Cavitation — the surface breaks into a patchy froth and the tank runs slack |
 
 **Every family has one.** The fluid tank was the last and the hardest, because it has the tightest
@@ -288,7 +289,7 @@ colourway files, which hot-reload on save and can replace a built-in by reusing 
 **Last updated: 2026-08-10.** Full test suite green (520 at the time of writing), release build
 warning-free. The colourway and family counts below are asserted by a test; the test count itself is
 a snapshot and can drift.
-**126 colourways across 18 families.**
+**131 colourways across 19 families.**
 
 | | Feature | State |
 |---|---|---|
@@ -427,6 +428,25 @@ The orbit is a **wide ellipse**, not a circle, and that is the letterbox talking
 the panel's width on `x` and keeping `z` for as much depth as the rows will pay for is the correct trade
 — and it happens to be what an orbit seen from slightly above actually looks like. The plane tilts
 slowly, which stops the ring being a fixed shape and makes the changing ellipse its own depth cue.
+
+**Cherry blossom** — petals coming off a branch in the wind. The first family whose subject is a
+*field of many small things* rather than one instrument, which changes what it has to worry about: not
+looking like noise.
+
+Three mappings stop it being decorative, and none is brightness. **Wind is the level** — petals stream
+faster and further as the music gets louder, so the whole field's slope tells you the level at a glance.
+**A beat shakes the branch and releases a burst**, so the release pattern is the rhythm. **The bass bends
+the branch**, giving a slow motion under the fast one.
+
+The branch is the *anchor*, not decoration: a solid, static, recognisable shape that tells the eye what
+it is looking at before it has resolved a single petal — and somewhere for the petals to come from.
+Petals **tumble** through three masks (face, angled, edge), because a petal that slides without turning
+reads as a speck, and each carries its own flutter sine at its own rate so the field never organises
+itself into rain.
+
+Every colourway is a dusk. A pale petal needs a dark sky to clear the project's 3:1 contrast rule, so
+pink-on-white is the one cherry blossom picture this panel cannot draw — and a near-black sky with
+lantern-pale petals turns out to be the more evocative of the two anyway.
 
 Perspective brings two hazards this project has already measured, and both are handled explicitly rather
 than hoped about. Depth planes must land on **distinct integer pixel rows** — at the vaporwave grid's
@@ -601,7 +621,7 @@ The app also writes that log on every normal launch, so a failure can be reporte
 
 ## Themes
 
-**126 colourways across 18 families.** A *family* is a renderer with fixed geometry — code. A
+**131 colourways across 19 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
 **Segmented VFD** — a smoked-glass panel with discrete stacked segments, a faint dormant grid,
