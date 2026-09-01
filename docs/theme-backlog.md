@@ -400,3 +400,32 @@ the flash envelope, the per-kick trigger and any luminance-constant hue machiner
 directly reusable in the second. The rainbow resolver (`render::tint`, with `rainbow` and `rainbow_spread`,
 `RAINBOW_SAT` capped at a measured 0.68) is the existing route to psychedelic colour; check whether it can
 vary per-CELL before writing anything new.
+
+### Direction, added 2026-09-01: RAVE VISUALS, not brutalist bars
+
+Clarified as "for the frenchcore think rave visuals". That replaces the earlier sketch (thick blocks
+slamming between orientations), which was an industrial-brutalist read rather than a rave one.
+
+The rave visual language, and what survives a 380x60 letterbox:
+  - LASER FAN. Beams radiating from a rig point and sweeping. This is the strongest fit by far: a fan
+    from the top edge spreading downward gives long diagonal wedges, and a 6:1 strip is the one shape
+    where a wide fan looks natural rather than cramped. Hard-edged bright lines, not soft glows.
+  - STROBE on the kick, which the user has already waived any rate limit on.
+  - RADIAL BURST on accents - beams snapping outward from a point all at once.
+  - ZOOMING CHECKERBOARD / TUNNEL. Fits a letterbox badly for the same reason the rosette kaleidoscope
+    does: a vanishing point wants a squarer frame. Deprioritised, and probably better served by the
+    kaleidoscope family's frieze machinery if it is wanted at all.
+  - Acid smiley: recognisable but it is a SPRITE, and the dolphin family already established that a
+    small sprite at this size needs multiple phases and real movement to avoid reading as a lump. Not
+    worth the pixels here.
+
+Level as POSITION, as the house rule requires - and a laser rig gives several honest options:
+  - The fan's APERTURE - beams spread wide when loud, collapse to a narrow pencil when quiet. Whole-field
+    motion, readable instantly, and the same load-bearing idea as blossom's wind.
+  - Sweep RATE, so the rig moves faster on a heavy passage.
+  - Beam COUNT stepping with level.
+Aperture first, sweep rate second, count third; count is the weakest because a discrete step reads as a
+glitch unless the steps are far apart.
+
+The kick still drives the strobe and snaps the fan to a new angle, so the rhythm is in the rig's
+movement as well as in the flash.
