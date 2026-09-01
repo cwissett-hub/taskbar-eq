@@ -93,6 +93,37 @@ const TUMBLE: [[&str; 3]; 3] = [
 const MASK_W: i32 = 3;
 const MASK_H: i32 = 3;
 
+/// The moon: radius in pixels, and where it sits as a fraction of the panel.
+///
+/// Upper RIGHT, deliberately opposite the branch, which enters from the left. Two focal points on the
+/// same side would fight; on opposite sides they frame the petals drifting between them.
+///
+/// Six pixels is the smallest disc that still reads as a moon rather than a dot at this size - below that
+/// it is indistinguishable from a bright petal, which is the one thing it must not look like.
+const MOON_R: i32 = 6;
+const MOON_X: f32 = 0.82;
+const MOON_Y: f32 = 0.30;
+
+/// The twigs: where along the branch, which way, and how long.
+///
+/// A TABLE rather than a hash, and hand-placed rather than random. The shape has to be identical frame
+/// to frame - a tree that reshuffles itself every frame is not a tree - and eight twigs is few enough
+/// that choosing them by eye beats any generator: the spacing is uneven on purpose, two fork DOWNWARD,
+/// and the longest sit where the branch is thickest, which is what a real branch does.
+///
+/// `(along, dx, dy, len)`: `along` is the fraction of the branch, `dx`/`dy` the direction per step
+/// (negative `dy` is up the screen), `len` the number of steps.
+const TWIGS: [(f32, f32, f32, f32); 8] = [
+    (0.14, 0.55, -1.00, 8.0),
+    (0.24, -0.45, -1.00, 5.0),
+    (0.33, 0.80, -1.00, 10.0),
+    (0.44, 0.40, 1.00, 5.0),   // downward - a branch forks both ways
+    (0.55, 0.70, -1.00, 8.0),
+    (0.67, -0.35, -1.00, 6.0),
+    (0.79, 0.85, -1.00, 7.0),
+    (0.90, 0.30, 1.00, 4.0),   // downward, near the tip
+];
+
 #[derive(Clone, Copy, Default)]
 struct Petal {
     x: f32,
@@ -160,13 +191,30 @@ impl Blossom {
         w * 0.72
     }
 
+    /// Where a twig's tip is. Shared by the drawing and the petal release, so blossom always comes off
+    /// the end of a twig and never out of thin air beside one.
+    fn twig_tip(&self, k: usize, w: f32, h: f32) -> (f32, f32) {
+        let (along, dx, dy, len) = TWIGS[k % TWIGS.len()];
+        let at = along * Self::branch_len(w);
+        (at + dx * len, self.spine_y(at, w, h) + dy * len)
+    }
+
     /// Reseeds a petal at a random point along the branch.
     fn seed_petal(&mut self, i: usize, w: f32, h: f32) {
         self.seed = self.seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
         let s = self.seed;
-        let along = 0.10 + 0.90 * rand01(s, i as u32 * 3);
-        let x = along * Self::branch_len(w);
-        let y = self.spine_y(x, w, h) + rand01(s, i as u32 * 3 + 1) * 3.0;
+        // Mostly from a twig TIP, sometimes from along the spine. Blossom grows on the twigs, so a
+        // petal appearing mid-branch reads as coming off the bark itself.
+        let pick = rand01(s, i as u32 * 3);
+        let (x, y) = if pick < 0.78 {
+            let k = (rand01(s, i as u32 * 3 + 4) * TWIGS.len() as f32) as usize;
+            let (tx, ty) = self.twig_tip(k, w, h);
+            (tx + (rand01(s, i as u32 * 3 + 1) - 0.5) * 2.0, ty + rand01(s, i as u32 * 3 + 2) * 1.5)
+        } else {
+            let along = 0.10 + 0.90 * rand01(s, i as u32 * 3 + 5);
+            let ax = along * Self::branch_len(w);
+            (ax, self.spine_y(ax, w, h) + rand01(s, i as u32 * 3 + 1) * 3.0)
+        };
         self.petals[i] = Petal {
             x,
             y,
@@ -213,6 +261,30 @@ impl Family for Blossom {
         c.rounded_rect(1, 2, w - 2, h - 4, 3, panel);
         if w < 60 || h < 28 {
             return; // shed rather than smudge
+        }
+
+        // ---- the sky ----
+        //
+        // A dusk gradient rather than flat black, because flat black is a void and dusk is a TIME - and
+        // the whole family is a dusk by necessity anyway (a pale petal needs a dark sky to clear the 3:1
+        // rule). Deep at the top, warming toward the horizon, which is the direction real dusk goes.
+        //
+        // Dithered: `vertical_gradient`'s 4x4 Bayer pass exists because a smooth ramp over ~56 rows in 8
+        // bits per channel bands visibly, and a banded sky reads as a rendering fault rather than as sky.
+        // Drawn INSIDE the rounded panel so it cannot square off the corners the panel just rounded.
+        let sky_top = Rgba::from_hex(&t.tube.socket, 1.0);
+        let sky_low = Rgba::from_hex(&t.tube.collar, 1.0);
+        c.vertical_gradient(2, 3, w - 4, h - 6, &[(0.0, sky_top), (1.0, sky_low)], true);
+
+        // ---- the moon ----
+        //
+        // Behind everything, so the branch crosses it and petals drift in front. That occlusion is what
+        // puts it at a distance; a moon drawn on top would sit in the same plane as the blossom.
+        let moon = Rgba::from_hex(&t.tube.glass, 1.0);
+        let (mx, my) = ((w as f32 * MOON_X) as i32, (h as f32 * MOON_Y) as i32);
+        for dy in -MOON_R..=MOON_R {
+            let dx = (((MOON_R * MOON_R - dy * dy) as f32).max(0.0).sqrt() + 0.5) as i32;
+            c.fill_rect(mx - dx, my + dy, dx * 2 + 1, 1, moon);
         }
         if self.petals.len() != PETALS {
             self.petals = vec![Petal::default(); PETALS];
@@ -277,19 +349,23 @@ impl Family for Blossom {
             c.fill_rect(x as i32, y as i32, 2, 1, bark_lit);
             x += 1.5;
         }
-        // Twigs, angled up off the spine - three, at fixed fractions so the shape is recognisable
-        // frame to frame rather than a different tree every time.
-        for k in 0..3 {
-            let at = len * (0.30 + 0.22 * k as f32);
+        // The twigs - see `TWIGS`. Tapered like the branch: 2px at the fork, 1px past halfway, because a
+        // twig of uniform thickness reads as a scratch rather than as wood.
+        for (k, (along, dx, dy, tlen)) in TWIGS.iter().enumerate() {
+            let at = len * along;
             let base_y = self.spine_y(at, wf, hf);
-            let up = 5.0 + 2.0 * k as f32;
-            let mut s = 0.0f32;
-            while s < up {
-                let tx = at + s * 0.8;
-                let ty = base_y - s;
-                c.fill_rect(tx as i32, ty as i32, 1, 2, bark);
-                s += 1.0;
+            let mut step = 0.0f32;
+            while step < *tlen {
+                let tx = at + dx * step;
+                let ty = base_y + dy * step;
+                let thick = if step < tlen * 0.5 { 2 } else { 1 };
+                c.fill_rect(tx as i32, ty as i32, 1, thick, bark);
+                step += 1.0;
             }
+            // A single lit pixel at the fork, which is what makes a twig read as JOINED to the branch
+            // rather than as a mark lying across it.
+            let _ = k;
+            c.fill_rect(at as i32, base_y as i32, 1, 1, bark_lit);
         }
 
         // ---- petals ----

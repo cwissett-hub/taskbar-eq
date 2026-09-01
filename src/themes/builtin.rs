@@ -3380,6 +3380,9 @@ pub fn orbit_swarm() -> Theme {
 //   ghost               how dark the furthest petals go (floored at 0.45 - a petal that dim is a smudge)
 //   tube.chassis_top    the lit top of the branch
 //   tube.chassis_bottom the branch in shadow
+//   tube.socket         the sky at the top of the panel
+//   tube.collar         the sky toward the horizon
+//   tube.glass          the moon
 //
 // Every colourway is a DUSK: a pale petal needs a dark sky to clear the 3:1 rule, and pale-pink-on-white
 // is the one cherry blossom picture this panel cannot draw. A near-black sky with lantern-pale petals is
@@ -3413,6 +3416,11 @@ pub fn blossom_dusk() -> Theme {
         tube: TubeParams {
             chassis_top: "#6b5240".into(),
             chassis_bottom: "#2e2218".into(),
+            // The sky and the moon: this family borrows the three unused TubeParams slots rather
+            // than growing a params struct for what is three hex values.
+            socket: "#120b22".into(),
+            collar: "#2a1430".into(),
+            glass: "#f3ddc8".into(),
             ..TubeParams::default()
         },
         ..blossom_base()
@@ -3433,6 +3441,11 @@ pub fn blossom_night() -> Theme {
         tube: TubeParams {
             chassis_top: "#4a4a5e".into(),
             chassis_bottom: "#1c1c26".into(),
+            // The sky and the moon: this family borrows the three unused TubeParams slots rather
+            // than growing a params struct for what is three hex values.
+            socket: "#04050e".into(),
+            collar: "#101a30".into(),
+            glass: "#eef2ff".into(),
             ..TubeParams::default()
         },
         ..blossom_base()
@@ -3453,6 +3466,11 @@ pub fn blossom_lantern() -> Theme {
         tube: TubeParams {
             chassis_top: "#7a4f38".into(),
             chassis_bottom: "#331d14".into(),
+            // The sky and the moon: this family borrows the three unused TubeParams slots rather
+            // than growing a params struct for what is three hex values.
+            socket: "#180608".into(),
+            collar: "#3a1010".into(),
+            glass: "#ffcf9a".into(),
             ..TubeParams::default()
         },
         ..blossom_base()
@@ -3473,6 +3491,11 @@ pub fn blossom_plum() -> Theme {
         tube: TubeParams {
             chassis_top: "#565064".into(),
             chassis_bottom: "#211f28".into(),
+            // The sky and the moon: this family borrows the three unused TubeParams slots rather
+            // than growing a params struct for what is three hex values.
+            socket: "#06060e".into(),
+            collar: "#141426".into(),
+            glass: "#ffffff".into(),
             ..TubeParams::default()
         },
         ..blossom_base()
@@ -3493,6 +3516,11 @@ pub fn blossom_gold() -> Theme {
         tube: TubeParams {
             chassis_top: "#a8843c".into(),
             chassis_bottom: "#3d2f16".into(),
+            // The sky and the moon: this family borrows the three unused TubeParams slots rather
+            // than growing a params struct for what is three hex values.
+            socket: "#100a10".into(),
+            collar: "#2c1a18".into(),
+            glass: "#ffe9b0".into(),
             ..TubeParams::default()
         },
         ..blossom_base()
