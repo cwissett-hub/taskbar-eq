@@ -104,6 +104,114 @@ pub fn kaleido_lava() -> Theme {
 
 /// Deep: the cold fixed hue. Blue is the worst case for contrast in this project - pure blue reaches only
 /// 2.31:1 against a near-black panel, which is why `RAINBOW_SAT` is capped at a measured 0.68 - so this
+
+// ===================== Rave lasers =====================
+//
+// A sweeping laser rig that strobes on the kick. See `render/rave.rs` for why a fan is the one piece of
+// rave imagery a 6:1 letterbox actually flatters, and for the flash-rate decision - the user was given the
+// arithmetic and waived any limit, so this family is not built timid.
+//
+// `flourish` is set LOW on every colourway here, and it is the one number in this family that is not
+// about aggression: the flourish blacks the rig out, and a blackout only reads as an event if it is rare
+// against the three-per-second strobe it interrupts.
+
+fn rave_base() -> Theme {
+    Theme {
+        family: "rave".into(),
+        texture: Texture::None_,
+        panel_alpha: 1.0,
+        // Wide and strong. Beams are 1px cores and the halo is most of what makes them read as light
+        // rather than as drawn lines - the opposite of the kaleidoscope family, where bloom dissolves the
+        // facet edges that carry the shape.
+        bloom: 5.0,
+        glow_strength: 0.70,
+        edge_glow: 2.0,
+        // Fast attack, fast decay. A laser rig has no ballistics of its own - what it shows is the
+        // transient, and a slow decay would smear the kick into the beat after it.
+        ballistics: Ballistics { attack: 0.85, decay: 0.28, peak_fall: 0.010 },
+        flourish: 0.12,
+        ..Theme::default()
+    }
+}
+
+/// Frenchcore: the reference. Acid green on near-black, which is the hardcore flyer palette.
+pub fn rave_frenchcore() -> Theme {
+    Theme {
+        id: "rave-frenchcore".into(),
+        name: "Frenchcore".into(),
+        lit: "#8cff2e".into(),
+        hot: "#f2ffd6".into(),
+        panel: "#04070a".into(),
+        edge: "#8cff2e".into(),
+        edge_alpha: 0.16,
+        ghost: 0.30,
+        ..rave_base()
+    }
+}
+
+/// Gabber: red and white, the Rotterdam palette. The most aggressive fixed hue here.
+pub fn rave_gabber() -> Theme {
+    Theme {
+        id: "rave-gabber".into(),
+        name: "Gabber".into(),
+        lit: "#ff2f3a".into(),
+        hot: "#fff0f0".into(),
+        panel: "#0a0203".into(),
+        edge: "#ff2f3a".into(),
+        edge_alpha: 0.17,
+        ghost: 0.28,
+        ..rave_base()
+    }
+}
+
+/// UV: blacklight purple, the one that reads as a dark room rather than a stage.
+pub fn rave_uv() -> Theme {
+    Theme {
+        id: "rave-uv".into(),
+        name: "UV".into(),
+        lit: "#b04cff".into(),
+        hot: "#f0e0ff".into(),
+        panel: "#05030c".into(),
+        edge: "#b04cff".into(),
+        edge_alpha: 0.16,
+        ghost: 0.32,
+        ..rave_base()
+    }
+}
+
+/// Strobe: no hue at all, so the flashing and the fan's geometry do all the work. The honest test of
+/// whether the family reads without colour helping it.
+pub fn rave_strobe() -> Theme {
+    Theme {
+        id: "rave-strobe".into(),
+        name: "Strobe".into(),
+        lit: "#dfe6ef".into(),
+        hot: "#ffffff".into(),
+        panel: "#050506".into(),
+        edge: "#dfe6ef".into(),
+        edge_alpha: 0.15,
+        ghost: 0.26,
+        ..rave_base()
+    }
+}
+
+/// Hard dance: every beam its own colour, and the hue steps on every kick. The rainbow resolver is spread
+/// wide so neighbouring beams differ rather than the whole fan cycling together.
+pub fn rave_hardance() -> Theme {
+    Theme {
+        id: "rave-hardance".into(),
+        name: "Hard dance".into(),
+        lit: "#ffffff".into(),
+        hot: "#ffffff".into(),
+        panel: "#040407".into(),
+        edge: "#c0b0e0".into(),
+        edge_alpha: 0.15,
+        ghost: 0.30,
+        rainbow: 1.0,
+        rainbow_spread: 1.4,
+        ..rave_base()
+    }
+}
 /// one is deliberately a light cyan rather than a saturated blue.
 pub fn kaleido_deep() -> Theme {
     Theme {
@@ -190,6 +298,11 @@ pub fn kaleido_deep() -> Theme {
         kaleido_oil(),
         kaleido_lava(),
         kaleido_deep(),
+        rave_frenchcore(),
+        rave_gabber(),
+        rave_uv(),
+        rave_strobe(),
+        rave_hardance(),
         nixie_orange(),
         nixie_ice(),
         nixie_neon_green(),

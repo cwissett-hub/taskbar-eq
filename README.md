@@ -182,6 +182,7 @@ families** have one, and each is that instrument's characteristic fault or ritua
 | 3D Pipes | Every run is abandoned at once and fresh pipes start, the way the screensaver resets |
 | Orbit | The ring scatters outward and is drawn back in |
 | Cherry blossom | A storm: lightning strikes the castle and a gust lets the branch go of a great deal at once |
+| Rave lasers | The rig blacks out, then every beam snaps to full spread at once |
 | Kaleidoscope | The mirrors multiply: the fold count doubles and the pattern crowds the strip |
 | Fluid | Cavitation — the surface breaks into a patchy froth and the tank runs slack |
 
@@ -290,7 +291,7 @@ colourway files, which hot-reload on save and can replace a built-in by reusing 
 **Last updated: 2026-08-10.** Full test suite green (520 at the time of writing), release build
 warning-free. The colourway and family counts below are asserted by a test; the test count itself is
 a snapshot and can drift.
-**138 colourways across 20 families.**
+**143 colourways across 21 families.**
 
 | | Feature | State |
 |---|---|---|
@@ -477,6 +478,31 @@ lines visible, which is the entire point.
 The geometry is precomputed into tables keyed on the canvas size, because the naive version wants an
 `atan2` and a `sqrt` per pixel per frame — 22,800 of each. The tables are per *cell*, a quarter of one
 rosette at about 28x28, so the per-frame work is one `sin` per cell pixel and a lookup per panel pixel.
+
+**Rave lasers** — a sweeping laser rig that strobes on the kick, for frenchcore. A fan of beams is the one
+piece of the rave vocabulary a 6:1 letterbox *flatters*: a wide fan is cramped in a square frame and
+natural in a strip, so for once the aspect ratio is an advantage rather than the thing to design around.
+The zooming tunnel and the checkerboard floor both want a vanishing point and fail here for the same
+reason a rosette kaleidoscope does.
+
+**The fan's outline is the spectrum.** Each beam owns a slice of the band range and reaches as far as that
+slice is loud, so the beam tips trace the spectrum in polar form and the fan's silhouette *is* the meter.
+On top of that the whole aperture follows the overall level — beams spread wide when it is loud and
+collapse toward a pencil when it is quiet. Both are position, so the house rule holds; what brightness
+carries here is *events*, which is a different thing and the entire point of the family.
+
+Flash rate is deliberately unlimited: 200bpm is 3.33 flashes per second against a general 3-per-second
+guidance threshold that carries a size exemption a 380x60 taskbar strip comfortably meets, and the user
+waived it explicitly. The remaining limit is a *loudness* one worth keeping for its own sake — if every
+beat is maximum then none of them is, so the per-kick strobe has a ceiling and every fourth kick goes
+above it.
+
+This is the one family where the detector's problem is the opposite of everywhere else. Frenchcore hands
+over a distorted kick that dominates the spectrum, on the grid, every beat — so the trigger is a plain
+flux detector on the kick's fundamental with a 130ms refractory (about 460bpm), and what had to be
+engineered is a visual that survives firing three times a second rather than one that fires at all. The
+shared flourish machinery's 180ms would cap at 333bpm and swallow a kick roll, which is exactly the
+material this is for.
 Petals **tumble** through three masks (face, angled, edge), because a petal that slides without turning
 reads as a speck, and each carries its own flutter sine at its own rate so the field never organises
 itself into rain.
@@ -658,7 +684,7 @@ The app also writes that log on every normal launch, so a failure can be reporte
 
 ## Themes
 
-**138 colourways across 20 families.** A *family* is a renderer with fixed geometry — code. A
+**143 colourways across 21 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
 **Segmented VFD** — a smoked-glass panel with discrete stacked segments, a faint dormant grid,

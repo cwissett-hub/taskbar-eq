@@ -290,7 +290,7 @@ at all. 0.42 crosses only its bottom edge, which is what "peeking out from behin
 
 ---
 
-## 6. A frenchcore family: full-rate flashing at 200bpm (QUEUED, raised 2026-09-01)
+## 6. A frenchcore family: full-rate flashing at 200bpm (DONE 2026-09-01)
 
 Asked for as "full 200bpm flashing visuals, something that could work for frenchcore". Queued behind the
 lightning; raised while that was still in flight.
@@ -495,3 +495,36 @@ Removed. Which means: THE MOON HAS NO HALO, and never did.
   - GIVING THE MOON A REAL HALO. It needs the same treatment the petals and the bolt get: its own
     transparent layer, bloomed, composited over. About 1ms, which is exactly what deleting the dead call
     gave back.
+
+---
+
+## Status, 2026-09-01: item 6 (frenchcore) is DONE, shipped as the `rave` family
+
+A sweeping laser fan that strobes on the kick. Five colourways: Frenchcore, Gabber, UV, Strobe, Hard
+dance. 1.054 ms/frame at 380x60.
+
+Kick detection MEASURED over the three real-music fixtures at 306 / 234 / 326 kicks per minute - and a
+high rate is CORRECT here, unlike everywhere else in this project. This is the one family whose trigger
+problem is the opposite one: the material hands over a dominant on-grid kick, so what had to be engineered
+is a visual that survives firing three times a second, not one that fires at all. A synthetic 200bpm grid
+is caught beat-for-beat, and so are 160, 240 and 300bpm.
+
+### Three things the render corrected, none of which reasoning would have caught
+
+1. THE STROBE SWALLOWED THE BEAMS. A near-white wash at 0.92 alpha turned the panel pastel and made the
+   beams - the element that carries the level - the lowest-contrast thing on screen. Now 0.30/0.62 of the
+   SATURATED hue rather than `hot`, which is the trick this very backlog entry proposed: flash the hue and
+   leave the luminance roughly alone, so near-white cores punch through a violent colour.
+2. THE QUIET FRAME WAS A SOLID WEDGE. Nine 5px beams from one origin separate only beyond
+   `r > 5 / (2*aperture/(BEAMS-1))`, which at the narrow aperture is r > 44px on a panel 60 tall - so at
+   nine beams they could NEVER separate, and the beam count that carries the spectrum was unreadable. The
+   count now follows the level, 3 to 9. Worth noting against my own earlier note, which ranked count as
+   the weakest of the position mappings: true in general, and beside the point here, because without it
+   the other two mappings are illegible at the quiet end.
+3. The narrow aperture went 0.20 -> 0.45 for the same reason.
+
+### Carried forward
+
+A fan of beams is the one piece of rave imagery a 6:1 letterbox flatters, and that is now demonstrated
+rather than argued. The zooming tunnel and checkerboard floor remain unbuilt and should stay that way -
+they want a vanishing point, and they fail here exactly as a rosette kaleidoscope does.
