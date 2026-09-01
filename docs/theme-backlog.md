@@ -153,3 +153,46 @@ their own history. It needs no perspective, no clip, no depth buffer; the vertic
 band levels so the shape IS the spectrum; and the trailing history reuses the scope family's phosphor
 persistence. Worth considering FIRST if the appetite is for a screensaver family rather than
 specifically for depth.
+
+---
+
+## 4. Blossom needs distinct colours (DEFERRED, raised 2026-09-01)
+
+Reported after the family shipped: "all the colourways just degrade to pink or white blossoms. I like the
+vibe but we need more distinct colours."
+
+Correct, and the cause is a constraint I imposed without noticing. The five shipped `lit` values are
+`#ffb7d2`, `#dfe4ff`, `#ff9ec0`, `#f6f2ff`, `#ffc2d6` - three pale pinks and two near-whites. I picked
+them by asking "what colour is cherry blossom", which is a very narrow band, so the colourways differ in
+their SKY and BRANCH while the petals - the element that dominates the frame and the one the eye tracks -
+stay nearly identical. Every other family gets wide hue variety; this one was quietly denied it.
+
+Worth noting the reel family had the same fault for the same reason (five authentic hardware neutrals,
+reported as boring) and the fix there was to stop being literal. The precedent is already in the tree:
+flame ships Plasma and Rainbow alongside its real flame-test colours.
+
+### Options, roughly in order of how much they would help
+
+1. **Non-literal petal hues.** Deep magenta, amber/gold, ice cyan, jade, violet. The family's identity is
+   the BRANCH plus the falling-and-tumbling motion, not the petal colour - so a violet blossom is still
+   unmistakably this family, the same way Neon Miami is still unmistakably a tape deck.
+2. **Per-petal hue variation within one colourway**, via the existing rainbow machinery (`rainbow` +
+   `rainbow_spread` through `render::tint`, exactly as `orbit-rainbow` does). This attacks the complaint
+   most directly, because the sameness is WITHIN a frame as well as between colourways. Note `RAINBOW_SAT`
+   is a measured ceiling of 0.68 - at full saturation pure blue only reaches 2.31:1 against a near-black
+   panel and fails the 3:1 rule at every brightness.
+3. **Hue by petal age or depth**, so a petal shifts as it falls - freshly released warm, settling cool.
+   Cheap, and it makes the field read as depth as well as motion.
+4. **A much bolder sky.** Least effective on its own: the sky is already the thing that differs most, and
+   it is not what the eye is following.
+
+### Constraint that shaped the original and still applies
+
+Petals must clear 3:1 against their own panel, and every colourway here is a dusk for that reason -
+pale-pink-on-white is the one cherry blossom picture this panel cannot draw. That rules out a WHITE sky,
+not a coloured petal, so option 1 is unaffected by it.
+
+Also worth knowing before tuning: the shipped contrast test compares `lit` against the FLAT panel colour,
+not against the sky gradient drawn over it. The current five have 8.6:1 in the worst case, so they are
+fine - but the test is not what establishes that, and a bolder sky plus a darker petal could pass the
+suite while being hard to read.
