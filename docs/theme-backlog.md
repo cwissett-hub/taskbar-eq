@@ -307,27 +307,25 @@ Check before building: the shared onset detector's refractory is documented at 2
 300bpm. 200bpm is a 300ms period, so it clears - but only by 100ms, and a kick roll or a double-kick would
 be swallowed. Measure this rather than assume it, and consider a family-local refractory.
 
-### The accessibility arithmetic, which permits this
+### Flash rate: NO LIMIT. The user waived this explicitly.
 
-200bpm is 3.33 beats/second. The general guidance threshold for flashing content is 3 flashes per second,
-so flashing on every kick is just OVER the general limit - but that limit carries a SIZE exemption, and a
-380x60 panel on a taskbar is very small in visual-field terms, which is exactly the exempt case. So
-full-rate flashing is defensible here in a way it would not be on a fullscreen visualiser.
+Recorded because it is a decision, not an omission: the user was told the arithmetic and said "no concerns
+about photosensitivity". So full-rate luminance flashing is ON THE TABLE and nothing here should be built
+timid. Do not re-raise it; do not quietly cap the flash and call it taste.
 
-What that does and does not license:
-  - It does NOT license driving all ~22,800 pixels to peak white every 300ms. The exemption is about
-    small area; a small panel at maximum brightness alternating 3.3x/second is still the worst version of
-    this, and it sits in the user's peripheral vision all working day.
-  - It DOES license flashing ELEMENTS hard - bars, tiles, the field's colour, a strobed subset - while the
-    mean panel luminance stays roughly constant. Alternating hue at constant luminance is the trick worth
-    trying first: it reads as violent without actually being a luminance flash.
-  - Keep it off by default on the other families' colourways, and make the flash strength a theme field so
-    it can be turned down without a rebuild.
+The arithmetic, kept only as information about what is happening on screen: 200bpm is 3.33 flashes/second,
+against a 3/second general guidance threshold that carries a size exemption a 380x60 taskbar strip
+comfortably meets. So this was defensible even before the waiver.
+
+Design consequence of the waiver: a luminance strobe on every kick is allowed as the BASE layer, not just
+as a sparse accent. The hue-strobe-at-constant-luminance idea stays in the toolbox, but as an aesthetic
+option for a calmer colourway rather than as a safety measure.
 
 ### Design notes to start from
 
-  - Luminance-constant hue strobe as the base layer, luminance flash reserved for a sparser accent (every
-    4th or 8th kick) so there IS a dynamic range. Flashing every beat AND every bar means nothing is loud.
+  - Flash hard on every kick. The one thing to preserve is DYNAMIC RANGE: if every beat is maximum, none
+    of them is, so the every-kick flash needs a ceiling below full and a sparser accent (every 4th or 8th)
+    that goes above it. That is a loudness-design point, not a safety one.
   - The house rule that level is POSITION and never brightness still applies to the METER. A strobe is
     brightness-as-an-event, not brightness-as-a-level, so it does not conflict - but the thing that tells
     you the level must still be position, or the family is an ornament.
