@@ -161,145 +161,62 @@ const FRAME_GLOW: f32 = 0.35;
 /// identity is entirely in its outline - the stacked, strictly narrowing roofs with upturned eaves over a
 /// battered stone base - and any interior marking at 30 rows just muddies that outline.
 ///
-/// Four candidates, up for a decision. Their real differences are what each one SPENDS its pixels on:
-/// `TIERS` buys four roofs and their eave corners, `ISHIGAKI` buys the flared stone base (19 of its 30
-/// rows) on the grounds that the base is what separates a tenshu from a pagoda, `HIMEJI` is tall and
-/// narrow, and `TWOTIER` is the smallest thing that still reads as a castle.
+/// Chosen from four candidates by rendering all four at true scale in this scene. What decided it was
+/// where each one SPENT its pixels: this one buys four strictly narrowing roofs and their upturned eave
+/// corners, and that stacked roofline is the single cue that reads as a castle at 28 rows. The candidate
+/// that instead spent 19 of its 30 rows on a flared stone base - defensible reasoning, since the base is
+/// what separates a tenshu from a pagoda - rendered as a tent or a volcano, which is exactly the risk its
+/// own designer had flagged. A taller, narrower tower crossed the moon best but read as a fir tree.
+///
+/// REDRAWN once the keyline went on, and the reason is worth keeping. The first version modelled upturned
+/// eaves as 2-column blocks stepped up off the eave line and protruding 5-7px past each storey. That is
+/// correct architecture and it looked plausible while the castle was a low-contrast smudge - but the
+/// moment the outline became crisp, four pairs of thin symmetrical limbs sticking out of narrow storeys
+/// read unmistakably as a SPIDER. The detail was right and the proportion was wrong, and only a legible
+/// render could show it.
+///
+/// So the eaves are now plain: each roof simply overhangs its storey by 3-6px per side and stops. No
+/// upturn, no corner notch. At 28 rows the tiering alone carries the read - four roofs, strictly
+/// narrowing, over a flaring base - and an eave flick costs two columns of silhouette to say something
+/// the stack already says. Widths increase monotonically down the whole shape, which is what makes it a
+/// stack of trapezoids rather than a collection of parts.
+///
+/// Storeys are 2-3 rows, never 1: a single-row waist is erased by a 1px closing because the wide roof
+/// rows above and below dilate into it, and holding the tiers apart is the entire job.
 
-/// Candidate `tiers`: Four-tier tenshu (roofline-first) (41x28).
-// Held for the decision: three of the four candidates are unreferenced until one is chosen, and
-// the losers are deleted at that point rather than kept as dead weight.
-#[allow(dead_code)]
+/// The tenshu, 41x28 - chosen from four candidates for having the clearest castle read.
 const CASTLE_TIERS: [&str; 28] = [
     "...................###...................",
-    "............##.....###.....##............",
+    "................#########................",
+    ".............###############.............",
     "............#################............",
+    "................#########................",
+    "................#########................",
+    ".............###############.............",
+    "..........#####################..........",
+    ".........#######################.........",
     "..............#############..............",
-    ".................#######.................",
-    ".................#######.................",
-    ".........##....###########....##.........",
-    ".........#######################.........",
-    "...........###################...........",
-    "...............###########...............",
-    "...............###########...............",
-    "...............###########...............",
-    ".....##......###############......##.....",
-    ".....####..###################..####.....",
+    "..............#############..............",
+    "..............#############..............",
+    "..........#####################..........",
     ".......###########################.......",
-    ".........#######################.........",
+    "......#############################......",
     "............#################............",
     "............#################............",
     "............#################............",
-    ".........#######################.........",
-    "####...###########################...####",
-    "#########################################",
-    "..#####################################..",
-    "....#################################....",
-    ".......###########################.......",
     ".......###########################.......",
     "....#################################....",
-    "..#####################################..",
+    "...###################################...",
+    ".........#######################.........",
+    ".........#######################.........",
+    ".........#######################.........",
+    ".......###########################.......",
+    ".....###############################.....",
+    "...###################################...",
+    ".#######################################.",
 ];
 
-/// Candidate `ishigaki`: Ishigaki-first tenshu (stone base carries the read) (45x30).
-// Held for the decision: three of the four candidates are unreferenced until one is chosen, and
-// the losers are deleted at that point rather than kept as dead weight.
-#[allow(dead_code)]
-const CASTLE_ISHIGAKI: [&str; 30] = [
-    "....................#####....................",
-    "....................#####....................",
-    "................#############................",
-    "...............###############...............",
-    "...................#######...................",
-    "...................#######...................",
-    "...................#######...................",
-    ".............###################.............",
-    "...........#######################...........",
-    "........#############################........",
-    "........#############################........",
-    "............#####################............",
-    "............#####################............",
-    "............#####################............",
-    "............#####################............",
-    "...........#######################...........",
-    "...........#######################...........",
-    "...........#######################...........",
-    "..........#########################..........",
-    "..........#########################..........",
-    ".........###########################.........",
-    ".........###########################.........",
-    "........#############################........",
-    ".......###############################.......",
-    "......#################################......",
-    ".....###################################.....",
-    "....#####################################....",
-    "...#######################################...",
-    "..#########################################..",
-    ".###########################################.",
-];
-
-/// Candidate `himeji`: Tenshu-5 (tall narrow, Himeji-like) (25x30).
-const CASTLE_HIMEJI: [&str; 30] = [
-    "...........###...........",
-    "..........#####..........",
-    "........#########........",
-    "........#########........",
-    "..........#####..........",
-    "..........#####..........",
-    "......##..#####..##......",
-    "......#############......",
-    "........#########........",
-    "........#########........",
-    "....##..#########..##....",
-    "....#################....",
-    "......#############......",
-    "......#############......",
-    "......#############......",
-    "..##..#############..##..",
-    "..#####################..",
-    "....#################....",
-    "....#################....",
-    "....#################....",
-    "##..#################..##",
-    "#########################",
-    "..#####################..",
-    "..#####################..",
-    "..#####################..",
-    "..#####################..",
-    "..#####################..",
-    ".#######################.",
-    "#########################",
-    "#########################",
-];
-
-/// Candidate `twotier`: Tenshu, two tiers (31x19).
-// Held for the decision: three of the four candidates are unreferenced until one is chosen, and
-// the losers are deleted at that point rather than kept as dead weight.
-#[allow(dead_code)]
-const CASTLE_TWOTIER: [&str; 19] = [
-    "............#######............",
-    "..........###########..........",
-    "........###############........",
-    ".............#####.............",
-    ".............#####.............",
-    ".............#####.............",
-    ".......#################.......",
-    ".....#####################.....",
-    "...#########################...",
-    "...#########################...",
-    "......###################......",
-    ".........#############.........",
-    ".........#############.........",
-    ".........#############.........",
-    ".....#####################.....",
-    "....#######################....",
-    "...#########################...",
-    "..###########################..",
-    "###############################",
-];
-
-/// Which candidate ships. The others go once the choice is made.
-const CASTLE: &[&str] = &CASTLE_HIMEJI;
+const CASTLE: &[&str] = &CASTLE_TIERS;
 
 /// Where the castle stands: the fraction of the panel its LEFT edge sits at, and the last sky row its
 /// foot rests on.
@@ -320,7 +237,9 @@ const CASTLE: &[&str] = &CASTLE_HIMEJI;
 /// to 45 px wide, a fixed LEFT edge landed each of them in a different place - so the comparison was
 /// measuring position as much as design. Anchoring the right edge to the moon makes every candidate
 /// overlap by construction, whatever its width, and makes the overlap the thing being compared.
-const CASTLE_PAST_MOON: i32 = 4;
+/// 20 puts the castle's own centre on the moon's centre, so the disc clears the roofline on BOTH sides
+/// and the moon peeks out over the top rather than off one shoulder.
+const CASTLE_PAST_MOON: i32 = 20;
 const CASTLE_FOOT_INSET: i32 = 4;
 
 /// The moon: radius in pixels, and where it sits as a fraction of the panel.
@@ -333,10 +252,22 @@ const CASTLE_FOOT_INSET: i32 = 4;
 /// wants to BE: reported as "quite small" at six, and a moon is supposed to be the largest single thing
 /// in the sky. At ten it is a third of the panel height and still clears the branch.
 ///
-/// MOON_Y moved from 0.30 to 0.42 when the castle arrived, and it had to: at 0.30 the disc spans rows
-/// 8-28, while a 30-row castle standing on the panel floor tops out at row 27 - they would have shared
-/// two rows, which is a touch, not a "peeking out from behind". At 0.42 the disc spans rows 15-35 and the
-/// castle's upper storeys cross its lower half.
+/// MOON_Y moved twice, and the second move is the interesting one. It was 0.30, where the disc spanned
+/// rows 8-28 and a floor-standing castle topped out at row 28 - they shared two rows, which is a touch,
+/// not a "peeking out from behind". At 0.42 the occlusion test measured only 12 of 317 disc pixels
+/// covered, because the part of the castle reaching that high is the narrow top spire: the WIDE tiers
+/// that could actually cross a disc live in the lower half of the mask, and a 28-row castle standing on
+/// the floor puts them at rows 40-51.
+///
+/// The moon came down to meet them - and then went most of the way back up, because 0.55 was too far. The
+/// castle is 41px wide and the disc only 21px across, so once the tiers cross MOST of the disc they cut it
+/// into fragments and it stops reading as a moon at all: it came out as a spiky crown. A big overlap and a
+/// legible moon are not both available at these sizes.
+///
+/// 0.42 is where the roofline crosses the disc's BOTTOM and nothing else. The moon keeps its top two
+/// thirds as an unbroken curve - which is all it needs to still be a moon - and the castle's upper tiers
+/// interrupt the lower edge. That reads as a moon standing behind a castle, which is what was asked for;
+/// burying it does not.
 const MOON_R: i32 = 10;
 const MOON_X: f32 = 0.82;
 const MOON_Y: f32 = 0.42;
@@ -406,9 +337,6 @@ pub struct Blossom {
     /// Smoothed wind, in px/s.
     wind: f32,
     /// Branch shake and bass load, in pixels.
-    /// TEMPORARY, for the castle decision: which candidate mask to draw, `None` meaning `CASTLE`.
-    /// Goes away with the losing candidates once a design is picked.
-    castle_mask: Option<&'static [&'static str]>,
     shake: f32,
     /// The spring's velocity in px/s. An onset kicks THIS, never `shake` - see `SHAKE_PX`.
     shake_v: f32,
@@ -460,7 +388,7 @@ impl Blossom {
     /// Drawn straight after the moon so it OCCLUDES the disc - that occlusion is the whole point - and
     /// before the branch, so bark and blossom pass in front of it and put it at a distance.
     fn castle(&self, c: &mut Canvas, t: &Theme, w: i32, h: i32) {
-        let mask = self.castle_mask.unwrap_or(CASTLE);
+        let mask = CASTLE;
         let rows = mask.len() as i32;
         let cols = mask.iter().map(|r| r.len()).max().unwrap_or(0) as i32;
         // Shed rather than crop: a castle with its roofline cut off is not a castle, and this family
@@ -476,11 +404,34 @@ impl Blossom {
         let body = Rgba::from_hex(&t.tube.internals, 1.0);
         let x0 = (w as f32 * MOON_X) as i32 + CASTLE_PAST_MOON - cols;
         let y0 = h - CASTLE_FOOT_INSET - rows;
-        for (ry, line) in mask.iter().enumerate() {
-            for (rx, ch) in line.chars().enumerate() {
-                if ch == '#' {
-                    c.fill_rect(x0 + rx as i32, y0 + ry as i32, 1, 1, body);
+        // A HARD KEYLINE around the silhouette, which is the technique this project already needed for
+        // chroma, dolphin, mesh and pipes: an opaque dark rim makes a shape legible INDEPENDENT of its own
+        // colour. It matters more here than anywhere, because the castle has to survive two backgrounds
+        // at once - a dark sky where only the lighter haze body shows, and a near-white moon where only a
+        // darker edge shows. Body-plus-rim gives it one contrast against each, so the roofline is crisp
+        // wherever it happens to fall. Without it the castle read as a soft mass with no outline except
+        // the few pixels crossing the disc.
+        let key = Rgba::from_hex(&t.panel, 1.0);
+        let rows_v: Vec<&[u8]> = mask.iter().map(|r| r.as_bytes()).collect();
+        let solid = |ry: i32, rx: i32| -> bool {
+            if ry < 0 || rx < 0 || ry >= rows as i32 {
+                return false;
+            }
+            let line = rows_v[ry as usize];
+            (rx as usize) < line.len() && line[rx as usize] == b'#'
+        };
+        for ry in 0..rows {
+            for rx in 0..cols {
+                if !solid(ry, rx) {
+                    continue;
                 }
+                // On the boundary if any 4-neighbour is sky. The mask's own edge counts as sky, so the
+                // base's bottom row is rimmed too and the castle does not bleed into the panel floor.
+                let edge = !solid(ry - 1, rx)
+                    || !solid(ry + 1, rx)
+                    || !solid(ry, rx - 1)
+                    || !solid(ry, rx + 1);
+                c.fill_rect(x0 + rx, y0 + ry, 1, 1, if edge { key } else { body });
             }
         }
     }
@@ -934,6 +885,55 @@ mod tests {
 
     /// The branch is the anchor and must always be there, whatever the audio does.
     ///
+
+    /// The castle must OCCLUDE the moon - asked for as "the moon can be peeking out behind the castle" -
+    /// and that deserves a test rather than trust in the arithmetic, because the placement was already
+    /// wrong twice by exactly this failure: anchored to a panel fraction it landed ten columns short of
+    /// the disc and overlapped nothing at all, while every other assertion about it still passed.
+    ///
+    /// Peeking means PARTIAL, so this pins both sides: enough of the disc is covered for it to be an
+    /// overlap, and enough is left uncovered for it to still be a moon.
+    ///
+    /// Mutation: send CASTLE_PAST_MOON far enough left to clear the disc, or drop the castle call.
+    #[test]
+    fn the_castle_stands_in_front_of_the_moon_without_hiding_it() {
+        let t = builtin::blossom_dusk();
+        let mut fam = Blossom::default();
+        let (w, h) = (380, 60);
+        let mut c = Canvas::new(w, h);
+        for k in 0..30 {
+            fam.draw(&mut c, &t, &frame(0.5, k as f32 * 0.0167));
+        }
+
+        let moon = Rgba::from_hex(&t.tube.glass, 1.0);
+        let body = Rgba::from_hex(&t.tube.internals, 1.0);
+        let (mx, my) = ((w as f32 * MOON_X) as i32, (h as f32 * MOON_Y) as i32);
+        let (mut disc, mut lit, mut covered) = (0, 0, 0);
+        for dy in -MOON_R..=MOON_R {
+            for dx in -MOON_R..=MOON_R {
+                if dx * dx + dy * dy > MOON_R * MOON_R {
+                    continue;
+                }
+                disc += 1;
+                let px = c.get(mx + dx, my + dy);
+                if (px.r, px.g, px.b) == (moon.r, moon.g, moon.b) {
+                    lit += 1;
+                } else if (px.r, px.g, px.b) == (body.r, body.g, body.b) {
+                    covered += 1;
+                }
+            }
+        }
+        assert!(disc > 200, "the disc probe found no moon to test: {disc} px");
+        assert!(
+            covered * 100 / disc >= 8,
+            "the castle does not cross the moon: {covered}/{disc} px covered"
+        );
+        assert!(
+            lit * 100 / disc >= 35,
+            "the castle hides the moon rather than letting it peek out: {lit}/{disc} px still lit"
+        );
+    }
+
     /// Mutation: gate the branch on level, or let the bend/shake carry it off the panel.
     #[test]
     fn the_branch_is_drawn_at_every_level_and_stays_on_the_panel() {
@@ -982,22 +982,6 @@ mod tests {
             }
             write(format!("blossom-{}", t.id), &c);
         }
-        // The four castle candidates, in the real scene at true scale with the moon behind them.
-        for (tag, mask) in [
-            ("tiers", &CASTLE_TIERS[..]),
-            ("ishigaki", &CASTLE_ISHIGAKI[..]),
-            ("himeji", &CASTLE_HIMEJI[..]),
-            ("twotier", &CASTLE_TWOTIER[..]),
-        ] {
-            let t = builtin::blossom_dusk();
-            let mut fam = Blossom { castle_mask: Some(mask), ..Default::default() };
-            let mut c = Canvas::new(380, 60);
-            for k in 0..420 {
-                fam.draw(&mut c, &t, &frame(0.62, k as f32 * 0.0167));
-            }
-            write(format!("blossom-castle-{tag}"), &c);
-        }
-
         // Quiet against loud, so the wind mapping is visible as a difference.
         let t = builtin::blossom_dusk();
         for (gain, tag) in [(0.15f32, "calm"), (0.95, "gale")] {

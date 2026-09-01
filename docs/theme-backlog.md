@@ -156,7 +156,7 @@ specifically for depth.
 
 ---
 
-## 4. Blossom needs distinct colours (DEFERRED, raised 2026-09-01)
+## 4. Blossom needs distinct colours (DONE 2026-09-01)
 
 Reported after the family shipped: "all the colourways just degrade to pink or white blossoms. I like the
 vibe but we need more distinct colours."
@@ -257,3 +257,33 @@ that its upper tiers reach the moon at 0.30 down.
 
 Corollary worth remembering when the lightning lands (item 5): the bolt should strike the part of the
 castle that is silhouetted against the MOON, because that is where a rim-lit edge will actually show.
+
+---
+
+## Status update, 2026-09-01
+
+Item 4 is DONE. Options 1 and 2 both shipped: three colourways rethemed to hues cherry blossom does not
+have (amber, violet, gold), two added (Jade, and Riot where every petal carries its own stable hue), and
+petal glow on its own bloomed layer with per-colourway strength. Option 3 (hue by petal age) was not
+taken - Riot covers the same ground more directly and a petal that changes colour mid-fall reads as a
+fault. Option 4 (a bolder sky) was not taken either: I sampled the rendered sky and it is already doing
+what it was set to do.
+
+Item 5 (lightning striking the castle on a bass hit) is now UNBLOCKED - the castle exists, so the bolt has
+a target. The trap recorded in that item still stands and is the first thing to check: the obvious
+bass-rise trigger provably cannot fire on real music here.
+
+### Carried forward from the castle work
+
+The eave lesson is worth keeping for any future silhouette in this family. Architecturally correct
+upturned eaves - 2-column blocks protruding 5-7px past a narrow storey - read as a SPIDER once the shape
+had a crisp keyline. The detail was right and the proportion was wrong, and it was invisible while the
+castle was still a low-contrast smudge. Detail that survives being correct can still fail at 28 rows.
+
+The keyline itself is now load-bearing here and worth reusing: the castle has to survive a dark sky, where
+only a body LIGHTER than the sky shows, and a near-white moon, where only an edge DARKER than the moon
+shows. Body-plus-rim gives it one contrast against each.
+
+A big moon overlap and a legible moon are not both available at this size. The castle is 41px wide and the
+disc 21px across, so at MOON_Y 0.55 the tiers cut the moon into fragments and it stopped reading as a moon
+at all. 0.42 crosses only its bottom edge, which is what "peeking out from behind" actually wants.
