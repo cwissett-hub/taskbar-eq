@@ -340,3 +340,63 @@ option for a calmer colourway rather than as a safety measure.
 Whether to build this as a new family or as an aggressive colourway set plus a flash param on an existing
 one. A new family is the honest answer if the MOTION is different; a colourway is right if the geometry
 would be the same. Decide by describing the motion first.
+
+---
+
+## 7. A kaleidoscope family: psychedelic symmetry (QUEUED, raised 2026-09-01)
+
+Asked for as "a kaleidoscope type thing for more psychedelic visuals", after the frenchcore family.
+
+### The geometry problem, and the answer
+
+A kaleidoscope is normally ROSETTE symmetry - 6- or 8-fold rotation about a centre. That does not fit this
+panel, and the reason is the same one that has already killed two designs here. At 380x60 the aspect ratio
+is 6.3:1, so a single centred disc is 60px across and uses 16% of the width; the other 84% is empty. This
+is exactly the failure the isometric attempt hit ("the x axis feeds both width and height, so 56 rows run
+out after ~64px of width") and it is not fixable by tuning.
+
+The right answer is to change symmetry GROUP rather than shrink the design. The symmetry groups of an
+infinite strip are the seven FRIEZE groups - translation, horizontal and vertical reflection, glide
+reflection, 2-fold rotation, and their combinations. Those are the groups a 6:1 letterbox actually has, and
+a frieze pattern is still unmistakably kaleidoscopic: mirrored, repeating, hypnotic. A real kaleidoscope's
+tube view unrolled along its length IS a frieze.
+
+So: reflect a narrow source cell repeatedly across the width, mirroring alternate copies, with a vertical
+mirror through the panel's centre line. That gives the p2mm/pmm11 look - diamonds and bowties marching
+across the strip - and fills the whole panel at full height.
+
+A row of small rosettes (6 discs of 60px) is the fallback if the frieze reads as too regular. Worth
+rendering both before choosing; the source cell is the same either way.
+
+### The cost trap, which is easy to miss
+
+A per-pixel symmetry mapping is 22,800 lookups per frame at 380x60. That is affordable - the mesh family
+measured 0.671ms - but only if the mapping is a PRECOMPUTED INDEX TABLE. Computing the fold arithmetic per
+pixel per frame, especially anything with trig in it, is 22,800 sin/cos calls a frame and will show.
+
+The mapping depends only on the canvas size, so build it once and rebuild on resize. There is precedent for
+exactly this lifecycle: the scope family already clears its persistence buffers on a canvas resize, and
+main.rs has hysteresis on the width for the reason that an unrelated window opening changes the panel size
+mid-animation. Reuse that, and make sure a resize cannot leave a stale table - a table sized for the old
+width indexing a new buffer is an out-of-bounds panic or a silently wrong image.
+
+### What the music drives
+
+The house rule still applies: level must be POSITION, not brightness. In a kaleidoscope the obvious
+position mappings are the ones to use - the fold count, the source cell's width, the rotation or scroll
+rate of the source, and the radius at which the pattern's features sit. A kaleidoscope whose colours merely
+brighten with the music is an ornament.
+
+Candidate mappings, best first:
+  - Level drives the SCROLL RATE of the source cell through the mirrors. Whole-pattern motion, readable at
+    a glance, and it is the same load-bearing idea that makes the blossom family work (wind IS the level).
+  - Bass drives the fold count or the cell width, so the pattern visibly reorganises on a heavy passage.
+  - An onset rotates the source cell by a step, so the rhythm is in the pattern's changes.
+
+### Fits well with the frenchcore work
+
+Both want a strobe and both want aggressive colour, so build frenchcore first and the kaleidoscope second -
+the flash envelope, the per-kick trigger and any luminance-constant hue machinery from the first are
+directly reusable in the second. The rainbow resolver (`render::tint`, with `rainbow` and `rainbow_spread`,
+`RAINBOW_SAT` capped at a measured 0.68) is the existing route to psychedelic colour; check whether it can
+vary per-CELL before writing anything new.
