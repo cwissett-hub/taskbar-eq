@@ -96,25 +96,14 @@ use crate::render::canvas::{Canvas, Rgba};
 use crate::render::{Family, FrameData};
 use crate::themes::Theme;
 
-/// Focal length in pixels, pinned by the depth-distinctness inequality above.
-///
-/// Isotropic - the same number on both axes. A separate `fy` chosen to "fill the panel vertically" is an
-/// anamorphic squeeze: vertical parallax stops matching horizontal, which is the class of fake that got
-/// the isometric version rejected.
-const F: f32 = 32.0;
-
-/// The depth range in lattice steps: 8 planes, `Z_NEAR + 0 ..= Z_NEAR + NZ`.
+/// The near plane, in lattice steps. The depth range is `Z_NEAR + 0 ..= Z_NEAR + nz`, and `nz` is
+/// FITTED to the panel height rather than fixed - see `Fit`.
 const Z_NEAR: f32 = 4.0;
-const NZ: i32 = 7;
 
 /// Vertical levels (`NY + 1` of them) and how far above the top one the camera sits.
 const NY: i32 = 3;
 const Y_TOP: f32 = 4.0;
 
-/// Principal-point row. NEGATIVE - four rows above the canvas - and derived rather than chosen:
-/// `CY = 55 - (F*(Y_TOP+NY)/Z_NEAR + R_PIPE*F/Z_NEAR)`. A uniform shift preserves every gap, so the snap
-/// to a whole number cannot break distinctness.
-const CY: f32 = -4.0;
 
 /// Pipe radius as a fraction of a lattice step. Projected: 2.88px at the near plane, 1.05px at the far.
 const R_PIPE: f32 = 0.36;
@@ -171,6 +160,8 @@ struct Run {
 
 #[derive(Default)]
 pub struct Pipes {
+    /// The projection this family is currently fitted to, so a resize can be noticed - see `Fit`.
+    fit: Option<Fit>,
     runs: Vec<Run>,
     onset: crate::dsp::onset::Flux,
     flourish: crate::dsp::flourish::Trigger,
@@ -191,6 +182,102 @@ fn rand01(seed: u32, n: u32) -> f32 {
     v ^= v >> 17;
     v ^= v << 5;
     (v % 100_000) as f32 / 100_000.0
+}
+
+/// The projection FITTED TO THE PANEL HEIGHT, rather than hard-coded for one.
+///
+/// This family drew NOTHING on any panel shorter than about 49 rows, and it was arithmetic rather than a
+/// bug in the gate: with `F`, `Y_TOP`, `NY` and `NZ` all fixed, the lowest row anything can be drawn on is
+/// `CY + F*(Y_TOP+NY)/Z_NEAR + R_PIPE*F/Z_NEAR` = 54.88, which fits the 58 interior rows of a 60px panel
+/// and cannot fit the 46 of a 48px one. So it shed - correctly, by its own rule, and invisibly, because
+/// shedding looks exactly like a black screen. Measured before this change: 4594 lit pixels at 380x60 and
+/// 0 at 380x48, 380x40, 380x34 and 380x30.
+///
+/// The panel's height is not ours to choose. It follows the Widgets button, so it moves with the
+/// taskbar's size, the monitor and the DPI - 48 rows at 100% is as ordinary as 60 at 125%.
+///
+/// SHRINKING THE FOCAL LENGTH ALONE DOES NOT WORK, and that is the whole difficulty. The depth planes are
+/// separated by `Y_TOP * f * (1/z - 1/(z+1))`, which is smallest at the far end; at eight planes and
+/// f = 32 that is 1.16px, already within a whisker of the 1.15px floor the module note derives. Scale f
+/// down for a shorter panel and the far planes land on the same integer row, so the lattice stops reading
+/// as depth at all - which is worse than shedding, because it looks like it is working.
+///
+/// So the DEPTH COUNT comes down with the height: this walks `nz` from the tuned maximum downwards and
+/// takes the first count whose far-end gap still clears the floor. A short panel gets a shallower lattice,
+/// which is the honest trade - fewer planes, all of them legible - and the fitted f is capped at the tuned
+/// `F` so a taller panel keeps exactly the look it has now rather than growing into something untested.
+#[derive(Clone, Copy, PartialEq)]
+struct Fit {
+    f: f32,
+    nz: i32,
+    cy: f32,
+}
+
+/// The tuned focal length, which is now the CEILING rather than the value - see `Fit`.
+///
+/// 32 is what the module note's depth-distinctness inequality solves to, and it is ISOTROPIC: the same
+/// number on both axes. A separate `fy` chosen to "fill the panel vertically" would be an anamorphic
+/// squeeze - vertical parallax would stop matching horizontal, which is exactly the class of fake that
+/// got the isometric version rejected. Fitting scales BOTH axes together for the same reason.
+const F_MAX: f32 = 32.0;
+
+/// The depth counts the fit will consider, deepest first. `NZ_MAX` gives the 8 planes the family was
+/// tuned with; `NZ_MIN` is 4 planes, below which the lattice has no depth left worth projecting.
+const NZ_MAX: i32 = 7;
+const NZ_MIN: i32 = 3;
+
+/// The smallest far-end gap between depth planes that still reads as two planes, in pixels.
+///
+/// 1.15 is the module note's own `g_min`, which is what `F = 32` was originally solved for. Keeping the
+/// same number here means a fitted projection is held to exactly the standard the hand-tuned one was.
+const G_MIN: f32 = 1.15;
+
+/// The thinnest the FAR pipe may be projected, in pixels.
+///
+/// The second legibility criterion, and the fit enforced only the first for one run: at h=30 it happily
+/// produced a lattice whose depth planes were well separated and whose far pipe was 0.806px, which is not
+/// a tube, it is a dotted line. A radius is a half-width, so 0.9 is a pipe about 1.8px across - the least
+/// that still reads as round rather than as a scratch.
+///
+/// It binds at the short end, where the row budget forces `f` down: at h=30 it is what rejects a 5-plane
+/// lattice in favour of a 4-plane one with a thicker far pipe. Trading depth for legibility, again, and
+/// for the same reason - a plane you cannot see is not depth.
+const R_MIN_FAR: f32 = 0.9;
+
+fn fit_to(h: i32) -> Option<Fit> {
+    // The interior rows the lattice may use: 3 .. h-3.
+    let avail = (h - 6) as f32;
+    if avail < 12.0 {
+        return None;
+    }
+    let mut nz = NZ_MAX;
+    while nz >= NZ_MIN {
+        let zf = Z_NEAR + nz as f32;
+        // Rows consumed per unit of focal length: the near bottom level plus its radius, less the far
+        // top level.
+        let per_f = (Y_TOP + NY as f32 + R_PIPE) / Z_NEAR - Y_TOP / zf;
+        if per_f > 0.0 {
+            let f = (avail / per_f).min(F_MAX);
+            let gap = Y_TOP * f * (1.0 / (zf - 1.0) - 1.0 / zf);
+            let far_r = R_PIPE * f / zf;
+            if gap >= G_MIN && far_r >= R_MIN_FAR {
+                let span = f * per_f;
+                let top = Y_TOP * f / zf;
+                // The principal-point row, derived rather than chosen - as the fixed `CY` was before it,
+                // and for the same reason: a UNIFORM shift preserves every inter-plane gap, so moving
+                // the whole block cannot break the distinctness the gap check just established. It comes
+                // out negative on a tall panel, i.e. above the canvas, which is what puts the camera
+                // over the lattice rather than inside it.
+                // Centred in the interior, so a fitted panel is not top-heavy.
+                let cy = 3.0 + (avail - span) * 0.5 - top;
+                if f.is_finite() && cy.is_finite() {
+                    return Some(Fit { f, nz, cy });
+                }
+            }
+        }
+        nz -= 1;
+    }
+    None
 }
 
 /// The six lattice directions: -x, +x, up, down, nearer, further.
@@ -217,13 +304,13 @@ fn in_front(z: f32) -> bool {
 /// Projects an eye-space point. `None` when it is not safely in front - the caller must skip it.
 ///
 /// Returns the projected column, row, and the projected pipe radius at that depth.
-fn project(cx: f32, x: f32, y: f32, z: f32) -> Option<(i32, i32, f32)> {
+fn project(cx: f32, x: f32, y: f32, z: f32, fit: Fit) -> Option<(i32, i32, f32)> {
     if !in_front(z) || !x.is_finite() || !y.is_finite() {
         return None;
     }
-    let inv = F / z;
+    let inv = fit.f / z;
     let col = cx + x * inv;
-    let row = CY - y * inv;
+    let row = fit.cy - y * inv;
     if !col.is_finite() || !row.is_finite() {
         return None;
     }
@@ -236,19 +323,19 @@ fn project(cx: f32, x: f32, y: f32, z: f32) -> Option<(i32, i32, f32)> {
 }
 
 impl Run {
-    fn restart(&mut self, nx: i32) {
+    fn restart(&mut self, nx: i32, nz: i32) {
         self.seg.clear();
         self.at = Cell {
             x: (rand01(self.seed, 11) * nx as f32) as i32 % nx.max(1),
             j: (rand01(self.seed, 13) * (NY + 1) as f32) as i32 % (NY + 1),
-            k: (rand01(self.seed, 17) * (NZ + 1) as f32) as i32 % (NZ + 1),
+            k: (rand01(self.seed, 17) * (nz + 1) as f32) as i32 % (nz + 1).max(1),
         };
         self.dir = 1;
         self.seed = self.seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
     }
 
-    fn inside(c: Cell, nx: i32) -> bool {
-        (0..nx).contains(&c.x) && (0..=NY).contains(&c.j) && (0..=NZ).contains(&c.k)
+    fn inside(c: Cell, nx: i32, nz: i32) -> bool {
+        (0..nx).contains(&c.x) && (0..=NY).contains(&c.j) && (0..=nz).contains(&c.k)
     }
 
     fn step(c: Cell, dir: u8) -> Cell {
@@ -257,8 +344,8 @@ impl Run {
     }
 
     /// Turns on an onset; otherwise carries straight on until the lattice wall.
-    fn steer(&mut self, turn: bool, nx: i32) {
-        if !turn && Self::inside(Self::step(self.at, self.dir), nx) {
+    fn steer(&mut self, turn: bool, nx: i32, nz: i32) {
+        if !turn && Self::inside(Self::step(self.at, self.dir), nx, nz) {
             return;
         }
         // Never a straight reversal - a pipe doubling back on itself reads as a mistake, not a corner.
@@ -266,14 +353,14 @@ impl Run {
         let start = (rand01(self.seed, self.seg.len() as u32 * 7 + 5) * 6.0) as u8 % 6;
         for i in 0..6u8 {
             let cand = (start + i) % 6;
-            if cand != back && Self::inside(Self::step(self.at, cand), nx) {
+            if cand != back && Self::inside(Self::step(self.at, cand), nx, nz) {
                 self.dir = cand;
                 return;
             }
         }
     }
 
-    fn grow(&mut self, drive: f32, turn: bool, dt: f32, nx: i32) {
+    fn grow(&mut self, drive: f32, turn: bool, dt: f32, nx: i32, nz: i32) {
         let period = (GROW_SLOW_MS + (GROW_FAST_MS - GROW_SLOW_MS) * drive.clamp(0.0, 1.0)).max(30.0);
         self.due += dt;
         if !self.due.is_finite() {
@@ -283,10 +370,10 @@ impl Run {
         let mut pending = turn;
         while self.due >= period {
             self.due -= period;
-            self.steer(pending, nx);
+            self.steer(pending, nx, nz);
             pending = false;
             let next = Self::step(self.at, self.dir);
-            if !Self::inside(next, nx) {
+            if !Self::inside(next, nx, nz) {
                 continue;
             }
             self.at = next;
@@ -324,11 +411,23 @@ impl Family for Pipes {
         // extent from zero and demanded 63 rows of a 60px panel - but CY is NEGATIVE, four rows ABOVE
         // the canvas, so the real footprint is rows 6.6..54.9 and fits with room to spare. The bug was
         // in the gate, not in the projection.
-        let lowest = CY + F * (Y_TOP + NY as f32) / Z_NEAR + R_PIPE * F / Z_NEAR;
-        let near_step = F / Z_NEAR; // 8px at the near plane
+        // FITTED to the height rather than gated against it - see `Fit`. This used to compute the lowest
+        // drawable row from fixed constants and shed if it did not fit, which meant a black panel on any
+        // height below about 49 rows - measured 0 lit pixels at 48, 40, 34 and 30.
+        let Some(fit) = fit_to(h) else {
+            return; // genuinely too short for even the shallowest lattice
+        };
+        let near_step = fit.f / Z_NEAR;
         let nx = ((w - 6) as f32 / near_step).floor() as i32;
-        if lowest > (h - 2) as f32 || nx < 4 {
-            return; // shed rather than smudge
+        if nx < 4 {
+            return; // too narrow to hold a lattice
+        }
+        // The depth count changes with the height, and a cell's `k` is only valid within its own count -
+        // so a resize that shallows the lattice must restart the runs rather than leave cells pointing at
+        // planes that no longer exist.
+        if self.fit != Some(fit) {
+            self.fit = Some(fit);
+            self.runs.clear();
         }
         let cx = w as f32 * 0.5;
 
@@ -340,7 +439,7 @@ impl Family for Pipes {
                         seed: 0x9e37_79b9 ^ (i as u32).wrapping_mul(0x85eb_ca6b),
                         ..Run::default()
                     };
-                    r.restart(nx);
+                    r.restart(nx, fit.nz);
                     r
                 })
                 .collect();
@@ -370,7 +469,7 @@ impl Family for Pipes {
             // The surge feeds the growth rate rather than the geometry, so it can never move anything
             // discontinuously - it only makes the next segment arrive sooner.
             let drive = (resp(band, t.sensitivity) + reset * (SURGE_RATE - 1.0)).clamp(0.0, 1.0);
-            self.runs[ri].grow(drive, turn, dt, nx);
+            self.runs[ri].grow(drive, turn, dt, nx, fit.nz);
             let seg = &self.runs[ri].seg;
             for i in 0..seg.len() {
                 let from = if i == 0 { seg[i] } else { seg[i - 1] };
@@ -383,14 +482,14 @@ impl Family for Pipes {
             let (fx, fy, fz) = eye(from, nx);
             let (tx, ty, tz) = eye(to, nx);
             let (Some((c0, r0, rad0)), Some((c1, r1, rad1))) =
-                (project(cx, fx, fy, fz), project(cx, tx, ty, tz))
+                (project(cx, fx, fy, fz, fit), project(cx, tx, ty, tz, fit))
             else {
                 continue; // behind the near plane, or poisoned - skip it
             };
 
             // Depth shading AS WELL AS the size taper. The far end is already 2.75x smaller; dimming it
             // too is what stops the back of the lattice reading as clutter.
-            let far01 = (to.k as f32 / NZ as f32).clamp(0.0, 1.0);
+            let far01 = (to.k as f32 / fit.nz.max(1) as f32).clamp(0.0, 1.0);
             let body = blend(if reset > 0.01 { hot } else { lit }, panel, far01 * 0.55);
 
             let steps = (c1 - c0).abs().max((r1 - r0).abs()).max(1);
@@ -449,26 +548,103 @@ mod tests {
     /// The mutation this catches is the one that matters most - putting the camera INSIDE the lattice.
     /// Set `Y_TOP` to 0 and the top level lands on the horizon, where every depth plane projects to the
     /// same row, which is vapor's measured failure reproduced deliberately.
+    ///
+    /// Now checked at EVERY height the family will draw at, not just 60. That is a stronger test than the
+    /// one it replaces, and it is the test this bug needed: the projection is fitted per height, so a
+    /// height whose fit collapsed two planes onto one row would look like it was working while silently
+    /// having no occlusion. The whole point of trading depth planes for rows is that the planes that
+    /// remain are legible, and this is what holds that promise.
     #[test]
-    fn every_level_keeps_all_eight_depth_planes_on_distinct_integer_rows() {
+    fn every_level_keeps_its_depth_planes_on_distinct_integer_rows_at_every_height() {
         let nx = 45;
-        for j in 0..=NY {
-            let mut rows: Vec<i32> = Vec::new();
-            for k in 0..=NZ {
-                let (x, y, z) = eye(Cell { x: nx / 2, j, k }, nx);
-                let (_, row, _) = project(190.0, x, y, z).expect("lattice must project");
-                rows.push(row);
-            }
-            let mut sorted = rows.clone();
-            sorted.sort_unstable();
-            sorted.dedup();
-            assert_eq!(
-                sorted.len(),
-                rows.len(),
-                "level j={j} put two of its {} depth planes on the same integer row: {rows:?} - that is \
-                 vapor's measured collapse, and it silently disables occlusion",
-                rows.len()
+        let mut heights_tested = 0;
+        for h in 18..=120 {
+            let Some(fit) = fit_to(h) else {
+                continue;
+            };
+            heights_tested += 1;
+            assert!(
+                (NZ_MIN..=NZ_MAX).contains(&fit.nz),
+                "h={h}: fitted depth {} is outside the allowed range",
+                fit.nz
             );
+            for j in 0..=NY {
+                let mut rows: Vec<i32> = Vec::new();
+                for k in 0..=fit.nz {
+                    let (x, y, z) = eye(Cell { x: nx / 2, j, k }, nx);
+                    let (_, row, _) = project(190.0, x, y, z, fit).expect("lattice must project");
+                    rows.push(row);
+                }
+                let mut sorted = rows.clone();
+                sorted.sort_unstable();
+                sorted.dedup();
+                assert_eq!(
+                    sorted.len(),
+                    rows.len(),
+                    "h={h}, level j={j}: two of its {} depth planes share an integer row: {rows:?} - \
+                     that is vapor's measured collapse, and it silently disables occlusion",
+                    rows.len()
+                );
+            }
+        }
+        assert!(heights_tested > 80, "the height sweep barely ran: {heights_tested} heights");
+        // The tuned height must still get the full depth it was designed with.
+        assert_eq!(fit_to(60).unwrap().nz, NZ_MAX, "the 60px panel lost depth planes");
+    }
+
+    /// THE REGRESSION TEST. This family drew a BLACK PANEL on every height below about 49 rows, and it did
+    /// so by shedding - which is indistinguishable from a crash from the outside, and is how it reached a
+    /// user's machine unnoticed. It worked on a 125% DPI panel at 60px and not on a 100% one at 48px.
+    ///
+    /// Mutation: restore the old fixed-constant gate (`lowest > (h - 2)`) and the 48, 40, 34 and 30 cases
+    /// go to zero lit pixels.
+    #[test]
+    fn the_lattice_is_drawn_on_short_panels_and_not_only_on_tall_ones() {
+        let t = builtin::pipes_win95_teal();
+        for (w, h) in [(380, 60), (380, 52), (380, 48), (380, 44), (380, 40), (380, 34), (380, 30),
+                       (190, 48), (190, 60), (150, 40)] {
+            let mut fam = Pipes::default();
+            let mut c = Canvas::new(w, h);
+            for k in 0..200 {
+                fam.draw(&mut c, &t, &frame(0.62, k as f32 * 0.0167));
+            }
+            let dark = Rgba::from_hex(&t.panel, 1.0);
+            let mut lit = 0;
+            for y in 0..h {
+                for x in 0..w {
+                    let px = c.get(x, y);
+                    if px.a > 0 && (px.r, px.g, px.b) != (dark.r, dark.g, dark.b) {
+                        lit += 1;
+                    }
+                }
+            }
+            assert!(lit > 200, "{w}x{h} drew almost nothing: {lit} lit pixels");
+        }
+    }
+
+    /// A resize that SHALLOWS the lattice must not leave cells pointing at depth planes that no longer
+    /// exist. This is the specific hazard the fit introduced, and it only bites on a resize - which is a
+    /// routine production event here, since the panel follows the Widgets button.
+    #[test]
+    fn a_resize_that_changes_the_depth_count_does_not_strand_cells() {
+        let t = builtin::pipes_win95_teal();
+        let mut fam = Pipes::default();
+        for (w, h) in [(380, 60), (380, 34), (380, 60), (190, 40), (380, 48), (120, 30), (380, 60)] {
+            let mut c = Canvas::new(w, h);
+            for k in 0..40 {
+                fam.draw(&mut c, &t, &frame(0.62, k as f32 * 0.0167));
+            }
+            let fit = fam.fit.expect("no fit after drawing");
+            for run in &fam.runs {
+                for cell in &run.seg {
+                    assert!(
+                        (0..=fit.nz).contains(&cell.k),
+                        "{w}x{h}: a segment sits at depth {} with only {} planes",
+                        cell.k,
+                        fit.nz + 1
+                    );
+                }
+            }
         }
     }
 
@@ -480,22 +656,28 @@ mod tests {
     /// to `!(z < Z_NEAR)` and the NaN case leaks through.
     #[test]
     fn a_vertex_at_or_behind_the_eye_is_rejected_rather_than_projected() {
+        let fit = fit_to(60).expect("the tuned height must fit");
         for z in [0.0f32, -1.0, -1000.0, 0.5, f32::NAN, f32::NEG_INFINITY] {
             assert!(
-                project(190.0, 1.0, -4.0, z).is_none(),
+                project(190.0, 1.0, -4.0, z, fit).is_none(),
                 "z={z} was projected instead of clipped; that is the 294.6ms hang"
             );
         }
         // And a NaN in the lateral coordinate must not survive either.
-        assert!(project(190.0, f32::NAN, -4.0, 6.0).is_none(), "a NaN x was projected");
-        // Everything the lattice actually contains must project, or the family would draw nothing.
-        for k in 0..=NZ {
+        assert!(project(190.0, f32::NAN, -4.0, 6.0, fit).is_none(), "a NaN x was projected");
+        // Everything the lattice actually contains must project, or the family would draw nothing. Every
+        // fitted height, not just the tuned one - a short panel that failed to project would be the same
+        // black screen this family already shipped once.
+        for h in [30, 40, 48, 60, 96] {
+            let Some(fit) = fit_to(h) else { continue };
+            for k in 0..=fit.nz {
             let (x, y, z) = eye(Cell { x: 0, j: 0, k }, 45);
-            let p = project(190.0, x, y, z);
-            assert!(p.is_some(), "lattice depth k={k} failed to project");
+            let p = project(190.0, x, y, z, fit);
+            assert!(p.is_some(), "h={h}: lattice depth k={k} failed to project");
             let (col, row, rad) = p.unwrap();
             assert!(col.abs() < COORD_LIMIT && row.abs() < COORD_LIMIT, "coordinate escaped the clamp");
-            assert!(rad > 0.5, "projected radius {rad} at k={k} is too small to draw as a tube");
+            assert!(rad > 0.5, "h={h}: projected radius {rad} at k={k} is too thin to draw as a tube");
+            }
         }
     }
 
@@ -505,13 +687,18 @@ mod tests {
     /// was the same width. Mutation: make the radius a constant instead of `R_PIPE * F / z`.
     #[test]
     fn a_near_pipe_is_drawn_fatter_than_a_far_one() {
-        let near = project(190.0, 0.0, -4.0, Z_NEAR).unwrap().2;
-        let far = project(190.0, 0.0, -4.0, Z_NEAR + NZ as f32).unwrap().2;
-        assert!(
-            near > far * 2.0,
-            "near radius {near:.2} against far {far:.2} - a ratio under 2x will not read as depth"
-        );
-        assert!(far > 0.9, "the far pipe at {far:.2}px is too thin to read as a tube at all");
+        // At every fitted height: a shallower lattice has less depth to taper across, so this is where a
+        // fit that traded away too many planes would show up as a family that no longer reads as 3D.
+        for h in [30, 40, 48, 60, 96] {
+            let Some(fit) = fit_to(h) else { continue };
+            let near = project(190.0, 0.0, -4.0, Z_NEAR, fit).unwrap().2;
+            let far = project(190.0, 0.0, -4.0, Z_NEAR + fit.nz as f32, fit).unwrap().2;
+            assert!(
+                near > far * 1.6,
+                "h={h}: near radius {near:.2} against far {far:.2} - under 1.6x will not read as depth"
+            );
+            assert!(far > 0.9, "h={h}: the far pipe at {far:.2}px is too thin to read as a tube");
+        }
     }
 
     /// Run: cargo test --release dump_pipes -- --ignored --nocapture
@@ -550,5 +737,26 @@ mod tests {
             }
         }
         println!("wrote pipes dumps");
+        // The short panels too - this family shipped a black screen on all of them. Padded into a 60-row
+        // buffer so the review stacker can show them beside the tall one.
+        for hh in [52, 48, 40, 34, 30] {
+            let t = builtin::pipes_win95_teal();
+            let mut fam = Pipes::default();
+            let mut src = Canvas::new(380, hh);
+            for k in 0..300 {
+                fam.draw(&mut src, &t, &frame(0.62, k as f32 * 0.0167));
+            }
+            let mut out = Vec::new();
+            for y in 0..60 {
+                for x in 0..380 {
+                    let px = if y < hh { src.get(x, y) } else { Rgba::new(0, 0, 0, 0) };
+                    out.extend_from_slice(&[px.r, px.g, px.b, px.a]);
+                }
+            }
+            let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
+            std::fs::write(dir.join(format!("pipes-h{hh}.rgba")), &out).unwrap();
+        }
+
     }
+
 }
