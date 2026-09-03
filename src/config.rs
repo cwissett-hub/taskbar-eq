@@ -92,6 +92,14 @@ pub struct Config {
     /// discard the per-colourway tuning, and turning them back on restores it exactly. Persisted so a
     /// toggle survives a restart, because a setting that silently resets is worse than no setting.
     pub flourishes: bool,
+    /// The most recently selected themes, newest first, including the current one.
+    ///
+    /// Exists because the menu is 150 colourways across 22 families, and getting BACK to one you liked is
+    /// the common case rather than discovering a new one. The tray menu lists these above the families.
+    ///
+    /// An array of strings rather than a table, so it can sit here among the scalars without disturbing
+    /// the emit order `hotkeys` depends on.
+    pub recents: Vec<String>,
     /// Declared LAST because `toml` emits tables after root scalars; keeping struct order and file
     /// order the same is what lets the existing round-trip test keep proving serialisation works.
     pub hotkeys: Hotkeys,
@@ -114,6 +122,7 @@ impl Default for Config {
             media_backend: crate::win::media::Backend::default(),
             show_track_name: true,
             flourishes: true,
+            recents: Vec::new(),
             hotkeys: Hotkeys::default(),
         }
     }
@@ -139,6 +148,24 @@ impl Config {
             }),
             Err(_) => Config::default(),
         }
+    }
+
+    /// How many recent themes are remembered.
+    ///
+    /// Six is about a screen of menu at this row height. Past that a "recent" list stops being a
+    /// shortcut and becomes a second, worse copy of the theme list.
+    pub const RECENTS_MAX: usize = 6;
+
+    /// Records a theme as the current one AND as the most recent.
+    ///
+    /// One function rather than an assignment at each call site, because there are four sites - the menu,
+    /// the menu's shuffle, the shuffle hotkey and the startup resolve - and a recents list that three of
+    /// the four forgot to update would be worse than no list at all: it would look like it was working.
+    pub fn note_theme(&mut self, id: &str) {
+        self.theme = id.to_string();
+        self.recents.retain(|r| r != id);
+        self.recents.insert(0, id.to_string());
+        self.recents.truncate(Self::RECENTS_MAX);
     }
 
     pub fn save(&self) -> Result<()> {

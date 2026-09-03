@@ -7,7 +7,8 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW,
     GetCursorPos, LoadIconW, PeekMessageW, RegisterClassW, SetForegroundWindow, TrackPopupMenu,
-    TranslateMessage, HMENU, IDI_APPLICATION, MF_CHECKED, MF_POPUP, MF_SEPARATOR,
+    TranslateMessage, HMENU, IDI_APPLICATION, MF_CHECKED, MF_DISABLED, MF_GRAYED, MF_POPUP,
+    MF_SEPARATOR,
     MF_STRING, MSG,
     PM_REMOVE,
     PostMessageW, SetTimer, SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
@@ -126,6 +127,23 @@ impl MenuItem {
 /// built-ins are declared in instead of reordering itself as families are added. Extracted
 /// from `show_menu_for` purely so it is testable: everything else in that function needs a
 /// real window and a live HMENU.
+/// The families in the order the MENU shows them: alphabetical by the label the user actually reads.
+///
+/// This reverses an earlier decision on purpose. The menu used to show families in registry declaration
+/// order, on the grounds that the built-in order was meaningful - and it was, with six families. At
+/// twenty-two it is an order nobody can predict, so finding "Rave lasers" meant reading every entry.
+///
+/// Sorted by LABEL and not by the family key, because the label is what is on screen: the key `kaleido`
+/// sorts nowhere near where "Kaleidoscope" appears.
+fn families_for_menu(items: &[MenuItem]) -> Vec<&str> {
+    let mut families = families_in_order(items);
+    families.sort_by_key(|f| crate::themes::family_label(f).to_lowercase());
+    families
+}
+
+/// The families in first-appearance order. Still the grouping primitive - it is what guarantees every
+/// colourway lands under exactly one family - with the display order layered on top by
+/// `families_for_menu`.
 fn families_in_order(items: &[MenuItem]) -> Vec<&str> {
     let mut families: Vec<&str> = Vec::new();
     for it in items {
@@ -214,9 +232,10 @@ impl Tray {
         &self,
         autostart: bool,
         current_theme: &str,
+        recents: &[String],
         transport: &TransportState,
     ) -> Option<TrayEvent> {
-        self.show_menu_for(&self.themes, autostart, current_theme, transport)
+        self.show_menu_for(&self.themes, autostart, current_theme, recents, transport)
     }
 
     /// Shows the context menu built from an explicit theme list. This is the
@@ -229,6 +248,7 @@ impl Tray {
         items: &[MenuItem],
         autostart: bool,
         current_theme: &str,
+        recents: &[String],
         transport: &TransportState,
     ) -> Option<TrayEvent> {
         unsafe {
@@ -238,13 +258,66 @@ impl Tray {
 
             let menu: HMENU = CreatePopupMenu().ok()?;
 
-            // Group into one submenu per family, in first-appearance order so the built-in
-            // registry order is preserved rather than alphabetised.
+            // ---- Themes -----------------------------------------------------------------------
             //
+            // ALL of it under ONE top-level entry. The families used to sit at the top level, which put
+            // twenty-two of them above every actual setting: the menu was 29 rows of which 22 were theme
+            // families, so Spotify, the keys and Exit were all buried under the thing you were not
+            // looking for. One entry costs one extra hover to reach a colourway and gives the menu back.
+            //
+            // The top-level entry NAMES THE CURRENT THEME, which is the cheapest possible answer to
+            // "what am I looking at" - it needs no hover at all. The families are still individually
+            // ticked underneath, so the old way of finding it works too.
+            let themes: HMENU = CreatePopupMenu().ok()?;
+
             // Command ids stay indices into the flat `items` slice, NOT per-submenu
             // positions, so the dispatch below is unchanged by the nesting and a submenu
             // that fails to build cannot silently shift another family's ids.
-            let families = families_in_order(items);
+            let families = families_for_menu(items);
+
+            // The two shuffles, HERE and not only under "Random". This is where someone goes looking for
+            // "give me a different theme", and having them solely under a separate top-level Random entry
+            // meant the theme menu could not answer the commonest theme question. They stay under Random
+            // as well, alongside their key bindings, which is where you go to BIND them.
+            let _ = AppendMenuW(themes, MF_STRING, ID_RANDOM_THEME_NOW, w!("Any theme now"));
+            let _ = AppendMenuW(
+                themes,
+                MF_STRING,
+                ID_RANDOM_COLOURWAY_NOW,
+                w!("Another colourway of this theme"),
+            );
+
+            // ---- Recently used --------------------------------------------------------------------
+            //
+            // The current theme is skipped: it is already named on the parent entry, and a row that
+            // switches to what is already showing is a dead row. Labelled "Family  Name", because a
+            // colourway name alone is ambiguous across families - there is more than one "Chrome".
+            let recent_rows: Vec<(usize, String)> = recents
+                .iter()
+                .filter(|id| id.as_str() != current_theme)
+                .filter_map(|id| {
+                    items.iter().position(|it| &it.id == id).map(|i| {
+                        let it = &items[i];
+                        (i, format!("{}  {}", crate::themes::family_label(&it.family), it.name))
+                    })
+                })
+                .collect();
+            if !recent_rows.is_empty() {
+                let _ = AppendMenuW(themes, MF_SEPARATOR, 0, None);
+                let _ =
+                    AppendMenuW(themes, MF_STRING | MF_DISABLED | MF_GRAYED, 0, w!("Recently used"));
+                for (i, label) in &recent_rows {
+                    let mut wide: Vec<u16> =
+                        label.encode_utf16().chain(std::iter::once(0)).collect();
+                    let _ = AppendMenuW(
+                        themes,
+                        MF_STRING,
+                        ID_THEME_BASE + i,
+                        windows::core::PCWSTR(wide.as_mut_ptr()),
+                    );
+                }
+            }
+            let _ = AppendMenuW(themes, MF_SEPARATOR, 0, None);
 
             // Submenu handles must outlive TrackPopupMenu. Destroying the parent destroys
             // attached submenus, so these are not separately freed - but one that is
@@ -283,12 +356,29 @@ impl Tray {
                     MF_POPUP
                 };
                 let _ = AppendMenuW(
-                    menu,
+                    themes,
                     flags,
                     sub.0 as usize,
                     windows::core::PCWSTR(wide.as_mut_ptr()),
                 );
             }
+
+            let current_label = match items.iter().find(|it| it.id == current_theme) {
+                Some(it) => {
+                    format!("Themes:  {}  {}", crate::themes::family_label(&it.family), it.name)
+                }
+                // A theme id from a config that no longer resolves, or a hot reload mid-flight. Naming
+                // nothing is better than naming the wrong thing.
+                None => "Themes".to_string(),
+            };
+            let mut wide: Vec<u16> =
+                current_label.encode_utf16().chain(std::iter::once(0)).collect();
+            let _ = AppendMenuW(
+                menu,
+                MF_POPUP,
+                themes.0 as usize,
+                windows::core::PCWSTR(wide.as_mut_ptr()),
+            );
 
             // ---- Spotify controls -------------------------------------------------------------
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
@@ -840,7 +930,7 @@ mod tests {
     }
 
     #[test]
-    fn families_group_in_first_appearance_order_not_alphabetically() {
+    fn families_group_in_first_appearance_order_but_the_menu_sorts_them_by_label() {
         let items = [
             MenuItem::new("vfd-ice", "VFD ice", "segmented"),
             MenuItem::new("p1-green", "P1 green", "scope"),
@@ -848,9 +938,42 @@ mod tests {
             MenuItem::new("vu-cream", "Warm cream", "vu"),
             MenuItem::new("p7", "P7", "scope"),
         ];
-        // Alphabetical would be [scope, segmented, vu] - asserting the interleaved input
-        // still yields declaration order is what makes this test worth having.
+        // The GROUPING primitive still preserves declaration order, and asserting that against
+        // interleaved input is what makes this half of the test worth having.
         assert_eq!(families_in_order(&items), vec!["segmented", "scope", "vu"]);
+
+        // The MENU sorts by the label on screen, which is a deliberate reversal of the earlier
+        // decision - see `families_for_menu`. The keys here sort differently from their labels, which
+        // is the whole point: "Oscilloscope" < "Segmented VFD" < "VU dials" puts scope first, where
+        // sorting the KEY `segmented` < `scope` would not.
+        assert_eq!(families_for_menu(&items), vec!["scope", "segmented", "vu"]);
+    }
+
+    /// Every family must be reachable in the menu, and reachable exactly once. `families_for_menu` only
+    /// reorders, but a sort that deduplicated or dropped an entry would silently hide a whole family -
+    /// and with twenty-two of them nobody would notice which one was missing.
+    #[test]
+    fn the_menu_order_is_a_permutation_of_every_family() {
+        let items: Vec<MenuItem> = crate::themes::builtin::all()
+            .iter()
+            .map(|t| MenuItem::new(&t.id, &t.name, &t.family))
+            .collect();
+        let mut plain = families_in_order(&items);
+        let mut sorted = families_for_menu(&items);
+        assert_eq!(sorted.len(), plain.len(), "the menu order changed the family count");
+        plain.sort_unstable();
+        sorted.sort_unstable();
+        assert_eq!(sorted, plain, "the menu order is not a permutation of the families");
+        assert!(plain.len() > 15, "sanity: the registry should be non-trivial");
+
+        // And it really is sorted by label, on the live registry rather than a fixture.
+        let labels: Vec<String> = families_for_menu(&items)
+            .iter()
+            .map(|f| crate::themes::family_label(f).to_lowercase())
+            .collect();
+        let mut want = labels.clone();
+        want.sort();
+        assert_eq!(labels, want, "the menu is not in label order");
     }
 
     #[test]

@@ -1332,7 +1332,7 @@ fn main() -> Result<()> {
                 // The previously-selected theme's file was deleted - fall back
                 // rather than leaving the app pointing at nothing, and persist
                 // the fallback so a restart does not reselect a ghost id.
-                cfg.theme = resolved_id;
+                cfg.note_theme(&resolved_id);
                 if let Err(e) = cfg.save() {
                     log::write(&format!("config save failed: {e}"));
                 }
@@ -1371,14 +1371,19 @@ fn main() -> Result<()> {
             // no-op - the timer would fire, fail to borrow, and drop every tick.
             let current = with_ticker(|t| t.theme.id.clone()).unwrap_or_default();
             let chosen =
-                tray.show_menu(win::autostart::is_enabled(), &current, &transport_state(&outcomes, &cfg));
+                tray.show_menu(
+                    win::autostart::is_enabled(),
+                    &current,
+                    &cfg.recents,
+                    &transport_state(&outcomes, &cfg),
+                );
             match chosen {
                 Some(TrayEvent::Quit) => break,
                 Some(TrayEvent::SelectTheme(id)) => {
                     if let Some(t) = all_themes.iter().find(|t| t.id == id) {
                         // A deliberate switch DOES reset the meter.
                         with_ticker(|k| k.set_theme(t.clone(), true));
-                        cfg.theme = t.id.clone();
+                        cfg.note_theme(&t.id);
                         if let Err(e) = cfg.save() {
                             log::write(&format!("config save failed: {e}"));
                         }
@@ -1399,7 +1404,7 @@ fn main() -> Result<()> {
                     match shuffle(&all_themes, &current, kind) {
                         Some(t) => {
                             log::write(&format!("{kind:?} from the menu: {current} -> {}", t.id));
-                            cfg.theme = t.id.clone();
+                            cfg.note_theme(&t.id);
                             with_ticker(|k| k.set_theme(t, true));
                             if let Err(e) = cfg.save() {
                                 log::write(&format!("config save failed: {e}"));
@@ -1531,7 +1536,7 @@ fn main() -> Result<()> {
             match shuffle(&all_themes, &current, kind) {
                 Some(t) => {
                     log::write(&format!("{kind:?}: {} -> {}", current, t.id));
-                    cfg.theme = t.id.clone();
+                    cfg.note_theme(&t.id);
                     with_ticker(|k| k.set_theme(t, true));
                     if let Err(e) = cfg.save() {
                         log::write(&format!("config save failed: {e}"));
