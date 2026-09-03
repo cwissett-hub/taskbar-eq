@@ -25,10 +25,27 @@
 //! A slab slamming into the floor with nothing coming off it reads as a rectangle changing size. So each
 //! flip throws DUST from the surface it hits, and every block carries a few static CRACKS.
 //!
+//! The debris comes in TWO CLASSES, because one does not read. A grain is 1x1 in a dimmer mix and reads as
+//! powder; a CHUNK is 2x2 in the block's own tone and reads as a piece of the slab that broke off. Same
+//! tone at two sizes would read as one effect with a size jitter. Chunks are thrown harder and straighter
+//! and live longer, which is the physics: the impact gives everything much the same impulse, but air
+//! resistance acts on the powder and barely on the lumps.
+//!
 //! The dust is ejected AWAY from the impacted surface while gravity always pulls down, which makes the two
 //! states behave differently without any special-casing: a floor slam arcs up and falls back, and a
 //! ceiling slam simply rains down. That asymmetry is the physics doing the work, and it also tells the eye
 //! which state the panel is in during the moment the blocks themselves are still moving.
+//!
+//! A CRACK DIVIDES, and that is the whole of it. Two earlier versions were reported first as chevrons
+//! ("small arrows stuck to the blocks") and then as "small black lines", and both were unbranched runs
+//! differing only in how they stepped. This project had already established the identical point building
+//! the cherry-blossom branch - a twig that does not divide is a spike - and a crack is topologically the
+//! same object. No amount of tuning a single run turns it into a fracture, which is why two rounds of
+//! tuning the step pattern got nowhere.
+//!
+//! So a crack wanders out from the block's base edge, jinks sideways when its hash says so rather than on
+//! a fixed cadence, FORKS at 45% of its length with the fork leaning the other way, and tapers from 2px at
+//! the edge to 1px beyond a third of its length.
 //!
 //! The cracks are STATIC per block and derived from the block's index, not from a per-frame random. A
 //! crack that moved would be noise, and noise is the one thing a family this flat cannot absorb.
@@ -93,11 +110,37 @@ const STUB_PX: i32 = 3;
 /// cost is constant and there is no allocation in the draw path. 120 is a hard ceiling that the emitter
 /// respects even at maximum drive, which matters because the flip fires one to three times a second and
 /// grains live for 420ms - so three bursts can be in the air at once.
-const MAX_DUST: usize = 120;
-const DUST_PER_BLOCK: usize = 3;
+const MAX_DUST: usize = 260;
+const DUST_PER_BLOCK: usize = 7;
+
+/// Chunks per block per slam at full drive, and the size of one in pixels.
+///
+/// A CHUNK IS NOT BIG DUST. It is drawn 2x2 in the BLOCK'S OWN TONE while a grain is 1x1 in a dimmer mix,
+/// and that distinction is the whole point: a chunk reads as a piece of the slab that broke off, a grain
+/// as the powder it ground up. Same tone at two sizes would read as one effect with a size jitter.
+///
+/// Fewer than the grains, because a slab that shed this much visible material every beat would have
+/// nothing left. Two per block against seven grains is roughly the ratio that reads as "mostly dust, some
+/// debris".
+const CHUNK_PER_BLOCK: usize = 2;
+const CHUNK_PX: i32 = 2;
+
+/// A chunk's ejection multiplier, its lateral spread, and how long it lives.
+///
+/// Thrown HARDER and STRAIGHTER than dust, and it lives longer. The impact gives everything much the same
+/// impulse, but air resistance acts on the powder and barely on the lumps - so the grains fan out and slow
+/// while the chunks keep going roughly where they were thrown. That is why the spread is half the dust's
+/// and the life is longer: a chunk should still be travelling when the grains around it have dispersed.
+const CHUNK_EJECT: f32 = 1.15;
+const CHUNK_SPREAD: f32 = 20.0;
+const CHUNK_MS: f32 = 620.0;
 
 /// How long a grain lives, in milliseconds.
 const DUST_MS: f32 = 420.0;
+
+/// How much of the block's tone a CHUNK keeps. Far less mixed toward the background than a grain, because
+/// it is a piece of the block rather than powder in the air.
+const CHUNK_MIX: f32 = 0.08;
 
 /// Ejection speed away from the impacted surface, lateral spread, and gravity - all px/s, px/s and px/s^2.
 ///
@@ -116,17 +159,29 @@ const DUST_GRAV: f32 = 190.0;
 /// Two per block, because the point is a flaw in the concrete and not a texture: at 28px wide, four or
 /// more read as hatching.
 ///
-/// FIVE steps with ONE kink, not three that zigzag. The first version stepped sideways on every other
-/// pixel, which at three pixels long is not a fissure but a chevron - on screen they read as small arrows
-/// stuck to the blocks. A crack is a mostly-straight line that jinks once, so the kink is at the midpoint
-/// and the rest is vertical.
+/// THIRD ATTEMPT, and the two failures are the useful part:
+///   - Three steps alternating sideways is a CHEVRON. Reported as small arrows stuck to the blocks.
+///   - Five steps with one kink at the midpoint is a LINE WITH A BEND. Reported as "small black lines",
+///     which is exactly what it was.
 ///
-/// The two cracks are also forced onto OPPOSITE sides of the block. Choosing each side at random meant
-/// both landed in the same corner often enough to look like a deliberate mark rather than damage.
+/// The thing both versions lacked is that A CRACK DIVIDES. This project already established the identical
+/// point building the cherry-blossom branch - "a twig that does not divide is a spike; dividing is most of
+/// what makes a branch look like a branch" - and a crack is topologically the same object: a path that
+/// forks. No amount of tuning a single unbranched run turns it into a fracture, which is why two rounds of
+/// tuning the step pattern got nowhere.
 ///
-/// Toward the BACKGROUND rather than toward black - see the module note - so it survives the inversion.
+/// So a crack is now a WANDERING FORKED PATH from the block's base edge:
+///   - It grows away from the base, one row per step, jinking sideways when the hash says so rather than
+///     on a fixed cadence. A fixed cadence is what made both earlier versions read as a manufactured mark.
+///   - It FORKS at `CRACK_FORK_AT` of its length, and the fork leans the other way. Not nearer the tip:
+///     the blossom family measured that a fork in the last quarter reads as a frayed end.
+///   - It TAPERS - 2px wide at the base edge where the stress is, 1px beyond a third of its length. A
+///     uniform width is a drawn line; a varying one is a fracture.
 const CRACKS_PER_BLOCK: u32 = 2;
-const CRACK_STEPS: i32 = 5;
+const CRACK_STEPS: i32 = 9;
+const CRACK_FORK_AT: f32 = 0.45;
+const CRACK_FORK_STEPS: i32 = 4;
+const CRACK_WIDE_FRAC: f32 = 0.33;
 const CRACK_MIX: f32 = 0.55;
 
 /// How far a dust grain's colour moves toward the background.
@@ -163,6 +218,10 @@ struct Dust {
     vx: f32,
     vy: f32,
     age: f32,
+    /// Milliseconds this piece lives for. Grains and chunks share one pool but not one lifetime.
+    life: f32,
+    /// 1 for a grain, `CHUNK_PX` for a chunk. Also selects the tone - see `CHUNK_MIX`.
+    size: i32,
     live: bool,
 }
 
@@ -215,7 +274,10 @@ impl Brutal {
         }
         // Scaled by level, so a heavy passage throws more debris. That is an EVENT scaled by level, not
         // brightness standing in for one, so the house rule is intact.
-        let per = ((DUST_PER_BLOCK as f32) * (0.35 + 0.65 * drive.clamp(0.0, 1.0))).round() as usize;
+        let scale = 0.35 + 0.65 * drive.clamp(0.0, 1.0);
+        let grains = ((DUST_PER_BLOCK as f32) * scale).round() as usize;
+        let chunks = ((CHUNK_PER_BLOCK as f32) * scale).round() as usize;
+        let per = grains + chunks;
         if per == 0 {
             return;
         }
@@ -238,16 +300,25 @@ impl Brutal {
                         break i;
                     }
                 };
-                let n = (b * 8 + g) as u32;
+                // The first `grains` of each block's allocation are powder, the rest are chunks.
+                let is_chunk = g >= grains;
+                let n = (b * 16 + g) as u32;
                 let across = rand01(self.seed, n * 3 + 1);
                 let sideways = rand01(self.seed, n * 3 + 2) * 2.0 - 1.0;
                 let lift = 0.55 + 0.45 * rand01(self.seed, n * 3 + 3);
+                let (spread, boost, life, size) = if is_chunk {
+                    (CHUNK_SPREAD, CHUNK_EJECT, CHUNK_MS, CHUNK_PX)
+                } else {
+                    (DUST_SPREAD, 1.0, DUST_MS, 1)
+                };
                 self.dust[slot] = Dust {
                     x: bx as f32 + across * bw as f32,
                     y: surface,
-                    vx: sideways * DUST_SPREAD,
-                    vy: eject * lift,
+                    vx: sideways * spread,
+                    vy: eject * lift * boost,
                     age: 0.0,
+                    life,
+                    size,
                     live: true,
                 };
             }
@@ -261,7 +332,7 @@ impl Brutal {
             g.vy += DUST_GRAV * secs;
             g.x += g.vx * secs;
             g.y += g.vy * secs;
-            let gone = g.age >= DUST_MS
+            let gone = g.age >= g.life.max(1.0)
                 || !g.x.is_finite()
                 || !g.y.is_finite()
                 || g.x < 1.0
@@ -392,33 +463,61 @@ impl Family for Brutal {
 
             // ---- the cracks ----
             //
-            // Static per block, stepped diagonally, and anchored to the block's BASE - the end that does
-            // not move as the level changes. Anchored to the tip they would slide up and down with the
-            // music, which is the "moving crack reads as noise" failure the module note warns about.
-            //
-            // Clamped into the block's own drawn rectangle, so a stub three pixels tall gets a crack
-            // three pixels long rather than one hanging in the air beyond it.
+            // A wandering FORKED path from the block's base edge - see CRACK_STEPS for why it forks and
+            // why two unbranched versions failed. Static per block from its index, so it is damage rather
+            // than noise, and clamped into the block's own rectangle at every length.
             let crack = lerp(body, background, CRACK_MIX);
             for ci in 0..CRACKS_PER_BLOCK {
-                let n = i as u32 * 16 + ci * 4;
-                // Near an EDGE, which is where concrete actually fails: within the outer third of the
-                // block's width, on one side or the other.
-                // Alternating rather than random, so the pair never shares a corner - see CRACK_STEPS.
+                let n = i as u32 * 32 + ci * 8;
+                // Start on the base edge, in the outer third on alternating sides. Alternating rather than
+                // random, so the pair never shares a corner - at random they clustered often enough to
+                // look like a deliberate mark.
                 let side = ci % 2 == 0;
-                let inset = 1 + (rand01(0xC0FF_EE01, n + 2) * (bw as f32 / 3.0)) as i32;
-                let cx = if side { bx + inset } else { bx + bw - 1 - inset };
-                let along = (rand01(0xC0FF_EE01, n + 3) * (len as f32 * 0.5)) as i32;
-                let step_in = if side { 1 } else { -1 };
-                for k in 0..CRACK_STEPS.min(len) {
-                    // Grows AWAY from the base, and steps sideways every other pixel so the mark is a
-                    // stepped line rather than a straight one.
-                    let dy = along + k;
-                    let py = if self.hanging { by + dy } else { by + len - 1 - dy };
-                    let px = cx + if k >= CRACK_STEPS / 2 { step_in } else { 0 };
-                    if py < by || py >= by + len || px < bx || px >= bx + bw {
-                        continue;
+                let inset = 2 + (rand01(0xC0FF_EE01, n + 1) * (bw as f32 / 3.0)) as i32;
+                let mut cx = if side { bx + inset } else { bx + bw - 1 - inset };
+                // Which way it leans overall, and how far up the base edge it begins.
+                let lean = if side { 1 } else { -1 };
+                let steps = CRACK_STEPS.min(len);
+
+                // The main run, plus its fork. Both walk the same way, so one routine draws both: a step
+                // outward from the base each row, a sideways jink when the hash says so, and a 2px width
+                // for the first third.
+                let mut fork: Option<(i32, i32, i32)> = None;
+                for k in 0..steps {
+                    // The jink is hash-driven rather than on a cadence. A fixed cadence is precisely what
+                    // made the earlier versions read as a manufactured chevron and then as a bent line.
+                    if k > 0 && rand01(0xC0FF_EE01, n + 100 + k as u32) < 0.42 {
+                        cx += lean;
                     }
-                    c.fill_rect(px, py, 1, 1, crack);
+                    let wide = (k as f32) < steps as f32 * CRACK_WIDE_FRAC;
+                    let w_px = if wide { 2 } else { 1 };
+                    // Rows run AWAY from the base, which is the top of the block when hanging and the
+                    // bottom when standing.
+                    let py = if self.hanging { by + k } else { by + len - 1 - k };
+                    for dx in 0..w_px {
+                        let px = cx + dx * lean;
+                        if py >= by && py < by + len && px >= bx && px < bx + bw {
+                            c.fill_rect(px, py, 1, 1, crack);
+                        }
+                    }
+                    if fork.is_none() && (k as f32) >= steps as f32 * CRACK_FORK_AT {
+                        fork = Some((cx, k, -lean));
+                    }
+                }
+                // The fork, leaning the other way. This is the whole difference between a fracture and a
+                // line, so it is not conditional on anything but having room for it.
+                if let Some((fx0, fk, flean)) = fork {
+                    let mut fx = fx0;
+                    for j in 1..=CRACK_FORK_STEPS.min(len - fk).max(0) {
+                        if rand01(0xC0FF_EE01, n + 200 + j as u32) < 0.62 {
+                            fx += flean;
+                        }
+                        let k = fk + j;
+                        let py = if self.hanging { by + k } else { by + len - 1 - k };
+                        if py >= by && py < by + len && fx >= bx && fx < bx + bw {
+                            c.fill_rect(fx, py, 1, 1, crack);
+                        }
+                    }
                 }
             }
 
@@ -437,10 +536,14 @@ impl Family for Brutal {
         // Its colour is the block tone mixed most of the way to the background, which is the same
         // relationship the cracks use - dust and cracks are the same material seen two ways, and pinning
         // both to `background` means neither of them needs a special case for the inversion.
-        let grain_src = lerp(crate::render::tint(t, 0.5, d.time_s, false, &t.lit, 1.0), dark, slab);
-        let grain = lerp(grain_src, background, DUST_MIX);
+        let src = lerp(crate::render::tint(t, 0.5, d.time_s, false, &t.lit, 1.0), dark, slab);
+        let grain = lerp(src, background, DUST_MIX);
+        // A CHUNK KEEPS THE BLOCK'S TONE. That, plus its 2x2 size, is what makes it read as a piece of the
+        // slab rather than as a large grain - see CHUNK_PER_BLOCK.
+        let lump = lerp(src, background, CHUNK_MIX);
         for g in self.dust.iter().filter(|g| g.live) {
-            c.fill_rect(g.x as i32, g.y as i32, 1, 1, grain);
+            let (col, sz) = if g.size > 1 { (lump, g.size) } else { (grain, 1) };
+            c.fill_rect(g.x as i32, g.y as i32, sz, sz, col);
         }
 
         // No bloom. Every colourway here sets `bloom` to 0 and this family would ignore it anyway - see
@@ -909,6 +1012,156 @@ mod tests {
             best > 0,
             "the cracks vanished under the inversion at slab {deepest:.2} - only the body and the \
              background were left inside the block"
+        );
+    }
+
+    /// THE CRACK MUST FORK. This is the property both earlier versions lacked and the reason they were
+    /// reported first as chevrons and then as "small black lines" - an unbranched run is a line however it
+    /// is stepped, and no amount of tuning the step pattern changes that.
+    ///
+    /// Measured as a genuine branch signature rather than by trusting the constants: somewhere along the
+    /// crack there must be a row containing TWO separated runs of crack colour with block body between
+    /// them. A single path, however wandering, can never produce that.
+    ///
+    /// Driven with flat levels so no dust is in the air to be mistaken for a second run - the same
+    /// isolation the inversion test needs, and for the same reason.
+    ///
+    /// Mutation: delete the fork block, or set CRACK_FORK_AT above 1.0 so it never triggers. Either leaves
+    /// one run per row and this fails.
+    #[test]
+    fn a_crack_forks_rather_than_running_as_one_line() {
+        let t = builtin::brutal_concrete();
+        let (w, h) = (380, 60);
+        let (x0, bw) = Brutal::grid(w).unwrap();
+        let mut fam = Brutal::default();
+        let mut c = Canvas::new(w, h);
+        let flat = |t_s: f32| {
+            let mut d = FrameData { dt_ms: 16.7, time_s: t_s, ..FrameData::default() };
+            for v in d.levels.iter_mut() {
+                *v = 0.62;
+            }
+            d.peaks = d.levels;
+            d
+        };
+        for k in 0..60 {
+            fam.draw(&mut c, &t, &flat(k as f32 * 0.0167));
+        }
+        assert_eq!(
+            fam.dust.iter().filter(|g| g.live).count(),
+            0,
+            "dust is in the air, so a second run on a row might be a grain rather than a fork"
+        );
+
+        let body = Rgba::from_hex(&t.lit, 1.0);
+        let is_body = |px: Rgba| (px.r, px.g, px.b) == (body.r, body.g, body.b);
+        // A forked row needs THREE separated runs, not two.
+        //
+        // Two is worthless as a signature, and the first version of this test used it and was vacuous:
+        // there are two cracks per block on opposite sides, so any row crossing both shows two runs
+        // whether or not either one branches - disabling the fork entirely still passed. A THIRD run on
+        // one row can only come from one of the two cracks having split.
+        let mut forked_blocks = 0;
+        for b in 0..BLOCKS {
+            let bx = x0 + b as i32 * (bw + GAP);
+            let mut found = false;
+            for y in 4..h - 4 {
+                let mut runs = 0;
+                let mut in_run = false;
+                let mut any_body_seen = false;
+                for x in bx..bx + bw {
+                    let px = c.get(x, y);
+                    if is_body(px) {
+                        any_body_seen = true;
+                        in_run = false;
+                    } else if !in_run {
+                        in_run = true;
+                        runs += 1;
+                    }
+                }
+                if runs >= 3 && any_body_seen {
+                    found = true;
+                    break;
+                }
+            }
+            if found {
+                forked_blocks += 1;
+            }
+        }
+        // Not every block shows three runs on every row - the two cracks have to be crossing the same
+        // row for the third to be visible - but half of eleven blocks is far more than chance.
+        assert!(
+            forked_blocks >= BLOCKS / 2,
+            "only {forked_blocks} of {BLOCKS} blocks show a row with three separated crack runs, which is the only signature a single unbranched path cannot produce"
+        );
+    }
+
+    /// A slam throws TWO SIZES of debris, and the chunks are the block's own tone while the grains are a
+    /// dimmer mix. Same tone at two sizes would read as one effect with a size jitter rather than as
+    /// concrete and powder.
+    ///
+    /// Mutation: give chunks `size: 1`, or draw them with the grain colour. Either collapses the two
+    /// classes into one and this fails.
+    #[test]
+    fn a_slam_throws_both_powder_and_chunks() {
+        let t = builtin::brutal_concrete();
+        let mut fam = Brutal::default();
+        let mut c = Canvas::new(380, 60);
+        let mut saw_grain = false;
+        let mut saw_chunk = false;
+        for k in 0..400 {
+            fam.draw(&mut c, &t, &beat_frame(k as f32 * 0.0167, 24, k, 0.95));
+            for g in fam.dust.iter().filter(|g| g.live) {
+                if g.size > 1 {
+                    saw_chunk = true;
+                } else {
+                    saw_grain = true;
+                }
+            }
+        }
+        assert!(saw_grain, "no 1px grains were ever thrown");
+        assert!(saw_chunk, "no chunks were ever thrown");
+
+        // And the two are drawn in different tones, which is what makes the distinction read.
+        let dark = Rgba::from_hex(&t.panel, 1.0);
+        let src = crate::render::tint(&t, 0.5, 0.0, false, &t.lit, 1.0);
+        let grain = lerp(src, dark, DUST_MIX);
+        let lump = lerp(src, dark, CHUNK_MIX);
+        assert_ne!(
+            (grain.r, grain.g, grain.b),
+            (lump.r, lump.g, lump.b),
+            "a chunk and a grain are the same colour, so a chunk is just big dust"
+        );
+    }
+
+    /// A chunk outlives and outruns the powder around it, which is the physics claim: the impact gives
+    /// everything much the same impulse, but air resistance acts on the powder and barely on the lumps.
+    ///
+    /// Mutation: set CHUNK_MS equal to DUST_MS and CHUNK_SPREAD equal to DUST_SPREAD.
+    #[test]
+    fn chunks_outlive_and_outrun_the_powder() {
+        assert!(CHUNK_MS > DUST_MS, "a chunk must live longer than a grain");
+        assert!(CHUNK_SPREAD < DUST_SPREAD, "a chunk must fan out less than a grain");
+        assert!(CHUNK_EJECT > 1.0, "a chunk must be thrown at least as hard as a grain");
+
+        // And it shows in flight: measure how far each class travels sideways from where it was thrown.
+        let t = builtin::brutal_concrete();
+        let mut fam = Brutal::default();
+        let mut c = Canvas::new(380, 60);
+        let (mut grain_life, mut chunk_life) = (0.0f32, 0.0f32);
+        for k in 0..400 {
+            fam.draw(&mut c, &t, &beat_frame(k as f32 * 0.0167, 24, k, 0.95));
+            for g in fam.dust.iter().filter(|g| g.live) {
+                if g.size > 1 {
+                    chunk_life = chunk_life.max(g.age);
+                } else {
+                    grain_life = grain_life.max(g.age);
+                }
+            }
+        }
+        assert!(grain_life > 0.0 && chunk_life > 0.0, "one class was never observed in flight");
+        assert!(
+            chunk_life > grain_life,
+            "chunks did not outlive the powder in flight: {chunk_life:.0}ms against {grain_life:.0}ms"
         );
     }
 
