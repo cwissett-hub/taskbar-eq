@@ -292,7 +292,7 @@ colourway files, which hot-reload on save and can replace a built-in by reusing 
 **Last updated: 2026-08-10.** Full test suite green (520 at the time of writing), release build
 warning-free. The colourway and family counts below are asserted by a test; the test count itself is
 a snapshot and can drift.
-**148 colourways across 22 families.**
+**150 colourways across 22 families.**
 
 | | Feature | State |
 |---|---|---|
@@ -701,7 +701,7 @@ The app also writes that log on every normal launch, so a failure can be reporte
 
 ## Themes
 
-**148 colourways across 22 families.** A *family* is a renderer with fixed geometry — code. A
+**150 colourways across 22 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
 **Segmented VFD** — a smoked-glass panel with discrete stacked segments, a faint dormant grid,

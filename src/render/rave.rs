@@ -49,39 +49,71 @@ use crate::render::canvas::{Canvas, Rgba};
 use crate::render::{Family, FrameData};
 use crate::themes::Theme;
 
-/// Beams in the fan. Odd, so there is a centre beam for the fan to be symmetrical about.
-///
-/// Nine rather than more: at the widest aperture the outermost beams are ~14px apart where they meet the
-/// panel edge, and the reel family's aliasing finding applies to spatial pitch as well as motion - beams
-/// closer than a few pixels at their tips read as a moire rather than as separate beams.
-const BEAMS: usize = 9;
 
-/// The fewest beams drawn, at silence. THE COUNT FOLLOWS THE LEVEL, and it has to.
+/// The emitters: how many heads the rig has, and where they sit across the panel.
 ///
-/// A beam is `2 * BEAM_FLARE + 1` = 5px wide and every beam leaves the same point, so two neighbours are
-/// only distinguishable beyond the radius where their angular separation exceeds that width:
-/// `r > 5 / (2 * aperture / (BEAMS - 1))`. At the narrow aperture that is r > 44px on a panel 60 tall -
-/// so at nine beams the quiet frame rendered as one solid wedge, and the beam count, which is what
-/// carries the spectrum, could not be read at all.
+/// Asked for as "multiple laser emitters", and it fixes something as well as adding something. One origin
+/// meant every beam left the same point, which is what forced the beam count to follow the level - two
+/// beams from one point cannot be told apart until `r > 5 / (2*aperture/(n-1))`, and at a narrow aperture
+/// that radius is off the bottom of the panel. Three origins 100px apart are separated before they emit a
+/// single pixel, so each head only has to keep its OWN few beams apart.
 ///
-/// Three beams at the narrow end separate beyond r > 11px, which fits. So the count steps from three to
-/// nine with the level. My own note for this family ranked count as the WEAKEST of the position mappings
-/// on the grounds that a discrete step reads as a glitch - true in general, and beside the point here:
-/// without it the other two mappings are illegible at the quiet end. It also happens to look right, a rig
-/// bringing heads in as the track builds.
-const BEAMS_MIN: usize = 3;
+/// A truss of heads across the front of a stage is also the more literal rave rig: a single point is a
+/// laser, several is a lighting bar, and a lighting bar is what a 6:1 strip is shaped like.
+///
+/// The outer two are at 0.18 and 0.82 rather than at the edges, so a wide-open fan still has room to
+/// spread outward before it leaves the panel instead of exiting through the side immediately.
+const EMITTERS: usize = 3;
+const EMITTER_X: [f32; EMITTERS] = [0.18, 0.5, 0.82];
+
+/// How far apart the heads are in their sweep, as a fraction of the sweep period.
+///
+/// Not zero, which is the point. Three heads sweeping in lock-step read as one wide fan with gaps in it;
+/// offset, they cross each other and the rig reads as several independent lights. A third of a period puts
+/// them at evenly spaced phases, which is the most crossing available from three heads.
+const EMITTER_PHASE: f32 = 0.3333;
+
+/// The fewest beams PER EMITTER, at silence. The count still follows the level.
+///
+/// A beam is `2 * BEAM_FLARE + 1` = 5px wide, and beams leaving the SAME origin are only distinguishable
+/// beyond the radius where their angular separation exceeds that width:
+/// `r > 5 / (2 * aperture / (n - 1))`. With one origin and nine beams that was r > 44px on a panel 60
+/// rows tall - they could never separate, and the quiet frame rendered as a single solid wedge with the
+/// beam count, which carries the spectrum, unreadable.
+///
+/// `EMITTERS` is most of the answer to that now: three beams per head at the narrow aperture separate
+/// beyond r > 11px. The count still follows the level on top of it, one to three per head, so the total
+/// still runs from three to nine.
+///
+/// My own note for this family ranked count as the WEAKEST of the position mappings on the grounds that a
+/// discrete step reads as a glitch. True in general; here it also looks right - a rig bringing heads up
+/// as a track builds.
+/// THREE TO FIVE PER HEAD, not one to three. The first version at one-to-three was wrong on screen and
+/// the reason is worth keeping: a head running two beams at a wide aperture emits them at plus and minus
+/// the aperture and nothing between, so it draws a hard V - and three V's across a strip read as a zigzag
+/// mountain range, not as a laser rig. A fan needs enough beams to BE a fan.
+///
+/// Five per head at the wide aperture separate beyond r > 8px, and three at the narrow one beyond
+/// r > 11px, so both ends still resolve. Beams from DIFFERENT heads never need to be mutually separated -
+/// they start 100px apart - which is why the total can now run to fifteen where a single origin could
+/// only afford nine.
+const PER_EMITTER_MIN: usize = 3;
+const PER_EMITTER_MAX: usize = 5;
 
 /// The fan's half-aperture in radians, quiet and loud. 0 is straight down.
 ///
 /// The wide end is 1.22 rad (70 degrees), which is what reaches the panel's bottom corners from a top
 /// centre origin at this aspect ratio. Wider than that and the outer beams exit through the sides near
 /// the top, so the fan stops looking like a fan.
-/// The narrow end is 0.45 rad, not 0.20. At 0.20 the nine beams sit inside 23 degrees total and overlap
-/// into a single stub - the quiet frame rendered as one small blob rather than as a fan at rest, which
-/// loses the beam count and with it the spectrum reading. 0.45 is still less than a third of the wide end,
-/// so the spread still obviously tracks the level.
-const APERTURE_CALM: f32 = 0.45;
-const APERTURE_WILD: f32 = 1.22;
+/// Narrowed for the three-head rig. A single head at the panel's centre could afford 1.22 rad, because
+/// its fan had the whole width to spread into; three heads at 0.18, 0.5 and 0.82 cannot, and at 1.22 their
+/// fans overlapped so heavily that the rig read as one tangle rather than as three lights. 0.85 rad keeps
+/// each fan mostly over its own third.
+///
+/// The narrow end is 0.30 rather than 0.20 for the original reason: too tight and a head's beams overlap
+/// into a single stub, which loses the beam count and with it the spectrum reading.
+const APERTURE_CALM: f32 = 0.30;
+const APERTURE_WILD: f32 = 0.85;
 
 /// How fast the aperture follows the music, per millisecond.
 ///
@@ -298,47 +330,62 @@ impl Family for Rave {
         // blossom family's petals and its lightning both need a layer.
         let mut g = Canvas::new(w, h);
         let (wf, hf) = (w as f32, h as f32);
-        let ox = wf * 0.5;
         let oy = 2.0;
-        let sweep = SWEEP_AMP * (d.time_s * std::f32::consts::TAU / (SWEEP_MS / 1000.0)).sin();
-        let base = sweep + self.snap;
         let bands = d.levels.len().max(1);
-        // How many beams are lit - see BEAMS_MIN. The blast forces the full count, so the flourish always
-        // shows the whole rig.
+        // How many beams each head is running - see PER_EMITTER_MIN. The blast forces the full count, so
+        // the flourish always shows the whole rig.
         let open = (drive + (1.0 - drive) * blast).clamp(0.0, 1.0);
-        let active =
-            (BEAMS_MIN as f32 + (BEAMS - BEAMS_MIN) as f32 * open).round().clamp(1.0, BEAMS as f32)
-                as usize;
+        let per = (PER_EMITTER_MIN as f32 + (PER_EMITTER_MAX - PER_EMITTER_MIN) as f32 * open)
+            .round()
+            .clamp(1.0, PER_EMITTER_MAX as f32) as usize;
+        let total = (EMITTERS * per).max(1);
         // Colour flips on every kick, and on a rainbow colourway the hue steps too. On a fixed colourway
         // `tint` returns the hex unchanged, so the flip between `lit` and `hot` is what carries it there.
         let flip = self.kicks % 2 == 0;
         let hue = (self.kicks as f32 * 0.137).rem_euclid(1.0);
-        for i in 0..active {
-            let f = if active > 1 { i as f32 / (active - 1) as f32 } else { 0.5 };
-            let a = base + (f - 0.5) * 2.0 * aperture;
-            // This beam's slice of the spectrum. Its reach IS that slice's level - the fan's outline is
-            // the meter. The slices are cut over the ACTIVE count, so the whole spectrum is always
-            // covered however many beams are lit; fewer beams means each one speaks for a wider band.
-            let lo = i * bands / active;
-            let hi = (((i + 1) * bands) / active).max(lo + 1).min(bands);
-            let mut slice = 0.0f32;
-            for v in &d.levels[lo..hi] {
-                if v.is_finite() {
-                    slice = slice.max(*v);
+        let core_hex = if flip { &t.hot } else { &t.lit };
+        let core = crate::render::tint(t, hue, d.time_s, flip, core_hex, 1.0);
+        let flare = crate::render::tint(t, hue, d.time_s, flip, core_hex, FLARE_A);
+        let period_s = (SWEEP_MS / 1000.0).max(0.001);
+        for e in 0..EMITTERS {
+            let ox = wf * EMITTER_X[e];
+            // Each head sweeps at its own phase, and the kick throws alternate heads the OTHER way - so
+            // the rig crosses itself instead of moving as one slab. See EMITTER_PHASE.
+            let phase = e as f32 * EMITTER_PHASE * period_s;
+            let sweep = SWEEP_AMP
+                * ((d.time_s + phase) * std::f32::consts::TAU / period_s).sin();
+            let lean = if e % 2 == 0 { 1.0 } else { -1.0 };
+            let base = sweep + self.snap * lean;
+            for i in 0..per {
+                let f = if per > 1 { i as f32 / (per - 1) as f32 } else { 0.5 };
+                let a = base + (f - 0.5) * 2.0 * aperture;
+                // The band slice is cut over the WHOLE rig, indexed left to right across the heads, so
+                // bass sits at the left-hand head and treble at the right-hand one and the rig as a whole
+                // still traces the spectrum. Slicing per head would make each one a small copy of the
+                // same shape and throw the mapping away.
+                let gi = e * per + i;
+                let lo = gi * bands / total;
+                let hi = (((gi + 1) * bands) / total).max(lo + 1).min(bands);
+                let mut slice = 0.0f32;
+                for v in &d.levels[lo..hi] {
+                    if v.is_finite() {
+                        slice = slice.max(*v);
+                    }
+                }
+                let lv = ((slice - LEVEL_FLOOR) / LEVEL_SPAN).clamp(0.0, 1.0).powf(LEVEL_GAMMA);
+                let reach = REACH_FLOOR + (1.0 - REACH_FLOOR) * lv;
+                let (ex, ey) = Self::ray_end(ox, oy, a, wf, hf, reach);
+                for dx in -BEAM_FLARE..=BEAM_FLARE {
+                    g.line(ox as i32 + dx, oy as i32, ex + dx, ey, flare);
+                }
+                for dx in -BEAM_CORE..=BEAM_CORE {
+                    g.line(ox as i32 + dx, oy as i32, ex + dx, ey, core);
                 }
             }
-            let lv = ((slice - LEVEL_FLOOR) / LEVEL_SPAN).clamp(0.0, 1.0).powf(LEVEL_GAMMA);
-            let reach = REACH_FLOOR + (1.0 - REACH_FLOOR) * lv;
-            let (ex, ey) = Self::ray_end(ox, oy, a, wf, hf, reach);
-            let core_hex = if flip { &t.hot } else { &t.lit };
-            let core = crate::render::tint(t, hue, d.time_s, flip, core_hex, 1.0);
-            let flare = crate::render::tint(t, hue, d.time_s, flip, core_hex, FLARE_A);
-            for dx in -BEAM_FLARE..=BEAM_FLARE {
-                g.line(ox as i32 + dx, oy as i32, ex + dx, ey, flare);
-            }
-            for dx in -BEAM_CORE..=BEAM_CORE {
-                g.line(ox as i32 + dx, oy as i32, ex + dx, ey, core);
-            }
+            // The head itself. Small, and only worth drawing because three of them along the top edge
+            // read as a truss - which is what tells the eye the beams come from equipment rather than
+            // from nowhere.
+            g.fill_rect(ox as i32 - 2, oy as i32 - 1, 5, 2, core);
         }
         if t.bloom > 0.0 && GLOW_A > 0.0 {
             g.bloom(GLOW_R, GLOW_A);

@@ -220,9 +220,14 @@ pub fn rave_hardance() -> Theme {
 // it look violent without touching the house rule.
 //
 // EVERY COLOURWAY HERE SETS `bloom` TO 0, and there is a test that enforces it. A halo softens exactly the
-// edges this family is about - the same reasoning the chroma family uses. These are also the most
-// restrained palettes in the project on purpose: this is the counterweight to the rave and kaleidoscope
-// families, and concrete with one accent is the whole idea.
+// edges this family is about - the same reasoning the chroma family uses.
+//
+// The palettes were the most RESTRAINED in the project and are now among the boldest, which was asked for
+// directly: "much brighter more interesting colourways". The original set - authentic concrete grey,
+// muted print blue, weathered brown, and a monochrome - was faithful to the reference and dull, and the
+// complaint was really that the family only ever showed one hue at a time. What makes these still
+// brutalist is not the colour, it is the COUNT: flat, unmodulated, two tones per colourway and no
+// gradient anywhere. A saturated flat slab is more brutalist than a tasteful grey one.
 
 fn brutal_base() -> Theme {
     Theme {
@@ -241,77 +246,129 @@ fn brutal_base() -> Theme {
     }
 }
 
-/// Concrete: the reference. Raw grey on near-black with a white accent - the Barbican palette.
+/// Concrete: bleached white slabs on black. Brightened hard from the original grey - the grey was
+/// authentic and dull, and this family is about MASS, which a near-white block has far more of
+/// against a black panel than a mid-grey one does.
 pub fn brutal_concrete() -> Theme {
     Theme {
         id: "brutal-concrete".into(),
         name: "Concrete".into(),
-        lit: "#9aa0a4".into(),
-        hot: "#eef1f3".into(),
-        panel: "#0b0c0d".into(),
-        edge: "#9aa0a4".into(),
-        edge_alpha: 0.12,
-        ghost: 0.20,
+        lit: "#f2f5f7".into(),
+        hot: "#ffffff".into(),
+        panel: "#08090a".into(),
+        edge: "#f2f5f7".into(),
+        edge_alpha: 0.16,
+        ghost: 0.24,
         ..brutal_base()
     }
 }
 
-/// Blueprint: drawing-office cyan on ink blue. The one that reads as a plan rather than a building.
+/// Blueprint: electric cyan on ink. The drawing-office reference, taken from a muted print blue to
+/// the brightest cyan that still clears the contrast floor.
 pub fn brutal_blueprint() -> Theme {
     Theme {
         id: "brutal-blueprint".into(),
         name: "Blueprint".into(),
-        lit: "#6fa8d0".into(),
-        hot: "#e6f4ff".into(),
-        panel: "#050a12".into(),
-        edge: "#6fa8d0".into(),
-        edge_alpha: 0.13,
-        ghost: 0.20,
+        lit: "#22d3ee".into(),
+        hot: "#d6fbff".into(),
+        panel: "#03121a".into(),
+        edge: "#22d3ee".into(),
+        edge_alpha: 0.18,
+        ghost: 0.24,
         ..brutal_base()
     }
 }
 
-/// Rust: weathered steel. The warmest, and the only one here that is not cold.
+/// Rust: hot orange, not weathered brown. Site steel under a work light rather than steel left out
+/// in the rain - the warmest thing here and the one that reads at the smallest size.
 pub fn brutal_rust() -> Theme {
     Theme {
         id: "brutal-rust".into(),
         name: "Rust".into(),
-        lit: "#b5714a".into(),
-        hot: "#ffdcc0".into(),
-        panel: "#0d0806".into(),
-        edge: "#b5714a".into(),
-        edge_alpha: 0.13,
-        ghost: 0.20,
+        lit: "#ff6b1a".into(),
+        hot: "#ffe0c4".into(),
+        panel: "#100603".into(),
+        edge: "#ff6b1a".into(),
+        edge_alpha: 0.18,
+        ghost: 0.24,
         ..brutal_base()
     }
 }
 
-/// Hazard: site yellow on black. The loudest thing this family allows itself, and it is still two colours.
+/// Hazard: full site yellow. The most saturated single hue this family allows itself, and still
+/// only two colours - the restraint here is the COUNT of colours, not their loudness.
 pub fn brutal_hazard() -> Theme {
     Theme {
         id: "brutal-hazard".into(),
         name: "Hazard".into(),
-        lit: "#d9b310".into(),
-        hot: "#fff4c0".into(),
-        panel: "#0a0902".into(),
-        edge: "#d9b310".into(),
-        edge_alpha: 0.14,
-        ghost: 0.20,
+        lit: "#ffd400".into(),
+        hot: "#fffbdc".into(),
+        panel: "#0b0a01".into(),
+        edge: "#ffd400".into(),
+        edge_alpha: 0.19,
+        ghost: 0.24,
         ..brutal_base()
     }
 }
 
-/// Monochrome: no hue whatsoever, so the mass and the flip carry it alone. The honest test of the family.
-pub fn brutal_mono() -> Theme {
+/// Shock: hot magenta on near-black. This replaced a monochrome colourway, which was the least
+/// interesting thing in the project - a grey family with a grey colourway said nothing the other
+/// four did not already say more clearly.
+pub fn brutal_shock() -> Theme {
     Theme {
-        id: "brutal-mono".into(),
-        name: "Monochrome".into(),
-        lit: "#b8b8b8".into(),
+        id: "brutal-shock".into(),
+        name: "Shock".into(),
+        lit: "#ff2e88".into(),
+        hot: "#fff0f7".into(),
+        panel: "#0a0208".into(),
+        edge: "#ff2e88".into(),
+        edge_alpha: 0.19,
+        ghost: 0.26,
+        ..brutal_base()
+    }
+}
+/// Primary: EVERY BLOCK ITS OWN COLOUR, through the shared rainbow resolver keyed on the block's column.
+///
+/// The Bauhaus idea - a row of flat saturated panels - and it is the colourway that answers "brighter and
+/// more interesting" most directly, because the complaint was really that the whole family was one hue at
+/// a time. `rainbow_spread` is 1.0 so the hue walks once across the eleven blocks rather than cycling
+/// several times, which would read as a gradient rather than as eleven decisions.
+pub fn brutal_primary() -> Theme {
+    Theme {
+        id: "brutal-primary".into(),
+        name: "Primary".into(),
+        lit: "#ffffff".into(),
         hot: "#ffffff".into(),
-        panel: "#080808".into(),
-        edge: "#b8b8b8".into(),
-        edge_alpha: 0.12,
-        ghost: 0.18,
+        panel: "#070708".into(),
+        edge: "#c8c8d0".into(),
+        edge_alpha: 0.16,
+        ghost: 0.24,
+        rainbow: 1.0,
+        rainbow_spread: 1.0,
+        ..brutal_base()
+    }
+}
+
+/// Cast: a LIGHT panel, which nothing else in this project does.
+///
+/// Dark blocks on pale concrete - the inverse of every other colourway here and the brightest thing in the
+/// project by mean luminance. It works because this family's contrast does not depend on the blocks being
+/// the LIGHT element: `lit` against `panel` is what the floor measures, and a dark slab on a pale ground
+/// clears it just as a pale slab on a dark ground does.
+///
+/// It also gets the flourish for free and inverted: the monolith lifts the background toward `lit` and
+/// darkens the blocks toward `panel`, so on this colourway the panel goes DARK and the blocks go pale -
+/// the same code, the opposite event.
+pub fn brutal_cast() -> Theme {
+    Theme {
+        id: "brutal-cast".into(),
+        name: "Cast".into(),
+        lit: "#1a1c20".into(),
+        hot: "#000000".into(),
+        panel: "#c9ccd1".into(),
+        edge: "#1a1c20".into(),
+        edge_alpha: 0.22,
+        ghost: 0.30,
         ..brutal_base()
     }
 }
@@ -410,7 +467,9 @@ pub fn kaleido_deep() -> Theme {
         brutal_blueprint(),
         brutal_rust(),
         brutal_hazard(),
-        brutal_mono(),
+        brutal_shock(),
+        brutal_primary(),
+        brutal_cast(),
         nixie_orange(),
         nixie_ice(),
         nixie_neon_green(),

@@ -150,8 +150,6 @@ impl Family for Brutal {
 
         // Figure and ground cross over continuously - see SLAB_MS.
         let dark = Rgba::from_hex(&t.panel, 1.0);
-        let lit = Rgba::from_hex(&t.lit, 1.0);
-        let hot = Rgba::from_hex(&t.hot, 1.0);
         if slab > 0.0 {
             c.fill_rect(2, fy, w - 4, fh, Rgba::from_hex(&t.lit, slab));
         }
@@ -183,8 +181,17 @@ impl Family for Brutal {
             len = len + (((fh - len) as f32) * slab).round() as i32;
             let len = len.clamp(1, fh);
 
-            let body = lerp(lit, dark, slab);
-            let tip = lerp(hot, dark, slab);
+            // Resolved PER BLOCK through the shared rainbow resolver, keyed on the block's position
+            // across the panel. On a fixed colourway `tint` returns the hex unchanged, so those
+            // colourways are bit-for-bit what they were; on a rainbow one every block gets its own hue,
+            // which is what makes a bold primary-colour set possible in a family built on flat fills.
+            //
+            // Position rather than a per-block random, because the blocks are a fixed grid: a stable hue
+            // per column reads as painted concrete, where a hue that moved would read as a light show
+            // and this family is explicitly not that.
+            let x01 = if BLOCKS > 1 { i as f32 / (BLOCKS - 1) as f32 } else { 0.5 };
+            let body = lerp(crate::render::tint(t, x01, d.time_s, false, &t.lit, 1.0), dark, slab);
+            let tip = lerp(crate::render::tint(t, x01, d.time_s, true, &t.hot, 1.0), dark, slab);
             // The two states. `hanging` grows downward from the ceiling, otherwise upward from the floor.
             let (by, cap_y) = if self.hanging {
                 (fy, fy + cap_at.clamp(0, fh) - CAP_PX)
