@@ -3,7 +3,29 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** THE GAME STUTTER IS CONFIRMED FIXED on the gaming machine - the borderless-fullscreen
+**Last updated:** FOUR NEW FAMILIES and a bug that had been shipping a black screen. 150 colourways
+across 22 families, 619 tests green.
+
+KALEIDO, RAVE and BRUTAL are new, plus lightning for the blossom castle. The kaleidoscope is a FRIEZE and
+not a rosette, because a centred disc uses 16% of a 6.3:1 panel - and its radius IS frequency, so the
+symmetry is the meter rather than decoration over one. Rave is a three-head laser truss whose fan outline
+traces the spectrum. Brutal slams its blocks between floor and ceiling on the beat, which is a strobe made
+of POSITION rather than brightness.
+
+PIPES WAS DRAWING NOTHING on any panel shorter than 49 rows, and had been all along - measured 4594 lit
+pixels at 380x60 and 0 at 380x48. It works at 125% DPI and not at 100%, which is why it took a second
+machine to notice: shedding looks exactly like a crash from outside. The projection is now fitted to the
+height, trading depth planes for rows so the planes that remain stay legible.
+
+THE MENU is one Themes entry instead of 22 top-level families, sorted by label, with a recently-used list
+and the current theme named on the parent entry.
+
+A code review of the whole run found FOUR real defects, all mine and all now fixed: a width-only resize
+stranded a pipes run permanently (its cell fell outside the lattice, where nothing can ever move it
+again), two doc/prose blocks were spliced into the middle of unrelated sections by my own insertion
+scripts, and the recents list was capped on write but not on render.
+
+Earlier: THE GAME STUTTER IS CONFIRMED FIXED on the gaming machine - the borderless-fullscreen
 suspend was the cause, so the vsync/flip-loss reading was right and the resource leak was NOT to blame.
 Two new fixes from your report: the pointer no longer picks up a stray spinner over the display, and the
 context menu is no longer drawn behind it. Earlier: ALL THIRTEEN families have a flourish, the media poll

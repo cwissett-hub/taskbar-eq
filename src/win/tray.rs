@@ -294,6 +294,11 @@ impl Tray {
             // colourway name alone is ambiguous across families - there is more than one "Chrome".
             let recent_rows: Vec<(usize, String)> = recents
                 .iter()
+                // CAPPED HERE as well as in `note_theme`. That function is the only writer today, but the
+                // config is a hand-editable TOML file and nothing validates the array's length on read -
+                // so a pasted or imported config could render an unbounded block above the family list,
+                // which is precisely the overflow this whole restructure exists to prevent.
+                .take(crate::config::Config::RECENTS_MAX)
                 .filter(|id| id.as_str() != current_theme)
                 .filter_map(|id| {
                     items.iter().position(|it| &it.id == id).map(|i| {

@@ -104,6 +104,20 @@ pub fn kaleido_lava() -> Theme {
 
 /// Deep: the cold fixed hue. Blue is the worst case for contrast in this project - pure blue reaches only
 /// 2.31:1 against a near-black panel, which is why `RAINBOW_SAT` is capped at a measured 0.68 - so this
+/// one is deliberately a light cyan rather than a saturated blue.
+pub fn kaleido_deep() -> Theme {
+    Theme {
+        id: "kaleido-deep".into(),
+        name: "Deep".into(),
+        lit: "#4fd6ff".into(),
+        hot: "#e8fbff".into(),
+        panel: "#02080d".into(),
+        edge: "#4fd6ff".into(),
+        edge_alpha: 0.15,
+        ghost: 0.34,
+        ..kaleido_base()
+    }
+}
 
 // ===================== Rave lasers =====================
 //
@@ -372,20 +386,8 @@ pub fn brutal_cast() -> Theme {
         ..brutal_base()
     }
 }
-/// one is deliberately a light cyan rather than a saturated blue.
-pub fn kaleido_deep() -> Theme {
-    Theme {
-        id: "kaleido-deep".into(),
-        name: "Deep".into(),
-        lit: "#4fd6ff".into(),
-        hot: "#e8fbff".into(),
-        panel: "#02080d".into(),
-        edge: "#4fd6ff".into(),
-        edge_alpha: 0.15,
-        ghost: 0.34,
-        ..kaleido_base()
-    }
-}pub fn all() -> Vec<Theme> {
+
+pub fn all() -> Vec<Theme> {
     vec![
         vfd_ice(),
         matrix_green(),

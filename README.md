@@ -444,6 +444,14 @@ the branch**, giving a slow motion under the fast one.
 The branch is the *anchor*, not decoration: a solid, static, recognisable shape that tells the eye what
 it is looking at before it has resolved a single petal — and somewhere for the petals to come from.
 
+Petals **tumble** through three masks (face, angled, edge), because a petal that slides without turning
+reads as a speck, and each carries its own flutter sine at its own rate so the field never organises
+itself into rain.
+
+Every colourway is a dusk. A pale petal needs a dark sky to clear the project's 3:1 contrast rule, so
+pink-on-white is the one cherry blossom picture this panel cannot draw — and a near-black sky with
+lantern-pale petals turns out to be the more evocative of the two anyway.
+
 The flourish is a **storm**: lightning strikes the castle and the gust lets go of the branch at the same
 moment, because they are the same event. Getting it to fire at all was the whole problem. This project has
 now three times shipped or nearly shipped a bass trigger that *provably cannot fire* — so the band window
@@ -520,13 +528,6 @@ No glow, no gradient, no ornament: `bloom` is 0 on every colourway here and a te
 halo softens exactly the edges this family is about. Half the band count at double the width, because the
 subject is mass and a thin bar has none, and the 5px gaps do the work a keyline does elsewhere — at 1–2px
 a gap closes up under any halo and the blocks weld into one mass.
-Petals **tumble** through three masks (face, angled, edge), because a petal that slides without turning
-reads as a speck, and each carries its own flutter sine at its own rate so the field never organises
-itself into rain.
-
-Every colourway is a dusk. A pale petal needs a dark sky to clear the project's 3:1 contrast rule, so
-pink-on-white is the one cherry blossom picture this panel cannot draw — and a near-black sky with
-lantern-pale petals turns out to be the more evocative of the two anyway.
 
 Perspective brings two hazards this project has already measured, and both are handled explicitly rather
 than hoped about. Depth planes must land on **distinct integer pixel rows** — at the vaporwave grid's

@@ -160,6 +160,8 @@ struct Run {
 
 #[derive(Default)]
 pub struct Pipes {
+    /// The lattice width the runs were built for. Separate from `fit`, which is height-derived only.
+    nx: i32,
     /// The projection this family is currently fitted to, so a resize can be noticed - see `Fit`.
     fit: Option<Fit>,
     runs: Vec<Run>,
@@ -361,6 +363,17 @@ impl Run {
     }
 
     fn grow(&mut self, drive: f32, turn: bool, dt: f32, nx: i32, nz: i32) {
+        // A cell outside the lattice cannot recover on its own, so this is the backstop rather than a
+        // nicety: `steer` only redirects to a neighbour that is INSIDE, so with the current cell outside
+        // there is no valid candidate, `dir` is left unchanged, and the step below is rejected. The run
+        // freezes for good and nothing else in the family notices.
+        //
+        // The resize guard in `draw` is what should normally prevent this; this holds the invariant
+        // whatever the cause, which matters because the guard has already been wrong once by covering
+        // only one of the two axes.
+        if !Self::inside(self.at, nx, nz) {
+            self.restart(nx, nz);
+        }
         let period = (GROW_SLOW_MS + (GROW_FAST_MS - GROW_SLOW_MS) * drive.clamp(0.0, 1.0)).max(30.0);
         self.due += dt;
         if !self.due.is_finite() {
@@ -422,11 +435,17 @@ impl Family for Pipes {
         if nx < 4 {
             return; // too narrow to hold a lattice
         }
-        // The depth count changes with the height, and a cell's `k` is only valid within its own count -
-        // so a resize that shallows the lattice must restart the runs rather than leave cells pointing at
-        // planes that no longer exist.
-        if self.fit != Some(fit) {
+        // A resize invalidates cells in BOTH axes, and this guard only covered one of them.
+        //
+        // `Fit` is derived entirely from the HEIGHT, so a width-only change leaves it equal and this
+        // never fired - and the run count below is `nx / 8` clamped to MAX_RUNS, which is 4 at both
+        // 380px (nx 46) and 330px (nx 40), so that check did not fire either. A run left at `at.x = 44`
+        // with 40 columns is then stranded PERMANENTLY: `steer` finds none of its six candidates inside,
+        // so `dir` is left as it was, and `grow` rejects the step it takes. One of four pipes froze into
+        // a static streak while the others kept growing.
+        if self.fit != Some(fit) || self.nx != nx {
             self.fit = Some(fit);
+            self.nx = nx;
             self.runs.clear();
         }
         let cx = w as f32 * 0.5;
@@ -620,6 +639,73 @@ mod tests {
             }
             assert!(lit > 200, "{w}x{h} drew almost nothing: {lit} lit pixels");
         }
+    }
+
+    /// A WIDTH-only resize must not strand a run outside the lattice.
+    ///
+    /// This is the hole the depth test did not cover. `Fit` is derived entirely from the HEIGHT, so a
+    /// width change leaves it equal and the resize guard never fires - and the run count is
+    /// `nx / 8` clamped to MAX_RUNS, which is 4 at both 380px (nx 46) and 330px (nx 40), so that check
+    /// does not fire either. A run sitting at `at.x = 45` is then outside `0..40` for good: `steer` finds
+    /// none of its six candidates inside, so `dir` is left alone, and `grow` rejects the step it then
+    /// takes. Nothing can ever move it again, and one of the four pipes becomes a static streak.
+    ///
+    /// Mutation: drop `nx` from the resize guard AND the stranded-cell restart in `grow`, and the
+    /// narrowed run stops growing while the others carry on.
+    #[test]
+    fn a_width_only_resize_does_not_strand_a_run_outside_the_lattice() {
+        let t = builtin::pipes_win95_teal();
+        let mut fam = Pipes::default();
+        let mut wide = Canvas::new(380, 60);
+        for k in 0..300 {
+            fam.draw(&mut wide, &t, &frame(0.62, k as f32 * 0.0167));
+        }
+        assert!(fam.runs.len() > 1, "the fixture did not build several runs");
+
+        // Narrow WITHOUT changing the height, so `Fit` is unchanged.
+        let mut narrow = Canvas::new(330, 60);
+        for k in 0..40 {
+            fam.draw(&mut narrow, &t, &frame(0.62, 5.0 + k as f32 * 0.0167));
+        }
+        // The segment CONTENTS, not the length. A run at MAX_SEG has a constant length while it is
+        // still moving perfectly well - its oldest cell drops as a new one is pushed - so a
+        // length-based check flags healthy runs as frozen. That mistake was in the first version of
+        // this test, and it passed only incidentally: the width guard happened to clear every run, so
+        // all four lengths reset and grew again.
+        let before: Vec<Vec<Cell>> = fam.runs.iter().map(|r| r.seg.clone()).collect();
+        for k in 0..200 {
+            fam.draw(&mut narrow, &t, &frame(0.62, 6.0 + k as f32 * 0.0167));
+        }
+
+        // Every run must still be inside the lattice, and every run must still be moving.
+        let nx = ((330 - 6) as f32 / (fit_to(60).unwrap().f / Z_NEAR)).floor() as i32;
+        let nz = fit_to(60).unwrap().nz;
+        for (i, run) in fam.runs.iter().enumerate() {
+            assert!(
+                Run::inside(run.at, nx, nz),
+                "run {i} is stranded at x={} with only {nx} columns",
+                run.at.x
+            );
+            for cell in &run.seg {
+                assert!(
+                    (0..nx).contains(&cell.x),
+                    "run {i} has a segment at x={} outside 0..{nx}",
+                    cell.x
+                );
+            }
+        }
+        let after: Vec<Vec<Cell>> = fam.runs.iter().map(|r| r.seg.clone()).collect();
+        let frozen: Vec<usize> = after
+            .iter()
+            .zip(before.iter())
+            .enumerate()
+            .filter(|(_, (a, b))| a == b)
+            .map(|(i, _)| i)
+            .collect();
+        assert!(
+            frozen.is_empty(),
+            "runs {frozen:?} were byte-identical over 200 frames - a stranded run cannot recover, so it stays that way for the rest of the session"
+        );
     }
 
     /// A resize that SHALLOWS the lattice must not leave cells pointing at depth planes that no longer
