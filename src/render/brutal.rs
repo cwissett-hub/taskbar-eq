@@ -20,6 +20,27 @@
 //! the slam is free. It does mean the peak-hold marks are anchored to each block's own base rather than to
 //! a fixed panel row; anchored to a row they would appear to leap the panel's height on every beat.
 //!
+//! # Dust and cracks: the concrete has to behave like concrete
+//!
+//! A slab slamming into the floor with nothing coming off it reads as a rectangle changing size. So each
+//! flip throws DUST from the surface it hits, and every block carries a few static CRACKS.
+//!
+//! The dust is ejected AWAY from the impacted surface while gravity always pulls down, which makes the two
+//! states behave differently without any special-casing: a floor slam arcs up and falls back, and a
+//! ceiling slam simply rains down. That asymmetry is the physics doing the work, and it also tells the eye
+//! which state the panel is in during the moment the blocks themselves are still moving.
+//!
+//! The cracks are STATIC per block and derived from the block's index, not from a per-frame random. A
+//! crack that moved would be noise, and noise is the one thing a family this flat cannot absorb.
+//!
+//! They are coloured toward the BACKGROUND rather than simply darker, so they read as the panel showing
+//! through a fissure. That also keeps them legible at the PEAK of the monolith flourish, where the body
+//! becomes the panel colour exactly and a merely-darker crack would collapse into it. To be precise about
+//! how much that is worth: a darker crack is fine for most of the envelope and only disappears at the
+//! instant slab reaches 1.0 - the background mix is the better choice because a crack SHOULD read as a
+//! gap and because its contrast is then constant across the whole inversion, not because the alternative
+//! is invisible throughout.
+//!
 //! # No glow, no gradient, no ornament
 //!
 //! `bloom` is 0 on every colourway here, the way the chroma family sets it to zero: a halo softens exactly
@@ -66,6 +87,54 @@ const LEVEL_GAMMA: f32 = 0.6;
 /// otherwise be nothing to flip.
 const STUB_PX: i32 = 3;
 
+/// The dust pool, and how many grains a block throws per slam at full drive.
+///
+/// Pooled and never reallocated: a grain leaving the panel is marked dead and reused, so the per-frame
+/// cost is constant and there is no allocation in the draw path. 120 is a hard ceiling that the emitter
+/// respects even at maximum drive, which matters because the flip fires one to three times a second and
+/// grains live for 420ms - so three bursts can be in the air at once.
+const MAX_DUST: usize = 120;
+const DUST_PER_BLOCK: usize = 3;
+
+/// How long a grain lives, in milliseconds.
+const DUST_MS: f32 = 420.0;
+
+/// Ejection speed away from the impacted surface, lateral spread, and gravity - all px/s, px/s and px/s^2.
+///
+/// The ejection speed is set by the arc it has to make: apex is `v^2 / 2g`, so at gravity 190 a grain
+/// needs 62px/s to rise about 10px. The first values tried were 30px/s, which is an apex of 2.4px - the
+/// grains hopped rather than flew and read as a shimmer at the base of the blocks rather than as debris.
+///
+/// Gravity is always DOWNWARD, which is what makes the two states differ for free: ejected up from the
+/// floor a grain arcs and falls back, ejected down from the ceiling it accelerates away.
+const DUST_EJECT: f32 = 62.0;
+const DUST_SPREAD: f32 = 40.0;
+const DUST_GRAV: f32 = 190.0;
+
+/// Cracks per block, how many steps each one takes, and how far its colour moves toward the background.
+///
+/// Two per block, because the point is a flaw in the concrete and not a texture: at 28px wide, four or
+/// more read as hatching.
+///
+/// FIVE steps with ONE kink, not three that zigzag. The first version stepped sideways on every other
+/// pixel, which at three pixels long is not a fissure but a chevron - on screen they read as small arrows
+/// stuck to the blocks. A crack is a mostly-straight line that jinks once, so the kink is at the midpoint
+/// and the rest is vertical.
+///
+/// The two cracks are also forced onto OPPOSITE sides of the block. Choosing each side at random meant
+/// both landed in the same corner often enough to look like a deliberate mark rather than damage.
+///
+/// Toward the BACKGROUND rather than toward black - see the module note - so it survives the inversion.
+const CRACKS_PER_BLOCK: u32 = 2;
+const CRACK_STEPS: i32 = 5;
+const CRACK_MIX: f32 = 0.55;
+
+/// How far a dust grain's colour moves toward the background.
+///
+/// Less than the cracks. A crack is a hole and wants to disappear into the background; a grain is lit
+/// concrete in mid-air and wants to be seen against it, so it stays nearer the block's own tone.
+const DUST_MIX: f32 = 0.30;
+
 /// The peak-hold cap's thickness in pixels.
 const CAP_PX: i32 = 2;
 
@@ -86,6 +155,17 @@ const SLAB_MS: f32 = 1100.0;
 const MIN_W: i32 = 60;
 const MIN_H: i32 = 18;
 
+/// One grain of concrete dust.
+#[derive(Clone, Copy, Default)]
+struct Dust {
+    x: f32,
+    y: f32,
+    vx: f32,
+    vy: f32,
+    age: f32,
+    live: bool,
+}
+
 #[derive(Default)]
 pub struct Brutal {
     onset: crate::dsp::onset::Flux,
@@ -93,6 +173,28 @@ pub struct Brutal {
     hanging: bool,
     flourish: crate::dsp::flourish::Trigger,
     slab: crate::dsp::flourish::Envelope,
+    /// The dust pool. Sized once on first use and reused thereafter - see `MAX_DUST`.
+    dust: Vec<Dust>,
+    /// Advanced on every emission, so consecutive slams throw different dust while any single slam is
+    /// reproducible from its seed.
+    seed: u32,
+}
+
+/// The value hash used for the dust spread and the crack placement.
+///
+/// The same one the other families use, so a given seed always produces the same debris and a golden
+/// render stays reproducible.
+fn hash32(mut x: u32) -> u32 {
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x7feb_352d);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x846c_a68b);
+    x ^= x >> 16;
+    x
+}
+
+fn rand01(seed: u32, n: u32) -> f32 {
+    hash32(seed ^ n.wrapping_mul(0x9e37_79b9)) as f32 / u32::MAX as f32
 }
 
 fn lerp(a: Rgba, b: Rgba, t: f32) -> Rgba {
@@ -102,6 +204,76 @@ fn lerp(a: Rgba, b: Rgba, t: f32) -> Rgba {
 }
 
 impl Brutal {
+    /// Throws dust from the surface the blocks just hit.
+    ///
+    /// `hanging` is the state being entered, so the surface is the ceiling when true and the floor when
+    /// false. Grains are spread across each block's own width rather than across the panel, because the
+    /// dust comes off the blocks and the gaps between them are empty air.
+    fn slam(&mut self, hanging: bool, x0: i32, bw: i32, fy: i32, fh: i32, drive: f32) {
+        if self.dust.len() != MAX_DUST {
+            self.dust = vec![Dust::default(); MAX_DUST];
+        }
+        // Scaled by level, so a heavy passage throws more debris. That is an EVENT scaled by level, not
+        // brightness standing in for one, so the house rule is intact.
+        let per = ((DUST_PER_BLOCK as f32) * (0.35 + 0.65 * drive.clamp(0.0, 1.0))).round() as usize;
+        if per == 0 {
+            return;
+        }
+        self.seed = self.seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let surface = if hanging { fy as f32 } else { (fy + fh - 1) as f32 };
+        let eject = if hanging { DUST_EJECT } else { -DUST_EJECT };
+        let mut next = 0usize;
+        for b in 0..BLOCKS {
+            let bx = x0 + b as i32 * (bw + GAP);
+            for g in 0..per {
+                // Reuse a dead slot. If the pool is full the grain is simply not thrown - a burst that
+                // silently dropped grains is better than one that grows the pool without bound.
+                let slot = loop {
+                    if next >= MAX_DUST {
+                        return;
+                    }
+                    let i = next;
+                    next += 1;
+                    if !self.dust[i].live {
+                        break i;
+                    }
+                };
+                let n = (b * 8 + g) as u32;
+                let across = rand01(self.seed, n * 3 + 1);
+                let sideways = rand01(self.seed, n * 3 + 2) * 2.0 - 1.0;
+                let lift = 0.55 + 0.45 * rand01(self.seed, n * 3 + 3);
+                self.dust[slot] = Dust {
+                    x: bx as f32 + across * bw as f32,
+                    y: surface,
+                    vx: sideways * DUST_SPREAD,
+                    vy: eject * lift,
+                    age: 0.0,
+                    live: true,
+                };
+            }
+        }
+    }
+
+    /// Advances every live grain by one frame and retires the ones that are finished.
+    fn drift(&mut self, secs: f32, fy: i32, fh: i32, w: i32) {
+        for g in self.dust.iter_mut().filter(|g| g.live) {
+            g.age += secs * 1000.0;
+            g.vy += DUST_GRAV * secs;
+            g.x += g.vx * secs;
+            g.y += g.vy * secs;
+            let gone = g.age >= DUST_MS
+                || !g.x.is_finite()
+                || !g.y.is_finite()
+                || g.x < 1.0
+                || g.x > (w - 2) as f32
+                || g.y < fy as f32
+                || g.y > (fy + fh - 1) as f32;
+            if gone {
+                g.live = false;
+            }
+        }
+    }
+
     /// The block grid: `(x of block 0, block width)`. `None` if the panel cannot hold the grid.
     fn grid(w: i32) -> Option<(i32, i32)> {
         let fw = w - 4;
@@ -138,9 +310,23 @@ impl Family for Brutal {
         }
         let dt = if d.dt_ms.is_finite() { d.dt_ms.clamp(0.0, 250.0) } else { 16.7 };
 
+        // The frame's overall level, for how much debris a slam throws. Windowed the same way every
+        // family here windows it - `vapor`'s measured p10-p90, because a raw 0..1 renders dead.
+        let mean = d.levels.iter().filter(|v| v.is_finite()).sum::<f32>() / d.levels.len().max(1) as f32;
+        let drive = ((mean - LEVEL_FLOOR) / LEVEL_SPAN).clamp(0.0, 1.0).powf(LEVEL_GAMMA);
+
+        // Existing grains advance BEFORE new ones are thrown, which is what makes "a fresh grain sits
+        // exactly on the impact surface" true rather than nearly true. Emitting first and then drifting
+        // put every new grain a pixel off the surface on the very frame it was born - the frame where the
+        // impact is supposed to read.
+        self.drift(dt / 1000.0, fy, fh, w);
+
         // ---- the flip ----
         if self.onset.update(&d.levels, dt, FLIP_RATIO, FLIP_REFRACTORY_MS) {
             self.hanging = !self.hanging;
+            // The slam. Thrown from the surface being ENTERED, so the dust and the blocks arrive
+            // together rather than the dust trailing the state it belongs to by a frame.
+            self.slam(self.hanging, x0, bw, fy, fh, drive);
         }
 
         // ---- the flourish ----
@@ -153,6 +339,10 @@ impl Family for Brutal {
         if slab > 0.0 {
             c.fill_rect(2, fy, w - 4, fh, Rgba::from_hex(&t.lit, slab));
         }
+        // What sits BEHIND the blocks right now. The cracks are mixed toward this rather than toward
+        // black, so they read as the panel showing through and survive the inversion - see the module
+        // note. Under the monolith this is the lit wash, which is exactly what a crack should show.
+        let background = lerp(dark, Rgba::from_hex(&t.lit, 1.0), slab);
         let bands = d.levels.len().max(1);
 
         for i in 0..BLOCKS {
@@ -199,11 +389,58 @@ impl Family for Brutal {
                 (fy + fh - len, fy + fh - cap_at.clamp(0, fh))
             };
             c.fill_rect(bx, by, bw, len, body);
+
+            // ---- the cracks ----
+            //
+            // Static per block, stepped diagonally, and anchored to the block's BASE - the end that does
+            // not move as the level changes. Anchored to the tip they would slide up and down with the
+            // music, which is the "moving crack reads as noise" failure the module note warns about.
+            //
+            // Clamped into the block's own drawn rectangle, so a stub three pixels tall gets a crack
+            // three pixels long rather than one hanging in the air beyond it.
+            let crack = lerp(body, background, CRACK_MIX);
+            for ci in 0..CRACKS_PER_BLOCK {
+                let n = i as u32 * 16 + ci * 4;
+                // Near an EDGE, which is where concrete actually fails: within the outer third of the
+                // block's width, on one side or the other.
+                // Alternating rather than random, so the pair never shares a corner - see CRACK_STEPS.
+                let side = ci % 2 == 0;
+                let inset = 1 + (rand01(0xC0FF_EE01, n + 2) * (bw as f32 / 3.0)) as i32;
+                let cx = if side { bx + inset } else { bx + bw - 1 - inset };
+                let along = (rand01(0xC0FF_EE01, n + 3) * (len as f32 * 0.5)) as i32;
+                let step_in = if side { 1 } else { -1 };
+                for k in 0..CRACK_STEPS.min(len) {
+                    // Grows AWAY from the base, and steps sideways every other pixel so the mark is a
+                    // stepped line rather than a straight one.
+                    let dy = along + k;
+                    let py = if self.hanging { by + dy } else { by + len - 1 - dy };
+                    let px = cx + if k >= CRACK_STEPS / 2 { step_in } else { 0 };
+                    if py < by || py >= by + len || px < bx || px >= bx + bw {
+                        continue;
+                    }
+                    c.fill_rect(px, py, 1, 1, crack);
+                }
+            }
+
             // The peak cap, anchored to THIS BLOCK'S BASE rather than to a panel row - see the module
             // note. Only drawn when the peak is genuinely ahead of the block, or it just thickens the tip.
             if cap_at > len + CAP_PX {
                 c.fill_rect(bx, cap_y.clamp(fy, fy + fh - CAP_PX), bw, CAP_PX, tip);
             }
+        }
+
+        // ---- the dust ----
+        //
+        // In FRONT of the blocks: it has come off them, so it passes over the concrete rather than
+        // behind it. A grain is one pixel and flat, like everything else here.
+        //
+        // Its colour is the block tone mixed most of the way to the background, which is the same
+        // relationship the cracks use - dust and cracks are the same material seen two ways, and pinning
+        // both to `background` means neither of them needs a special case for the inversion.
+        let grain_src = lerp(crate::render::tint(t, 0.5, d.time_s, false, &t.lit, 1.0), dark, slab);
+        let grain = lerp(grain_src, background, DUST_MIX);
+        for g in self.dust.iter().filter(|g| g.live) {
+            c.fill_rect(g.x as i32, g.y as i32, 1, 1, grain);
         }
 
         // No bloom. Every colourway here sets `bloom` to 0 and this family would ignore it anyway - see
@@ -421,6 +658,260 @@ mod tests {
         }
     }
 
+    /// Dust must come off the surface the blocks actually HIT, which is the whole physical claim: the
+    /// ceiling when they arrive hanging, the floor when they arrive standing.
+    ///
+    /// Asserted on the grain state rather than on pixels, because a grain is one pixel among concrete of
+    /// a similar tone and reading its position back off the canvas would mean inferring it from whatever
+    /// happened to be drawn there.
+    ///
+    /// Mutation: emit at a fixed row instead of `surface`, or drop the `hanging` term from it, and one
+    /// of the two directions fails.
+    #[test]
+    fn a_slam_throws_dust_from_the_surface_it_hits() {
+        let t = builtin::brutal_concrete();
+        let (fy, fh) = (3, 60 - 6);
+        let mut seen_floor = false;
+        let mut seen_ceiling = false;
+        let mut fam = Brutal::default();
+        let mut c = Canvas::new(380, 60);
+        for k in 0..400 {
+            let was = fam.hanging;
+            fam.draw(&mut c, &t, &beat_frame(k as f32 * 0.0167, 24, k, 0.8));
+            if fam.hanging == was {
+                continue;
+            }
+            // The frame it flipped on: the fresh grains are the ones with age 0.
+            let fresh: Vec<f32> =
+                fam.dust.iter().filter(|g| g.live && g.age <= 0.0).map(|g| g.y).collect();
+            if fresh.is_empty() {
+                continue;
+            }
+            let near_ceiling = fresh.iter().all(|y| *y < (fy + 4) as f32);
+            let near_floor = fresh.iter().all(|y| *y > (fy + fh - 5) as f32);
+            if fam.hanging {
+                assert!(
+                    near_ceiling,
+                    "arrived hanging but the dust came off rows {fresh:?}, not the ceiling"
+                );
+                seen_ceiling = true;
+            } else {
+                assert!(
+                    near_floor,
+                    "arrived standing but the dust came off rows {fresh:?}, not the floor"
+                );
+                seen_floor = true;
+            }
+        }
+        assert!(seen_floor && seen_ceiling, "never observed both slams: floor {seen_floor}, ceiling {seen_ceiling}");
+    }
+
+    /// Dust must SETTLE, and the pool must never grow. The flip fires one to three times a second and a
+    /// grain lives 420ms, so several bursts overlap - an emitter that leaked would grow without bound and
+    /// a pool that never retired grains would silently stop throwing new ones.
+    ///
+    /// Mutation: remove the `gone` retirement in `drift`, and the quiet tail keeps its grains forever.
+    #[test]
+    fn dust_settles_when_the_music_stops_and_the_pool_never_grows() {
+        let t = builtin::brutal_concrete();
+        let mut fam = Brutal::default();
+        let mut c = Canvas::new(380, 60);
+        let mut high_water = 0usize;
+        for k in 0..600 {
+            fam.draw(&mut c, &t, &beat_frame(k as f32 * 0.0167, 18, k, 0.95));
+            high_water = high_water.max(fam.dust.iter().filter(|g| g.live).count());
+            assert!(fam.dust.len() <= MAX_DUST, "the pool grew to {}", fam.dust.len());
+        }
+        assert!(high_water > 8, "barely any dust was ever thrown: {high_water}");
+
+        // Silence: no onsets, so no slams, so every grain must retire.
+        let quiet = FrameData { dt_ms: 16.7, ..FrameData::default() };
+        for _ in 0..120 {
+            fam.draw(&mut c, &t, &quiet);
+        }
+        let left = fam.dust.iter().filter(|g| g.live).count();
+        assert_eq!(left, 0, "{left} grains never settled");
+    }
+
+    /// A heavier passage throws more debris.
+    ///
+    /// Mutation: drop the `drive` term from `slam`'s per-block count.
+    #[test]
+    fn louder_music_throws_more_dust() {
+        let t = builtin::brutal_concrete();
+        let thrown = |gain: f32| -> usize {
+            let mut fam = Brutal::default();
+            let mut c = Canvas::new(380, 60);
+            let mut total = 0usize;
+            for k in 0..400 {
+                let before = fam.dust.iter().filter(|g| g.live).count();
+                fam.draw(&mut c, &t, &beat_frame(k as f32 * 0.0167, 24, k, gain));
+                let after = fam.dust.iter().filter(|g| g.live).count();
+                total += after.saturating_sub(before);
+            }
+            total
+        };
+        let quiet = thrown(0.30);
+        let loud = thrown(0.95);
+        assert!(quiet > 0, "the quiet run threw no dust at all");
+        assert!(loud > quiet, "dust did not scale with level: {quiet} quiet, {loud} loud");
+    }
+
+    /// The cracks must be STATIC and must stay INSIDE their block. A crack that moved would be noise,
+    /// which is the one thing a family this flat cannot absorb, and a crack outside its block would
+    /// appear as a speck floating in the gap.
+    ///
+    /// Driven with a genuinely constant level so no onset fires: no flip, so no dust, so two consecutive
+    /// frames must be byte-identical. That is a much stronger statement than checking crack pixels
+    /// individually, and it catches any per-frame jitter anywhere in the family.
+    ///
+    /// Mutation: seed the crack placement from `d.time_s` or from a running counter instead of the block
+    /// index, and the two frames stop matching.
+    #[test]
+    fn the_cracks_are_static_and_stay_inside_their_blocks() {
+        let t = builtin::brutal_concrete();
+        let mut fam = Brutal::default();
+        let (w, h) = (380, 60);
+        let mut c = Canvas::new(w, h);
+        // Dead flat LEVELS but ADVANCING TIME. Both halves matter: flat levels mean `Flux` sees no rise,
+        // so nothing flips and no dust is thrown, while advancing time is what makes the test able to
+        // fail. The first version of this test left `time_s` at 0.0 on every frame, and a mutation that
+        // seeded the crack placement from the clock passed it - because the clock never moved.
+        let flat = |t_s: f32| {
+            let mut d = FrameData { dt_ms: 16.7, time_s: t_s, ..FrameData::default() };
+            for v in d.levels.iter_mut() {
+                *v = 0.55;
+            }
+            d.peaks = d.levels;
+            d
+        };
+        for k in 0..60 {
+            fam.draw(&mut c, &t, &flat(k as f32 * 0.0167));
+        }
+        assert_eq!(fam.dust.iter().filter(|g| g.live).count(), 0, "a flat level threw dust");
+        let first: Vec<u32> = c.bits().to_vec();
+        for k in 60..64 {
+            fam.draw(&mut c, &t, &flat(k as f32 * 0.0167));
+            assert_eq!(c.bits(), &first[..], "the panel is not static under a constant level");
+        }
+
+        // Nothing may be drawn in the gaps between blocks.
+        let (x0, bw) = Brutal::grid(w).unwrap();
+        let dark = Rgba::from_hex(&t.panel, 1.0);
+        for i in 0..BLOCKS.saturating_sub(1) {
+            let gap_x = x0 + i as i32 * (bw + GAP) + bw;
+            for gx in gap_x..gap_x + GAP {
+                for gy in 3..h - 3 {
+                    let px = c.get(gx, gy);
+                    assert_eq!(
+                        (px.r, px.g, px.b),
+                        (dark.r, dark.g, dark.b),
+                        "something was drawn in the gap after block {i} at ({gx},{gy})"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The cracks must stay visible through the monolith, which inverts figure and ground. A crack mixed
+    /// toward BLACK rather than toward the background would vanish exactly when the blocks darken.
+    ///
+    /// Asserted as "a third tone exists inside the block": the body, the background and the peak cap are
+    /// all computable from the theme and the envelope, so anything else in the block's columns is a crack.
+    ///
+    /// DRIVEN WITH FLAT LEVELS, and that is the load-bearing part of the fixture. Two earlier versions of
+    /// this test were vacuous. The first counted pixels merely differing from the panel colour across the
+    /// whole block column, which the lit wash satisfies on its own above and below the block. The second
+    /// counted a third tone but drove the family with beats - so it was finding the DUST, and it passed
+    /// with the cracks deleted outright. Flat levels mean no onset, so no flip, so no dust; the flourish
+    /// is forced, which works regardless of level. The dust count is asserted at zero so this cannot
+    /// quietly start measuring the wrong thing again.
+    ///
+    /// Mutation: replace `background` with `dark` in the crack colour, or delete the crack loop. Both
+    /// leave only the body and the background inside the block.
+    #[test]
+    fn the_cracks_survive_the_inversion() {
+        let t = builtin::brutal_concrete();
+        let (w, h) = (380, 60);
+        let (x0, bw) = Brutal::grid(w).unwrap();
+        let dark = Rgba::from_hex(&t.panel, 1.0);
+        let lit = Rgba::from_hex(&t.lit, 1.0);
+
+        let flat = |t_s: f32| {
+            let mut d = FrameData { dt_ms: 16.7, time_s: t_s, ..FrameData::default() };
+            for v in d.levels.iter_mut() {
+                *v = 0.55;
+            }
+            d.peaks = d.levels;
+            d
+        };
+
+        // Tones in the first block's columns that the family did not compute for the body, the
+        // background or the cap - i.e. the cracks.
+        let third_tones = |c: &Canvas, slab: f32| -> usize {
+            let body = lerp(lit, dark, slab);
+            let background = lerp(dark, lit, slab);
+            let cap = lerp(Rgba::from_hex(&t.hot, 1.0), dark, slab);
+            let mut others = std::collections::BTreeSet::new();
+            for x in x0..x0 + bw {
+                for y in 4..h - 4 {
+                    let px = c.get(x, y);
+                    let rgb = (px.r, px.g, px.b);
+                    if rgb == (body.r, body.g, body.b)
+                        || rgb == (background.r, background.g, background.b)
+                        || rgb == (cap.r, cap.g, cap.b)
+                    {
+                        continue;
+                    }
+                    others.insert(rgb);
+                }
+            }
+            others.len()
+        };
+
+        let mut fam = Brutal::default();
+        let mut c = Canvas::new(w, h);
+        for k in 0..60 {
+            fam.draw(&mut c, &t, &flat(k as f32 * 0.0167));
+        }
+        assert_eq!(
+            fam.dust.iter().filter(|g| g.live).count(),
+            0,
+            "dust is in the air, so this test would be measuring grains rather than cracks"
+        );
+        let at_rest = third_tones(&c, fam.slab.level());
+        assert!(at_rest > 0, "no crack tone was found at rest");
+
+        // Deep into the monolith, where the body has darkened most.
+        fam.flourish.force_next();
+        // AT THE PEAK, and only there. This is the instant the distinction is real: at slab 1.0 the body
+        // IS the panel colour, so a crack mixed toward black collapses into it, while one mixed toward the
+        // background is a mid tone between panel and lit. At slab 0.8 a black-mixed crack is still
+        // distinct from a not-yet-black body, so a test that took the best frame over the whole envelope
+        // could not tell the two apart - and did not.
+        let mut best = 0usize;
+        let mut deepest = 0.0f32;
+        for k in 60..120 {
+            fam.draw(&mut c, &t, &flat(k as f32 * 0.0167));
+            let slab = fam.slab.level();
+            assert_eq!(
+                fam.dust.iter().filter(|g| g.live).count(),
+                0,
+                "dust appeared during the monolith"
+            );
+            if slab > 0.995 {
+                best = best.max(third_tones(&c, slab));
+                deepest = deepest.max(slab);
+            }
+        }
+        assert!(deepest > 0.995, "the monolith never reached its peak: {deepest:.3}");
+        assert!(
+            best > 0,
+            "the cracks vanished under the inversion at slab {deepest:.2} - only the body and the \
+             background were left inside the block"
+        );
+    }
+
     /// Small panels shed, a hostile frame cannot poison anything, and the grid never paints outside the
     /// panel.
     #[test]
@@ -511,6 +1002,27 @@ mod tests {
             }
             write(format!("brutal-{}", t.id), &c);
         }
+        // Mid-slam, on the frame the dust is thrown, in both states - which is the thing to judge.
+        for hanging in [false, true] {
+            let t = builtin::brutal_concrete();
+            let mut fam = Brutal::default();
+            let mut c = Canvas::new(380, 60);
+            for k in 0..200 {
+                fam.draw(&mut c, &t, &beat_frame(k as f32 * 0.0167, 18, k, 0.9));
+            }
+            // Force the state, then slam into it so the dust is fresh.
+            fam.hanging = !hanging;
+            let mut k = 200;
+            while fam.hanging != hanging && k < 400 {
+                fam.draw(&mut c, &t, &beat_frame(k as f32 * 0.0167, 18, k, 0.9));
+                k += 1;
+            }
+            for j in 0..5 {
+                fam.draw(&mut c, &t, &beat_frame((k + j) as f32 * 0.0167, 18, (k + j) as usize, 0.9));
+            }
+            write(format!("brutal-slam-{}", if hanging { "ceiling" } else { "floor" }), &c);
+        }
+
         // Both states of the flip, side by side, which is the thing to judge.
         let t = builtin::brutal_concrete();
         for hanging in [false, true] {

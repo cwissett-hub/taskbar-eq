@@ -529,6 +529,18 @@ halo softens exactly the edges this family is about. Half the band count at doub
 subject is mass and a thin bar has none, and the 5px gaps do the work a keyline does elsewhere — at 1–2px
 a gap closes up under any halo and the blocks weld into one mass.
 
+**The concrete behaves like concrete.** A slab slamming into the floor with nothing coming off it reads as
+a rectangle changing size, so each flip throws **dust** from the surface it hits and every block carries a
+few static **cracks**. The dust is ejected *away* from the impacted surface while gravity always pulls
+down, which makes the two states differ with no special-casing: a floor slam arcs up and falls back, a
+ceiling slam simply rains down. That asymmetry is the physics doing the work, and it also tells the eye
+which state the panel is in while the blocks themselves are still moving.
+
+The cracks are static per block and derived from the block's index, never from a per-frame random — a
+crack that moved would be noise, and noise is the one thing a family this flat cannot absorb. They are
+coloured toward the *background* rather than simply darker, so they read as the panel showing through a
+fissure and stay legible at the peak of the monolith, where the body becomes the panel colour exactly.
+
 Perspective brings two hazards this project has already measured, and both are handled explicitly rather
 than hoped about. Depth planes must land on **distinct integer pixel rows** — at the vaporwave grid's
 tuned perspective, seven of sixteen collapsed onto two rows, which also silently disabled its occlusion,
