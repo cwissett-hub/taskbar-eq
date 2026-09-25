@@ -1166,6 +1166,42 @@ fn stress() -> Result<()> {
         let _ = win::media::poll_for_stress();
     }));
 
+    // The capture thread's default-device poll, newly throttled to once a
+    // second. Unlike the per-1k suspects above these are not per-call: a
+    // /1,000 scaling would be meaningless when "steady state" is one 10s loop
+    // and "reopen" is 20 start/stops, so these rows report the ABSOLUTE
+    // handle/thread growth across the run instead (the `iters` column says
+    // which). The question is the same: does capture leak? This path carries
+    // WASAPI device/client objects and, before the throttle, made two
+    // cross-process COM calls per packet, so it belongs in the leak hunt.
+    let cap = |name: &str, note: &str, mut f: Box<dyn FnMut() -> Result<()>>| {
+        let (h0, t0) = (win::health::handle_count(), win::health::thread_count());
+        let res = f();
+        // Same beat as `run`, so anything merely slow to be reclaimed is not
+        // reported as leaked.
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let (h1, t1) = (win::health::handle_count(), win::health::thread_count());
+        let d = |a: Option<u32>, b: Option<u32>| -> String {
+            match (a, b) {
+                (Some(a), Some(b)) => format!("{:+}", b as i64 - a as i64),
+                _ => "?".to_string(),
+            }
+        };
+        match res {
+            Ok(()) => log::write(&format!(
+                "  {name:<26} {note:>7} {:>11} {:>11} {:>9}",
+                d(h0, h1),
+                d(t0, t1),
+                "(abs)"
+            )),
+            Err(e) => log::write(&format!(
+                "  {name:<26} {note:>7}   no capture ({e}) - likely no audio device"
+            )),
+        }
+    };
+    cap("capture steady state", "10s", Box::new(|| win::capture::stress_steady(10)));
+    cap("capture reopen", "20x", Box::new(|| win::capture::stress_reopen(20)));
+
     log::write(
         "A leak of one handle per call reads as ~1000. NOTE: this machine has never shown the fault, and \
          the leading hypothesis needs an explorer.exe starved by a fullscreen game - so a clean sheet \

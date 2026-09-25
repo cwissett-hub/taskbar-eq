@@ -1,7 +1,9 @@
 use crate::dsp::bands::{BandMapper, FFT_SIZE, HOP, NUM_BANDS};
 use anyhow::Result;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// Capacity of the capture->render handoff queue. Bounded so a stalled
 /// consumer (a slow UI Automation call, a hung `pump_messages`, etc.) makes
@@ -251,6 +253,13 @@ mod tests {
     /// Every test that touches the process-global recorder holds `RECORDER_TEST_LOCK`, so parallel
     /// test threads cannot interleave with it.
     #[test]
+    fn device_poll_is_at_most_once_per_second() {
+        let t0 = std::time::Instant::now();
+        assert!(!should_poll_device(t0, t0 + std::time::Duration::from_millis(999)));
+        assert!(should_poll_device(t0, t0 + std::time::Duration::from_millis(1000)));
+    }
+
+    #[test]
     fn recorder_drains_and_collects_only_while_installed() {
         let _g = RECORDER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         record_stop();
@@ -351,6 +360,67 @@ const REQUESTED_BUFFER_DURATION_HNS: i64 = 2_000_000;
 /// from starting at all.
 const FALLBACK_BUFFER_DURATION_HNS: i64 = 10_000_000;
 
+/// True once at least one second has passed since the last default-device
+/// poll. Pure so it can be unit-tested without a clock.
+///
+/// The device-change detection in `capture_loop` used to run every spin of
+/// the loop: `GetDefaultAudioEndpoint(eRender, eConsole)` + `GetId()`, two
+/// cross-process COM calls into the audio service, up to ~250 times a second
+/// (once per WASAPI packet). That path was never in the resource-leak hunt.
+/// Throttling it to once a second cuts those calls by two-plus orders of
+/// magnitude; the cost is up to one second of latency detecting a default
+/// device change, which is fine - the reopen path already sleeps a full
+/// second between attempts, so this matches.
+pub fn should_poll_device(last: Instant, now: Instant) -> bool {
+    now.duration_since(last) >= Duration::from_secs(1)
+}
+
+/// Set by `--stress` to end a running `capture_loop` cleanly. Checked once a
+/// second alongside the device poll, so a stopped loop unwinds within a
+/// second. Normal runs never touch it - they end when the receiver is dropped
+/// or the default device changes.
+pub static STOP: AtomicBool = AtomicBool::new(false);
+
+/// Runs a single `capture_loop` on this thread with its own COM apartment and
+/// a live (undrained) receiver, so `--stress` can exercise the real capture
+/// and analysis path without a consumer. Returns whatever `capture_loop`
+/// returns - `Err` if capture never started (e.g. no audio device).
+fn stress_thread_once() -> Result<()> {
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED).ok();
+    }
+    let (tx, _rx) = frame_channel(QUEUE_CAPACITY);
+    // `_rx` stays in scope for the whole call, so `send_freshest` never sees
+    // the receiver as gone and never asks the loop to stop early; `STOP` is
+    // the only thing that ends it.
+    capture_loop(&tx)
+}
+
+/// `--stress` row helper: run one capture loop for `secs` seconds, then stop
+/// it cleanly and join. `Err` if capture never started.
+pub fn stress_steady(secs: u64) -> Result<()> {
+    STOP.store(false, Ordering::SeqCst);
+    let h = std::thread::spawn(stress_thread_once);
+    std::thread::sleep(Duration::from_secs(secs));
+    STOP.store(true, Ordering::SeqCst);
+    h.join().unwrap_or_else(|_| Err(anyhow::anyhow!("capture thread panicked")))
+}
+
+/// `--stress` row helper: start and cleanly stop a capture loop `n` times.
+/// `Err` on the first iteration that fails to start (e.g. no audio device).
+pub fn stress_reopen(n: u32) -> Result<()> {
+    for _ in 0..n {
+        STOP.store(false, Ordering::SeqCst);
+        let h = std::thread::spawn(stress_thread_once);
+        // A beat to let the loop open the device and enter its spin before we
+        // ask it to stop; the stop itself is noticed within a second.
+        std::thread::sleep(Duration::from_millis(50));
+        STOP.store(true, Ordering::SeqCst);
+        h.join().unwrap_or_else(|_| Err(anyhow::anyhow!("capture thread panicked")))?;
+    }
+    Ok(())
+}
+
 fn capture_loop(tx: &FrameSender) -> Result<()> {
     unsafe {
         let enumerator: IMMDeviceEnumerator =
@@ -400,17 +470,32 @@ fn capture_loop(tx: &FrameSender) -> Result<()> {
         // doesn't force an immediate reallocation.
         let mut ring: Vec<f32> = Vec::with_capacity(FFT_SIZE + HOP * 2);
         let mut frame = Frame::default();
+        let mut last_poll = Instant::now();
 
         loop {
-            // Bail out and let start() reopen us if the default device changed.
-            let current = enumerator
-                .GetDefaultAudioEndpoint(eRender, eConsole)
-                .and_then(|d| d.GetId())
-                .map(|s| pwstr_to_string_and_free(s))
-                .unwrap_or_default();
-            if current != device_id {
-                client.Stop()?;
-                return Ok(());
+            // Bail out and let start() reopen us if the default device changed
+            // - but at most once a second (see should_poll_device): the old
+            // code made two cross-process COM calls into the audio service
+            // (GetDefaultAudioEndpoint + GetId) on every packet, up to ~250
+            // times a second, a path that was never in the leak hunt. STOP is
+            // checked on the same cadence so --stress can end the loop
+            // cleanly.
+            let now = Instant::now();
+            if should_poll_device(last_poll, now) {
+                last_poll = now;
+                if STOP.load(Ordering::Relaxed) {
+                    client.Stop()?;
+                    return Ok(());
+                }
+                let current = enumerator
+                    .GetDefaultAudioEndpoint(eRender, eConsole)
+                    .and_then(|d| d.GetId())
+                    .map(|s| pwstr_to_string_and_free(s))
+                    .unwrap_or_default();
+                if current != device_id {
+                    client.Stop()?;
+                    return Ok(());
+                }
             }
 
             let avail = capture.GetNextPacketSize()?;
