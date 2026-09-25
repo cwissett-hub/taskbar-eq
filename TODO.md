@@ -3,7 +3,13 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** FOUR NEW FAMILIES and a bug that had been shipping a black screen. 150 colourways
+**Last updated:** SONG IDENTIFICATION SHIPS (v0.2.0). Press a key while anything plays and the banner
+names the song via Shazam; every find goes to `songs.jsonl`; Songs -> Song history opens a dark
+cyberpunk page with Spotify / Apple Music / YouTube / Shazam links. Live-tested: six seconds of Spotify
+off the loopback came back as "Earth Move Edit - Daire" on the first post. 660 tests green. The repo is
+now GPL-3 because the fingerprinting is a port of SongRec.
+
+Earlier: FOUR NEW FAMILIES and a bug that had been shipping a black screen. 150 colourways
 across 22 families, 619 tests green.
 
 KALEIDO, RAVE and BRUTAL are new, plus lightning for the blossom castle. The kaleidoscope is a FRIEZE and
@@ -118,6 +124,14 @@ closed; all nine flourishes done, review sheet written, README current.
 
 ## Open, unresolved
 
+- [ ] **Song-history "hide" is per-browser.** The page stores hidden songs in `localStorage`, so the
+      tray's Songs submenu still lists them, and a different browser shows them again. A native
+      Win32 history window would own that state properly; parked until you want it.
+- [ ] **Shazam's endpoint is undocumented.** When it changes, identification will say "no match"
+      and the log will carry the HTTP status and the first 200 bytes; the full last reply is in
+      `%APPDATA%\taskbar-eq\last_shazam.json`. Fallback would be ACRCloud or AudD behind the same
+      `Find` type.
+
 - [ ] **THE LEAK IS MEASURED NOW, AND IT IS NOT THE FAULT YOU REPORTED.** `--stress` hammers each
       suspect path and counts this process's own handles and threads. Two of six leak:
 
@@ -169,6 +183,22 @@ closed; all nine flourishes done, review sheet written, README current.
 ---
 
 ## Done
+
+### Song identification (v0.2.0)
+
+- **Identify Song hotkey slot (8th), Songs tray submenu, sticky "listening..." banner.** The
+  capture thread gained an optional recorder sink; `identify` runs on its own thread and posts at
+  4 / 8 / 12 s like SongRec. Spec: `docs/superpowers/specs/2026-09-25-song-identify-design.md`.
+- **Shazam signature generator** ported from SongRec (GPL-3, hence `LICENSE`), Hann window computed
+  not tabulated; encoder round-trips through a test-only port of SongRec's decoder.
+- **`songs.jsonl` store** (append-only, bad lines skipped) with distinct-recent and grouped views,
+  and per-service links that fall back to search URLs so every button always works.
+- **HTML history page** written to `%APPDATA%\taskbar-eq\songs.html`: search, sortable columns,
+  cover art, four link buttons per row, hide. Eyeballed via headless Chrome before commit.
+- **Live test** (`cargo test live_identify -- --ignored --nocapture`) drives Spotify, records off
+  the real loopback and posts to Shazam. Its first real reply is now the parser fixture, which is
+  how the Apple Music link turned out to be an Android `intent://` URI rather than the
+  `applemusicopen` action every sample shows.
 
 ### Correctness and performance
 

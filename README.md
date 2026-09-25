@@ -262,6 +262,20 @@ is still inference.** The watchdog stays either way.
 
 ---
 
+## Song identification
+
+Press the Identify key (bind it under **Songs** in the tray menu, or click **Identify this song
+now**) while anything plays - a browser video, a Discord call, a game - and the banner names the
+song. It says "listening..." while it records, then "Title - Artist", or "no match" after about
+twelve seconds. Every find is appended to `%APPDATA%\taskbar-eq\songs.jsonl`; **Songs -> Song
+history...** opens a page listing them with Spotify, Apple Music, YouTube and Shazam links, and the
+Songs submenu itself lists the last ten (click one to open it in Spotify).
+
+The fingerprinting is a port of [SongRec](https://github.com/marin-m/SongRec)'s Shazam signature
+code, which is why this repository is licensed under the GPL-3 (see `LICENSE`). It uses Shazam's
+undocumented endpoint, so it can stop working without notice; when it does, the last raw reply is
+in `last_shazam.json` beside the log.
+
 ## Configuration
 
 `%APPDATA%\taskbar-eq\config.toml`, written whenever a setting changes and openable from the tray

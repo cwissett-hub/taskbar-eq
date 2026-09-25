@@ -115,6 +115,29 @@ fn s(v: &Value) -> Option<String> {
     v.as_str().map(|x| x.to_string())
 }
 
+/// Shazam's Android build gets Apple Music as `intent://music.apple.com/<path>?i=<song>&<affiliate
+/// tail>#Intent;...;end`. Keep the host, the path and the song id; drop the scheme, the tracking
+/// parameters and the intent fragment. Returns `None` for anything that is not an Apple Music URL.
+fn apple_https(uri: &str) -> Option<String> {
+    let rest = uri
+        .strip_prefix("intent://")
+        .or_else(|| uri.strip_prefix("https://"))
+        .or_else(|| uri.strip_prefix("http://"))?;
+    if !rest.starts_with("music.apple.com/") {
+        return None;
+    }
+    let rest = rest.split('#').next().unwrap_or(rest);
+    let (path, query) = match rest.split_once('?') {
+        Some((p, q)) => (p, Some(q)),
+        None => (rest, None),
+    };
+    let song = query.and_then(|q| q.split('&').find(|kv| kv.starts_with("i=")));
+    Some(match song {
+        Some(kv) => format!("https://{path}?{kv}"),
+        None => format!("https://{path}"),
+    })
+}
+
 pub fn parse_reply(body: &str, now_unix: i64) -> Outcome {
     let v: Value = match serde_json::from_str(body) {
         Ok(v) => v,
@@ -155,9 +178,20 @@ pub fn parse_reply(body: &str, now_unix: i64) -> Outcome {
         for o in opts {
             if let Some(acts) = o["actions"].as_array() {
                 for a in acts {
-                    if a["type"] == "applemusicopen" {
-                        apple = apple.or_else(|| s(&a["uri"]));
+                    if a["name"] == "hub:applemusic:deeplink" || a["type"] == "applemusicopen" {
+                        apple = apple.or_else(|| s(&a["uri"]).and_then(|u| apple_https(&u)));
                     }
+                }
+            }
+        }
+    }
+    if apple.is_none() {
+        // No deeplink: the play action carries the Apple "adam id" of the song, and Apple Music
+        // resolves a bare song id.
+        if let Some(acts) = track["hub"]["actions"].as_array() {
+            for a in acts {
+                if a["type"] == "applemusicplay" {
+                    apple = s(&a["id"]).map(|id| format!("https://music.apple.com/us/song/{id}"));
                 }
             }
         }
@@ -209,24 +243,46 @@ mod tests {
         let Outcome::Match(f) = parse_reply(&fixture("shazam_match.json"), 1_700_000_000) else {
             panic!("expected a match");
         };
-        assert_eq!(f.title, "Resonance");
-        assert_eq!(f.artist, "HOME");
-        assert_eq!(f.album.as_deref(), Some("Odyssey"));
-        assert_eq!(f.shazam_key, "5933917");
-        assert_eq!(f.isrc.as_deref(), Some("QZDA61474185"));
+        // Real reply captured from the live test on 2026-09-25 (see tests/fixtures/identify).
+        assert_eq!(f.title, "Earth Move Edit");
+        assert_eq!(f.artist, "Daire");
+        assert_eq!(f.album.as_deref(), Some("Earth Move Edit - Single"));
+        assert_eq!(f.shazam_key, "706755100");
+        assert_eq!(f.isrc.as_deref(), Some("GBARL2400962"));
         assert_eq!(f.when, 1_700_000_000);
         assert!(f.cover_url.as_deref().unwrap().starts_with("https://is1-ssl"));
-        assert_eq!(f.shazam_url.as_deref(), Some("https://www.shazam.com/track/5933917/resonance"));
-        assert!(f.apple_music_url.as_deref().unwrap().starts_with("https://music.apple.com/"));
+        assert_eq!(
+            f.shazam_url.as_deref(),
+            Some("https://www.shazam.com/track/706755100/earth-move-edit")
+        );
+        // Shazam's Android client gets an `intent://music.apple.com/...#Intent;...` deeplink with
+        // a tail of affiliate parameters. What we keep is a plain https URL to the track.
+        assert_eq!(
+            f.apple_music_url.as_deref(),
+            Some("https://music.apple.com/us/album/earth-move-edit/1756047486?i=1756047492")
+        );
         // A search deeplink is not a track link; it must not be reported as one.
         assert_eq!(f.spotify_uri, None);
         assert_eq!(f.app_version, env!("CARGO_PKG_VERSION"));
     }
 
     #[test]
+    fn apple_intent_uris_become_plain_track_links() {
+        assert_eq!(
+            apple_https("intent://music.apple.com/us/album/x/1?i=2&mttn=3#Intent;scheme=http;end").as_deref(),
+            Some("https://music.apple.com/us/album/x/1?i=2")
+        );
+        assert_eq!(
+            apple_https("https://music.apple.com/gb/album/x/1").as_deref(),
+            Some("https://music.apple.com/gb/album/x/1")
+        );
+        assert_eq!(apple_https("https://play.google.com/store/apps"), None);
+    }
+
+    #[test]
     fn spotify_track_uri_is_kept_when_present() {
         let body = fixture("shazam_match.json")
-            .replace("spotify:search:Resonance%20HOME", "spotify:track:0Zxu4C6zA6Qw6Xy");
+            .replace("spotify:search:Earth%20Move%20Edit%20Daire", "spotify:track:0Zxu4C6zA6Qw6Xy");
         let Outcome::Match(f) = parse_reply(&body, 0) else { panic!() };
         assert_eq!(f.spotify_uri.as_deref(), Some("spotify:track:0Zxu4C6zA6Qw6Xy"));
     }

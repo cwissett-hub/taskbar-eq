@@ -178,6 +178,42 @@ mod tests {
         assert_eq!(got.unwrap().1.len(), 10);
     }
 
+    /// The whole pipeline against the real loopback device and the real Shazam endpoint, with
+    /// Spotify as the reference audio (started if paused, and paused again afterwards). Run with
+    /// `cargo test live_identify -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn live_identify_via_shazam() {
+        use crate::win::media::{self, Action, Backend, Status};
+        let (id, status) = media::probe().expect("Spotify media session");
+        eprintln!("spotify session {id:?}: {status:?}");
+        let started = !matches!(status, Status::Playing);
+        if started {
+            media::send(Action::PlayPause, Backend::Session).expect("play");
+            std::thread::sleep(Duration::from_secs(3));
+        }
+        let _rx = crate::win::capture::start();
+        crate::win::capture::record_start();
+        let got = wait_for_samples(Duration::from_secs(12), 6.0, crate::win::capture::record_snapshot);
+        crate::win::capture::record_stop();
+        if started {
+            let _ = media::send(Action::PlayPause, Backend::Session);
+        }
+        let (rate, buf) = got.expect("no audio arrived from the capture thread");
+        eprintln!("recorded {:.1}s @ {rate} Hz", buf.len() as f32 / rate as f32);
+        let sig = Signature::from_mono_16k(&resample_to_16k(&buf, rate));
+        let peaks: usize = sig.bands.iter().map(|b| b.len()).sum();
+        eprintln!("signature: {peaks} peaks, {} ms", sig.sample_ms());
+        match shazam::recognize(&sig) {
+            Outcome::Match(f) => eprintln!(
+                "MATCH: {} - {} [{}] key={} spotify={:?} apple={:?}",
+                f.title, f.artist, f.album.as_deref().unwrap_or("-"), f.shazam_key, f.spotify_uri, f.apple_music_url
+            ),
+            Outcome::NoMatch => panic!("Shazam: no match"),
+            Outcome::Error(e) => panic!("Shazam: {e}"),
+        }
+    }
+
     #[test]
     fn busy_flag_blocks_a_second_run_and_clears_after() {
         assert!(try_begin());
