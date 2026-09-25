@@ -71,6 +71,8 @@ pub struct Banner {
     mask: TextMask,
     /// Milliseconds since it appeared.
     age: f32,
+    /// Holds at full opacity until replaced, for "listening..." which has no known duration.
+    sticky: bool,
 }
 
 impl Banner {
@@ -78,13 +80,25 @@ impl Banner {
     pub fn new(text: &str, interior_h: i32) -> Option<Banner> {
         let px = ((interior_h as f32 * TEXT_FRACTION).round() as i32).clamp(9, 22);
         let mask = render_text(text, px)?;
-        Some(Banner { mask, age: 0.0 })
+        Some(Banner { mask, age: 0.0, sticky: false })
+    }
+
+    /// A banner that rises and then holds until something replaces it.
+    pub fn new_sticky(text: &str, interior_h: i32) -> Option<Banner> {
+        let mut b = Banner::new(text, interior_h)?;
+        b.sticky = true;
+        Some(b)
     }
 
     /// Advances time. Returns false once it has finished and should be dropped.
     pub fn advance(&mut self, dt_ms: f32) -> bool {
         let dt = if dt_ms.is_finite() { dt_ms.clamp(0.0, 250.0) } else { 16.0 };
         self.age += dt;
+        if self.sticky {
+            // Parked at the top of the rise: opacity() reads that as the hold, i.e. 1.0, forever.
+            self.age = self.age.min(RISE_MS);
+            return true;
+        }
         self.age < RISE_MS + HOLD_MS + FALL_MS
     }
 
@@ -380,5 +394,14 @@ mod tests {
                 b.draw(&mut c, &theme, 1.0);
             }
         }
+    }
+
+    #[test]
+    fn sticky_banner_never_expires_and_stays_opaque() {
+        let mut b = Banner::new_sticky("listening...", 40).unwrap();
+        for _ in 0..1000 {
+            assert!(b.advance(250.0));
+        }
+        assert!((b.opacity() - 1.0).abs() < 1e-6);
     }
 }

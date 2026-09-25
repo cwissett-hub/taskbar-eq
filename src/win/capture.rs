@@ -99,6 +99,44 @@ pub enum TryRecvError {
     Disconnected,
 }
 
+/// An optional second sink for the mono stream: while installed, every chunk the capture loop
+/// downmixes is also appended here, so `identify` can take a few seconds of audio without owning
+/// a device of its own. `None` costs one uncontended `try_lock` per chunk.
+struct Recorder {
+    rate: u32,
+    buf: Vec<f32>,
+}
+
+static RECORDER: std::sync::Mutex<Option<Recorder>> = std::sync::Mutex::new(None);
+
+fn recorder_lock() -> std::sync::MutexGuard<'static, Option<Recorder>> {
+    RECORDER.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Installs an empty recorder. Thirteen seconds at 48 kHz is the most `identify` ever asks for.
+pub fn record_start() {
+    *recorder_lock() = Some(Recorder { rate: 0, buf: Vec::with_capacity(48_000 * 13) });
+}
+
+pub fn record_stop() {
+    *recorder_lock() = None;
+}
+
+/// A copy of what has arrived so far, with the device's sample rate (0 until the first chunk).
+pub fn record_snapshot() -> Option<(u32, Vec<f32>)> {
+    recorder_lock().as_ref().map(|r| (r.rate, r.buf.clone()))
+}
+
+/// Called by the capture loop. `try_lock` so the audio thread never waits on a snapshot clone.
+pub fn record_push(rate: u32, mono: &[f32]) {
+    if let Ok(mut g) = RECORDER.try_lock() {
+        if let Some(r) = g.as_mut() {
+            r.rate = rate;
+            r.buf.extend_from_slice(mono);
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Frame {
     pub bands: [f32; NUM_BANDS],
@@ -198,6 +236,23 @@ mod tests {
         let (l, r) = channel_rms(&src, 2);
         assert!((l - 1.0).abs() < 1e-6, "left {l}");
         assert!(r.abs() < 1e-6, "right {r}");
+    }
+
+    /// The ONLY test that touches the process-global recorder, so parallel test threads cannot
+    /// interleave with it.
+    #[test]
+    fn recorder_collects_only_while_installed() {
+        record_stop();
+        record_push(48_000, &[0.1, 0.2]);
+        assert!(record_snapshot().is_none(), "nothing installed, nothing kept");
+        record_start();
+        record_push(48_000, &[0.1, 0.2]);
+        record_push(48_000, &[0.3]);
+        let (rate, buf) = record_snapshot().unwrap();
+        assert_eq!(rate, 48_000);
+        assert_eq!(buf, vec![0.1, 0.2, 0.3]);
+        record_stop();
+        assert!(record_snapshot().is_none());
     }
 }
 
@@ -367,7 +422,9 @@ fn capture_loop(tx: &FrameSender) -> Result<()> {
             frame.rms_l = l;
             frame.rms_r = r;
             frame.rms = ((l * l + r * r) * 0.5).sqrt();
-            ring.extend_from_slice(&interleaved_to_mono(slice, channels));
+            let mono = interleaved_to_mono(slice, channels);
+            record_push(rate as u32, &mono);
+            ring.extend_from_slice(&mono);
 
             capture.ReleaseBuffer(frames)?;
 
