@@ -25,14 +25,18 @@
 //!   the short one, and the two bands either side of the crossover (31 and
 //!   32 at 48 kHz) are a 50/50 blend of both in the dB-mapped domain.
 //! * Cadence: BOTH FFTs run on every `process` call. Measured (release,
-//!   `cost_of_process_per_call`, 1000 sliding-window calls on broadband
-//!   noise): 25 us per call for the whole of `process`, so an every-other
-//!   call cache would save ~10 us per 10 ms packet for a visible half-rate
-//!   flicker in the bass. Nothing is allocated after construction.
-//! * History: `process` takes a sliding window or a stream of chunks (see
-//!   `BandMapper::process`), dedups it against the last 8192 samples it
-//!   holds, and both FFTs read from that history. The capture thread's
-//!   ring is untouched.
+//!   `cost_of_process_per_call`, 1000 x push_history(480 samples) +
+//!   process on broadband noise): 17 us per call for both together, so an
+//!   every-other-call cache would save ~7 us per 10 ms packet for a
+//!   visible half-rate flicker in the bass. Nothing is allocated after
+//!   construction.
+//! * Two feeds. The capture thread calls `push_history(&fresh_packet)`
+//!   with each packet's NEW mono samples, which `BandMapper` keeps in an
+//!   8192-sample history for the long FFT, and then `process(&window,
+//!   out)` with the newest FFT_SIZE samples of its own ring, which the
+//!   short FFT analyses directly, exactly as before. Novelty is never
+//!   inferred from the window: processing the same window twice without
+//!   pushing leaves the bass reading unchanged.
 //!
 //! Known trade-offs, measured:
 //! * On broadband noise the long FFT reads ~0.05 (about 3 dB of the 55 dB
@@ -60,8 +64,6 @@ pub const HOP: usize = 512;
 /// Second, longer FFT that resolves the log spacing below the crossover
 /// band (see the module header).
 pub const LOW_FFT_SIZE: usize = 8192;
-/// See [`BandMapper::new_sample_start`].
-const MIN_OVERLAP: usize = 16;
 const F_LOW: f32 = 40.0;
 const F_HIGH: f32 = 16_000.0;
 
@@ -242,8 +244,8 @@ pub struct BandMapper {
     high: Analyser,
     /// LOW_FFT_SIZE-point path: bands <= crossover.
     low: Analyser,
-    /// The newest LOW_FFT_SIZE mono samples ever fed in, oldest first.
-    /// Both paths analyse the tail of this buffer.
+    /// The newest LOW_FFT_SIZE mono samples given to [`Self::push_history`],
+    /// oldest first; the long FFT's input.
     history: Vec<f32>,
     /// See [`crossover_band`]; 32 at 48 kHz, 31 at 44.1 kHz.
     crossover: usize,
@@ -268,18 +270,33 @@ impl BandMapper {
         }
     }
 
-    /// Feeds `mono` (any length; newest sample last) and writes normalised
-    /// 0.0..=1.0 levels for the newest audio seen so far.
+    /// Appends fresh mono samples to the long FFT's history, dropping the
+    /// oldest. Call it with each capture packet's NEW samples (never with
+    /// an analysis window - that would stack overlapping copies), then call
+    /// [`Self::process`]. A run of zeros is just zeros: a paused player
+    /// flushes the bass within LOW_FFT_SIZE samples.
+    pub fn push_history(&mut self, fresh: &[f32]) {
+        // Only the newest LOW_FFT_SIZE samples can ever matter.
+        let fresh = &fresh[fresh.len().saturating_sub(LOW_FFT_SIZE)..];
+        if fresh.is_empty() {
+            return;
+        }
+        let keep = LOW_FFT_SIZE - fresh.len();
+        self.history.copy_within(fresh.len().., 0);
+        self.history[keep..].copy_from_slice(fresh);
+    }
+
+    /// `mono` must be exactly FFT_SIZE samples - the newest window of the
+    /// stream whose fresh samples have been given to [`Self::push_history`].
+    /// Writes normalised 0.0..=1.0 levels: bands below the crossover from
+    /// the long FFT over the history, the rest from the short FFT over
+    /// `mono`.
     ///
-    /// `mono` may be a fresh chunk of new samples (streaming, e.g. HOP-sized
-    /// chunks) OR a sliding window that overlaps what was fed last time
-    /// (the capture thread passes the newest FFT_SIZE samples of its ring on
-    /// every packet). Either way only the genuinely new samples are appended
-    /// to the history - see [`Self::new_sample_start`] for how the overlap is
-    /// found. Until FFT_SIZE samples have been seen the analysis runs
-    /// against leading zeros.
+    /// # Panics
+    ///
+    /// Panics (in both debug and release builds) if `mono.len() != FFT_SIZE`.
     pub fn process(&mut self, mono: &[f32], out: &mut [f32; NUM_BANDS]) {
-        self.push_history(mono);
+        assert_eq!(mono.len(), FFT_SIZE, "BandMapper::process requires exactly FFT_SIZE samples");
 
         let c = self.crossover;
         // Bands 0..=c from the long FFT, bands c-1.. from the short FFT, so
@@ -289,7 +306,7 @@ impl BandMapper {
         let mut mags = [0.0f32; NUM_BANDS];
         self.low.magnitudes(&self.history, 0..c + 1, &mut mags);
         let low_pair = [mags[c - 1], mags[c]];
-        self.high.magnitudes(&self.history[LOW_FFT_SIZE - FFT_SIZE..], c - 1..NUM_BANDS, &mut mags);
+        self.high.magnitudes(mono, c - 1..NUM_BANDS, &mut mags);
 
         for b in 0..NUM_BANDS {
             out[b] = db_map(mags[b], b);
@@ -300,79 +317,6 @@ impl BandMapper {
         out[c - 1] = 0.5 * out[c - 1] + 0.5 * db_map(low_pair[0], c - 1);
         out[c] = 0.5 * out[c] + 0.5 * db_map(low_pair[1], c);
         let _ = self.sample_rate;
-    }
-
-    /// Appends the new samples in `mono` to `history`, dropping the oldest.
-    fn push_history(&mut self, mono: &[f32]) {
-        // Only the newest LOW_FFT_SIZE samples can ever matter.
-        let mono = &mono[mono.len().saturating_sub(LOW_FFT_SIZE)..];
-        let fresh = &mono[self.new_sample_start(mono)..];
-        if fresh.is_empty() {
-            return;
-        }
-        let keep = LOW_FFT_SIZE - fresh.len();
-        self.history.copy_within(fresh.len().., 0);
-        self.history[keep..].copy_from_slice(fresh);
-    }
-
-    /// Index into `mono` of the first sample NOT already at the tail of
-    /// `history`, i.e. the length of the longest prefix of `mono` that
-    /// exactly (bitwise) equals a suffix of the history.
-    ///
-    /// The capture thread hands over a sliding window, not a stream: each
-    /// call brings the newest FFT_SIZE samples, of which only the last
-    /// packet (~480 at 48 kHz) is new. `process`'s signature carries no
-    /// "how many are new" hint and must not change, so the overlap is
-    /// recovered from the data: the window's leading part is a bitwise copy
-    /// of samples already in the history, and the longest such match is the
-    /// overlap. For a fresh chunk of a stream (tests, HOP chunks) no suffix
-    /// matches beyond coincidence and the whole chunk is new.
-    ///
-    /// Two deliberate consequences:
-    /// * an exactly repeated window (the capture ring did not move because
-    ///   the packet was flagged silent) appends nothing - the same stale
-    ///   window the FFT_SIZE path always re-analysed in that situation;
-    /// * digital silence (all zeros) is treated as ALL new when the whole
-    ///   window matches, so a paused player's zeros flush the history and
-    ///   the bass falls silent within LOW_FFT_SIZE samples instead of
-    ///   freezing on the last music. A partial zero run still dedups
-    ///   correctly because the non-zero audio in front of it pins the match.
-    ///
-    /// A spurious match needs `o` consecutive bitwise-equal f32s, which
-    /// real audio never produces beyond a sample or two; the only realistic
-    /// false positive is an exactly looping buffer (period <= window), and
-    /// that costs nothing visible because dropping whole periods of a
-    /// periodic signal leaves its spectrum unchanged.
-    ///
-    /// Overlaps shorter than `MIN_OVERLAP` are ignored: a chunk that starts
-    /// with a few zeros (a fade-in, the first sample of a sine) would
-    /// otherwise "match" the zero-filled history and lose those samples.
-    /// Capture packets are ~480 samples, so a genuine overlap is ~1568; the
-    /// only way a real overlap is under 16 is a stall that delivered almost
-    /// a whole window of new audio, and then 16 duplicated samples are the
-    /// lesser evil.
-    ///
-    /// Cost: one pass over the history tail comparing the first sample
-    /// (2048 f32 compares for a capture window) plus a full verify at each
-    /// candidate; candidates are rare for real audio, so a few thousand
-    /// compares per call against the FFTs' hundreds of thousands of flops.
-    fn new_sample_start(&self, mono: &[f32]) -> usize {
-        let n = mono.len();
-        if n == 0 {
-            return 0;
-        }
-        let first = mono[0];
-        let hist = &self.history;
-        for o in (MIN_OVERLAP..=n).rev() {
-            let start = LOW_FFT_SIZE - o;
-            if hist[start] == first && hist[start..] == mono[..o] {
-                if o == n && mono.iter().all(|&x| x == 0.0) {
-                    return 0;
-                }
-                return o;
-            }
-        }
-        0
     }
 }
 
@@ -390,6 +334,41 @@ mod tests {
         // log-spaced band index a frequency should land in
         let t = (freq / F_LOW).ln() / (F_HIGH / F_LOW).ln();
         ((t * NUM_BANDS as f32) as usize).min(NUM_BANDS - 1)
+    }
+
+    /// Mimics the capture thread: every packet's fresh samples go to
+    /// `push_history`, are appended to a ring, and the ring's newest
+    /// FFT_SIZE samples go to `process` once there are that many.
+    struct Stream {
+        m: BandMapper,
+        ring: Vec<f32>,
+        out: [f32; NUM_BANDS],
+    }
+
+    impl Stream {
+        fn new(rate: f32) -> Self {
+            Stream { m: BandMapper::new(rate), ring: Vec::new(), out: [0.0; NUM_BANDS] }
+        }
+
+        fn feed(&mut self, chunk: &[f32]) {
+            self.m.push_history(chunk);
+            self.ring.extend_from_slice(chunk);
+            if self.ring.len() >= FFT_SIZE {
+                let start = self.ring.len() - FFT_SIZE;
+                self.m.process(&self.ring[start..], &mut self.out);
+                self.ring.drain(..start);
+            }
+        }
+
+        fn feed_all(&mut self, sig: &[f32], chunk: usize) {
+            for c in sig.chunks(chunk) {
+                self.feed(c);
+            }
+        }
+
+        fn peak(&self) -> usize {
+            self.out.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1)).unwrap().0
+        }
     }
 
     #[test]
@@ -420,16 +399,14 @@ mod tests {
 
     #[test]
     fn a_bass_tone_peaks_low_and_a_treble_tone_peaks_high() {
-        let mut m = BandMapper::new(48_000.0);
-        let mut lo = [0.0f32; NUM_BANDS];
-        let mut hi = [0.0f32; NUM_BANDS];
-        m.process(&sine(80.0, 48_000.0, FFT_SIZE), &mut lo);
-        m.process(&sine(8000.0, 48_000.0, FFT_SIZE), &mut hi);
-        let peak = |a: &[f32; NUM_BANDS]| {
-            a.iter().enumerate().max_by(|x, y| x.1.partial_cmp(y.1).unwrap()).unwrap().0
-        };
-        assert!(peak(&lo) < NUM_BANDS / 3, "80Hz must land in the low third");
-        assert!(peak(&hi) > NUM_BANDS * 2 / 3, "8kHz must land in the high third");
+        // 80 Hz is below the crossover, so it needs the long FFT's history
+        // filled: stream it the way capture would.
+        let mut lo = Stream::new(48_000.0);
+        lo.feed_all(&sine(80.0, 48_000.0, LOW_FFT_SIZE), FFT_SIZE);
+        let mut hi = Stream::new(48_000.0);
+        hi.feed_all(&sine(8000.0, 48_000.0, FFT_SIZE), FFT_SIZE);
+        assert!(lo.peak() < NUM_BANDS / 3, "80Hz must land in the low third, got {}", lo.peak());
+        assert!(hi.peak() > NUM_BANDS * 2 / 3, "8kHz must land in the high third");
     }
 
     #[test]
@@ -458,9 +435,9 @@ mod tests {
         // capture thread would deliver it) so the Hann window is full of it.
         let bin_hz = 48_000.0 / LOW_FFT_SIZE as f32;
         let bin_aligned_bin0_freq = m.low.edges[0] as f32 * bin_hz;
-        for chunk in sine(bin_aligned_bin0_freq, 48_000.0, LOW_FFT_SIZE).chunks(FFT_SIZE) {
-            m.process(chunk, &mut out);
-        }
+        let mut st = Stream::new(48_000.0);
+        st.feed_all(&sine(bin_aligned_bin0_freq, 48_000.0, LOW_FFT_SIZE), FFT_SIZE);
+        let out = st.out;
         assert!(
             out[0] > 0.9,
             "a full-scale, bin-aligned tone in band 0 (0dB tilt offset there) \
@@ -503,31 +480,38 @@ mod tests {
     }
 
     #[test]
-    fn a_sliding_window_is_deduplicated_against_the_history() {
-        // The capture thread passes the newest FFT_SIZE samples of its ring
-        // on every packet: each call overlaps the previous one by all but
-        // ~480 samples. Feeding a 60 Hz tone that way must leave the history
-        // holding one clean copy of the signal - a naive "append everything"
-        // would stack overlapping copies and smear the low FFT.
-        let sig = sine(60.0, 48_000.0, LOW_FFT_SIZE + FFT_SIZE);
+    fn history_holds_exactly_the_samples_pushed() {
+        let sig = sine(60.0, 48_000.0, LOW_FFT_SIZE + 3 * 480);
         let mut m = BandMapper::new(48_000.0);
-        let mut out = [0.0f32; NUM_BANDS];
-        let mut end = FFT_SIZE;
-        while end <= sig.len() {
-            m.process(&sig[end - FFT_SIZE..end], &mut out);
-            end += 480;
+        for chunk in sig.chunks(480) {
+            m.push_history(chunk);
         }
-        let last_end = end - 480;
-        assert_eq!(&m.history[..], &sig[last_end - LOW_FFT_SIZE..last_end]);
+        assert_eq!(&m.history[..], &sig[sig.len() - LOW_FFT_SIZE..]);
 
-        // Digital silence after music flushes the history rather than
-        // freezing the bass on the last thing heard.
-        let zeros = vec![0.0f32; FFT_SIZE];
-        for _ in 0..(LOW_FFT_SIZE / FFT_SIZE + 1) {
-            m.process(&zeros, &mut out);
-        }
+        // A run of zeros is just zeros: digital silence after music flushes
+        // the history rather than freezing the bass on the last thing heard.
+        m.push_history(&vec![0.0f32; LOW_FFT_SIZE]);
         assert!(m.history.iter().all(|&x| x == 0.0));
+        let mut out = [0.0f32; NUM_BANDS];
+        m.process(&vec![0.0; FFT_SIZE], &mut out);
         assert!(out.iter().all(|&v| v < 1e-4), "silence must be flat, got {out:?}");
+    }
+
+    #[test]
+    fn processing_the_same_window_twice_does_not_move_the_bass() {
+        // The capture thread re-runs `process` on an unchanged window when a
+        // packet is flagged silent. Novelty must come only from
+        // `push_history`, so the second call must not double-count the
+        // window into the long FFT: every band, bass included, reads the
+        // same.
+        let mut st = Stream::new(48_000.0);
+        st.feed_all(&sine(60.0, 48_000.0, LOW_FFT_SIZE), 480);
+        let first = st.out;
+        let window: Vec<f32> = st.ring[st.ring.len() - FFT_SIZE..].to_vec();
+        let mut again = [0.0f32; NUM_BANDS];
+        st.m.process(&window, &mut again);
+        assert_eq!(first, again);
+        assert!(first[..st.m.crossover].iter().any(|&v| v > 0.5), "the 60 Hz tone must be visible: {first:?}");
     }
 
     /// Cost evidence for the module header. Run with
@@ -542,6 +526,7 @@ mod tests {
         let t = std::time::Instant::now();
         let mut end = FFT_SIZE;
         for _ in 0..calls {
+            m.push_history(&sig[end - 480..end]);
             m.process(&sig[end - FFT_SIZE..end], &mut out);
             end += 480;
             if end > sig.len() {
@@ -549,7 +534,7 @@ mod tests {
             }
         }
         let per_call = t.elapsed() / calls;
-        println!("process (sliding FFT_SIZE window, both FFTs): {per_call:?} per call");
+        println!("push_history(480) + process (both FFTs): {per_call:?} per call");
     }
 
     #[test]
@@ -721,12 +706,20 @@ mod tests {
             .collect()
     }
 
-    /// Streams `sig` through the mapper in HOP-sized chunks (the way the
-    /// brief specifies) and returns the loudest band of the LAST output.
+    /// Streams `sig` through a mapper in HOP-sized packets the way capture
+    /// does (push_history + process) and returns the loudest band of the
+    /// LAST output.
     fn peak_band(m: &mut BandMapper, sig: &[f32]) -> usize {
+        let mut ring: Vec<f32> = Vec::new();
         let mut out = [0.0; NUM_BANDS];
         for chunk in sig.chunks(HOP) {
-            m.process(chunk, &mut out);
+            m.push_history(chunk);
+            ring.extend_from_slice(chunk);
+            if ring.len() >= FFT_SIZE {
+                let start = ring.len() - FFT_SIZE;
+                m.process(&ring[start..], &mut out);
+                ring.drain(..start);
+            }
         }
         out.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1)).unwrap().0
     }
@@ -766,11 +759,8 @@ mod tests {
 
     #[test]
     fn constructs_and_processes_at_44_1k_without_panicking() {
-        let mut m = BandMapper::new(44_100.0);
-        let mut out = [0.0f32; NUM_BANDS];
-        for chunk in sine(100.0, 44_100.0, 44_100).chunks(HOP) {
-            m.process(chunk, &mut out);
-        }
-        assert!(out.iter().all(|v| v.is_finite()), "got {out:?}");
+        let mut st = Stream::new(44_100.0);
+        st.feed_all(&sine(100.0, 44_100.0, 44_100), HOP);
+        assert!(st.out.iter().all(|v| v.is_finite()), "got {:?}", st.out);
     }
 }

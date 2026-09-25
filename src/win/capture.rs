@@ -437,6 +437,9 @@ fn capture_loop(tx: &FrameSender) -> Result<()> {
             frame.rms = ((l * l + r * r) * 0.5).sqrt();
             let mono = interleaved_to_mono(slice, channels);
             record_push(rate as u32, &mono);
+            // Fresh samples only: the long-FFT history must never see the
+            // overlapping analysis window passed to `process` below.
+            mapper.push_history(&mono);
             ring.extend_from_slice(&mono);
 
             capture.ReleaseBuffer(frames)?;
