@@ -236,11 +236,31 @@ impl Registry {
     /// Applies all three bindings and logs what happened to each.
     pub fn apply_all(&mut self, texts: [&str; SLOTS]) -> [Outcome; SLOTS] {
         let mut reg = Win32Registrar { hwnd: self.hwnd };
+        self.apply_all_inner(&mut reg, texts)
+    }
+
+    /// Test-only seam: runs the exact same decision logic as `apply_all` against an injectable
+    /// `Registrar`, so "Use suggested keys" re-applying the SAME chords to every slot - the scenario
+    /// that regressed - can be exercised without a real `HWND`.
+    #[cfg(test)]
+    pub fn apply_all_with(&mut self, reg: &mut dyn Registrar, texts: [&str; SLOTS]) -> [Outcome; SLOTS] {
+        self.apply_all_inner(reg, texts)
+    }
+
+    fn apply_all_inner(&mut self, reg: &mut dyn Registrar, texts: [&str; SLOTS]) -> [Outcome; SLOTS] {
         let mut out = std::array::from_fn(|_| Outcome::Unbound);
         for (i, slot) in Slot::ALL.iter().enumerate() {
-            // Chords already accepted in THIS pass, so a duplicate inside one config file is caught.
-            let others: Vec<Chord> = self.live.iter().flatten().copied().collect();
-            let o = apply_one(&mut reg, *slot, texts[i], &others);
+            // Chords already accepted in THIS pass, EXCLUDING this slot's own previous chord:
+            // re-applying an unchanged binding must not be refused as a duplicate of itself, which is
+            // what made "Use suggested keys" kill every other key.
+            let others: Vec<Chord> = self
+                .live
+                .iter()
+                .enumerate()
+                .filter(|(j, _)| *j != Self::idx(*slot))
+                .filter_map(|(_, c)| *c)
+                .collect();
+            let o = apply_one(reg, *slot, texts[i], &others);
             self.live[Self::idx(*slot)] = match &o {
                 Outcome::Registered(c, _) => Some(*c),
                 _ => None,
@@ -249,6 +269,13 @@ impl Registry {
             out[i] = o;
         }
         out
+    }
+
+    /// Test-only constructor: builds a `Registry` with no real window, for use with
+    /// `apply_all_with` and a fake `Registrar`.
+    #[cfg(test)]
+    pub fn for_test() -> Self {
+        Registry { hwnd: HWND::default(), live: [None; SLOTS] }
     }
 
     /// Releases every registration. Called before the process exits so nothing is left held.
@@ -501,6 +528,45 @@ mod tests {
         assert!(!on_wm_hotkey(0));
         assert!(!on_wm_hotkey(99));
         assert!(!on_wm_hotkey(usize::MAX));
+    }
+
+    #[test]
+    fn apply_all_twice_keeps_every_binding_registered() {
+        // The regression: "Use suggested keys" calls apply_all with `live` already populated from
+        // the previous apply, and re-applies the SAME text to every slot. `others` must not include
+        // the slot's own previous chord, or every slot refuses itself as a duplicate.
+        let mut fake = FakeRegistrar::default();
+        let mut reg = Registry::for_test();
+        let texts: [&str; SLOTS] = [
+            "Win+Ctrl+Space",
+            "Win+Ctrl+Period",
+            "Win+Ctrl+Comma",
+            "Win+Ctrl+R",
+            "Win+Ctrl+C",
+            "Win+Ctrl+F",
+            "Win+Ctrl+T",
+            "Win+Ctrl+I",
+        ];
+        let first = reg.apply_all_with(&mut fake, texts);
+        assert!(first.iter().all(|o| o.is_working()), "{first:?}");
+        // Second pass with the SAME texts - what "Use suggested keys" does. Every slot must still work.
+        let second = reg.apply_all_with(&mut fake, texts);
+        assert!(second.iter().all(|o| o.is_working()), "second pass refused: {second:?}");
+    }
+
+    #[test]
+    fn apply_all_still_refuses_a_real_duplicate_between_two_slots() {
+        let mut fake = FakeRegistrar::default();
+        let mut reg = Registry::for_test();
+        let texts: [&str; SLOTS] =
+            ["Win+Ctrl+Space", "Win+Ctrl+Space", "", "", "", "", "", ""];
+        let out = reg.apply_all_with(&mut fake, texts);
+        assert!(out[0].is_working());
+        assert!(
+            matches!(out[1], Outcome::Refused(_, Reject::DuplicateOfOtherAction)),
+            "{:?}",
+            out[1]
+        );
     }
 
     #[test]
