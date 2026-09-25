@@ -327,6 +327,13 @@ pub struct Chroma {
 }
 
 impl Chroma {
+    /// A stripe's ink `dry` of the way toward `paper`, always opaque - see the starve loop in `draw`.
+    /// Mixed in linear light by `Rgba::lerp_linear`, the one mix implementation.
+    fn starve_mix(col: Rgba, paper: Rgba, dry: f32) -> Rgba {
+        let c = Rgba::lerp_linear(col, paper, dry);
+        Rgba::new(c.r, c.g, c.b, 255)
+    }
+
     /// How starved of ink stripe `i` of `n` is, 0..1, given the flourish's progress.
     ///
     /// Pure and separate from `draw` so the shape can be tested directly: that the patch crosses the whole
@@ -572,11 +579,7 @@ impl Family for Chroma {
             // geometry - which this family guarantees is zero-sum - is untouched.
             let dry = Self::starve_at(starve, i, n);
             if dry > 0.001 {
-                let paper = Rgba::from_hex(&t.panel, 1.0);
-                let mix = |a: u8, b: u8| -> u8 {
-                    (a as f32 + (b as f32 - a as f32) * dry).round() as u8
-                };
-                col = Rgba::new(mix(col.r, paper.r), mix(col.g, paper.g), mix(col.b, paper.b), 255);
+                col = Self::starve_mix(col, Rgba::from_hex(&t.panel, 1.0), dry);
             }
             for row in 0..fh {
                 // Halftone: a printed tone RAMP down the band, not a flat screen. Coverage
@@ -822,6 +825,15 @@ mod tests {
             );
             prev = cse;
         }
+    }
+
+    #[test]
+    fn a_half_starved_stripe_is_the_linear_mean_of_ink_and_paper() {
+        // Half way from white ink to black paper is 188 in linear light, not 128 - otherwise the
+        // starve dips dark on its way to paper. Always opaque, whatever the inputs' alpha.
+        let m = Chroma::starve_mix(Rgba::new(255, 255, 255, 255), Rgba::new(0, 0, 0, 255), 0.5);
+        assert!((186..=190).contains(&m.r), "got {}, expected ~188 (linear), not 128 (gamma)", m.r);
+        assert_eq!(m.a, 255);
     }
 
     #[test]

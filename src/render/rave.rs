@@ -152,8 +152,16 @@ const SPRING_STEP_S: f32 = 0.006;
 /// element on screen. The wash is also a saturated hue now rather than `hot` - see the draw code. That is
 /// the same trick the backlog notes for this family: flash the HUE and leave the luminance roughly alone,
 /// so the near-white beams punch through a violent colour instead of competing with a white sheet.
-const STROBE_KICK: f32 = 0.30;
-const STROBE_ACCENT: f32 = 0.62;
+///
+/// Then they came down AGAIN, from 0.30 and 0.62, when the canvas moved to linear-light blending.
+/// These are alphas, and an alpha-0.62 wash in linear light carries far more light than the same
+/// number did in gamma space: on the accent kick frenchcore's panel reached 2.26:1 against its own
+/// beams and strobe's 2.33:1 - the exact failure the paragraph above describes, back again. The new
+/// values are the old ones passed through the sRGB decode curve (0.62 -> 0.34, 0.30 -> 0.07), so the
+/// LIGHT the wash adds is what it was, then checked by eye against the pre-change dumps and by
+/// `the_accent_strobe_leaves_the_beams_readable` (worst colourway now 3.77:1, frenchcore).
+const STROBE_KICK: f32 = 0.07;
+const STROBE_ACCENT: f32 = 0.34;
 const ACCENT_EVERY: u32 = 4;
 const STROBE_MS: f32 = 95.0;
 
@@ -425,6 +433,23 @@ mod tests {
             *v = ((shape * wob) * gain).clamp(0.0, 1.0);
         }
         d
+    }
+
+    /// WCAG relative luminance of a pixel, from the same decode table the blend uses.
+    fn rel_lum(p: Rgba) -> f32 {
+        let d = Rgba::srgb_to_linear;
+        0.2126 * d(p.r) + 0.7152 * d(p.g) + 0.0722 * d(p.b)
+    }
+
+    /// (median, maximum) relative luminance over the panel interior: the median is the washed
+    /// panel - the beams are thin, so they never reach it - and the maximum is a beam core.
+    fn wash_and_core(c: &Canvas) -> (f32, f32) {
+        let mut ys: Vec<f32> = (4..c.height() - 4)
+            .flat_map(|y| (4..c.width() - 4).map(move |x| (x, y)))
+            .map(|(x, y)| rel_lum(c.get(x, y)))
+            .collect();
+        ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        (ys[ys.len() / 2], *ys.last().unwrap())
     }
 
     fn lit_count(c: &Canvas, t: &Theme) -> i32 {
@@ -726,6 +751,34 @@ mod tests {
             }
             let mins = frames as f32 * 16.7 / 60_000.0;
             println!("{name:<15} {:>7.1} kicks/min", n as f32 / mins);
+        }
+    }
+
+    /// The strobe wash must never swallow the beams. Measured on the accent kick - the brightest
+    /// wash the family produces - after 20 kicks at 200bpm, which is the frame `dump_rave` lands on
+    /// and where this regressed: when blending moved to linear light, an alpha-0.62 wash became a
+    /// flat sheet and the near-white beams were the lowest-contrast thing on screen (frenchcore
+    /// 2.26:1, strobe 2.33:1 at the old constants). The rule is the family's own: the beam core
+    /// must clear the colourway's contrast floor against the washed panel.
+    ///
+    /// Mutation: put STROBE_ACCENT back to 0.62 and frenchcore and strobe fail.
+    #[test]
+    fn the_accent_strobe_leaves_the_beams_readable() {
+        for t in builtin::all().into_iter().filter(|t| t.family == "rave") {
+            let mut fam = Rave::default();
+            let mut c = Canvas::new(380, 60);
+            for k in 0..361 {
+                fam.draw(&mut c, &t, &kick_frame(k as f32 * 0.0167, 18, k, 0.8));
+            }
+            assert_eq!(fam.kicks % ACCENT_EVERY, 0, "{}: frame 360 must be an accent kick", t.id);
+            assert!(fam.strobe > STROBE_KICK, "{}: the accent wash must be up on its own frame", t.id);
+            let (panel, core) = wash_and_core(&c);
+            let contrast = (core + 0.05) / (panel + 0.05);
+            assert!(
+                contrast >= t.contrast_floor,
+                "{}: at the accent kick the beam core ({core:.3}) only reaches {contrast:.2}:1 against the                  washed panel ({panel:.3}); the wash has swallowed the beams",
+                t.id
+            );
         }
     }
 

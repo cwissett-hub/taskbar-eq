@@ -138,14 +138,7 @@ impl Banner {
                 if p.a == 0 {
                     continue;
                 }
-                let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * k).round() as u8;
-                c.fill_rect(
-                    x,
-                    y,
-                    1,
-                    1,
-                    Rgba::new(mix(p.r, panel.r), mix(p.g, panel.g), mix(p.b, panel.b), p.a),
-                );
+                c.fill_rect(x, y, 1, 1, dim_toward(p, panel, k));
             }
         }
 
@@ -204,10 +197,27 @@ impl Banner {
     }
 }
 
+/// `p` pulled `k` of the way toward `panel` in linear light (`Rgba::lerp_linear`, the one mix
+/// implementation), keeping its own alpha.
+fn dim_toward(p: Rgba, panel: Rgba, k: f32) -> Rgba {
+    let c = Rgba::lerp_linear(p, panel, k);
+    Rgba::new(c.r, c.g, c.b, p.a)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::themes::builtin;
+
+    #[test]
+    fn dimming_toward_the_panel_happens_in_linear_light() {
+        // Half way from white to black is 188 in linear light, not 128; the meter behind the banner
+        // must dim by the light it loses, and its alpha must not move.
+        let d = dim_toward(Rgba::new(255, 255, 255, 200), Rgba::new(0, 0, 0, 255), 0.5);
+        assert!((186..=190).contains(&d.r), "got {}, expected ~188 (linear), not 128 (gamma)", d.r);
+        assert_eq!(d.a, 200, "alpha must be untouched");
+        assert_eq!(d, Rgba::lerp_linear(Rgba::new(255, 255, 255, 200), Rgba::new(0, 0, 0, 200), 0.5));
+    }
 
     fn lum(p: Rgba) -> f32 {
         0.2126 * p.r as f32 + 0.7152 * p.g as f32 + 0.0722 * p.b as f32

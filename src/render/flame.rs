@@ -611,11 +611,7 @@ impl Family for Flame {
                 if t.rainbow > 0.0 {
                     let frac = x as f32 / iw.max(1) as f32;
                     let hue = super::tint(t, frac, d.time_s, false, &t.lit, 1.0);
-                    let toward_white = v.clamp(0.0, 1.0).powf(1.6);
-                    let mix = |h: u8, w: u8| -> u8 {
-                        (h as f32 + (w as f32 - h as f32) * toward_white).round() as u8
-                    };
-                    col = Rgba::new(mix(hue.r, 255), mix(hue.g, 255), mix(hue.b, 255), col.a);
+                    col = toward_white(hue, v.clamp(0.0, 1.0).powf(1.6), col.a);
                 }
                 // Two alphas multiplied, and they do different jobs. The smoothstep is the EDGE - a tight
                 // anti-aliased boundary over `EDGE` of heat. The body term is the TRANSLUCENCY, rising
@@ -702,10 +698,27 @@ impl Family for Flame {
     }
 }
 
+/// `hue` pulled `k` of the way to white in linear light (`Rgba::lerp_linear`, the one mix
+/// implementation), carrying the ramp's own alpha `a`.
+fn toward_white(hue: Rgba, k: f32, a: u8) -> Rgba {
+    let c = Rgba::lerp_linear(hue, Rgba::new(255, 255, 255, 255), k);
+    Rgba::new(c.r, c.g, c.b, a)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::themes::builtin;
+
+    #[test]
+    fn a_rainbow_cell_burns_toward_white_in_linear_light() {
+        // Half way from a pure red to white: the red channel stays 255 and the others reach 188
+        // (the linear midpoint), not 128 - a gamma mix would leave the half-burnt cell a dull pink.
+        let c = toward_white(Rgba::new(255, 0, 0, 255), 0.5, 77);
+        assert_eq!(c.r, 255);
+        assert!((186..=190).contains(&c.g), "got {}, expected ~188 (linear), not 128 (gamma)", c.g);
+        assert_eq!(c.a, 77, "the ramp's alpha must be carried through");
+    }
 
     fn flat(level: f32) -> FrameData {
         let mut d = FrameData { dt_ms: 16.7, ..FrameData::default() };

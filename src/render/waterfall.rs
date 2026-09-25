@@ -178,33 +178,16 @@ pub(crate) fn ramp_stops(t: &Theme) -> Vec<(f32, Rgba)> {
     stops
 }
 
-/// Interpolates `stops` in STRAIGHT colour space.
+/// Interpolates `stops` in STRAIGHT colour space, in LINEAR light.
 ///
-/// Deliberately not premultiplied, mirroring `Canvas::sample_stops`' own note: with alpha falling
+/// This is `Canvas::sample_stops_rgba` - the one gradient sampler - not a second implementation.
+/// Straight rather than premultiplied for the reason the canvas sampler gives: with alpha falling
 /// to zero at the bottom of the ramp, interpolating premultiplied values would drag the colour
 /// toward black as it faded, so a red cell would go maroon on its way out instead of simply
-/// getting fainter. The canvas premultiplies on store.
+/// getting fainter. The canvas premultiplies on store. Positions must ascend (`ramp_stops` forces
+/// that).
 pub(crate) fn ramp_at(stops: &[(f32, Rgba)], x: f32) -> Rgba {
-    if stops.is_empty() {
-        return Rgba::TRANSPARENT;
-    }
-    if x <= stops[0].0 {
-        return stops[0].1;
-    }
-    let last = stops[stops.len() - 1];
-    if x >= last.0 {
-        return last.1;
-    }
-    for pair in stops.windows(2) {
-        let (p0, c0) = pair[0];
-        let (p1, c1) = pair[1];
-        if x >= p0 && x <= p1 {
-            let f = ((x - p0) / (p1 - p0).max(f32::EPSILON)).clamp(0.0, 1.0);
-            let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * f).round() as u8;
-            return Rgba::new(mix(c0.r, c1.r), mix(c0.g, c1.g), mix(c0.b, c1.b), mix(c0.a, c1.a));
-        }
-    }
-    last.1
+    Canvas::sample_stops_rgba(stops, x)
 }
 
 fn ramp_lut(t: &Theme) -> [Rgba; RAMP_STEPS] {
@@ -527,6 +510,17 @@ mod tests {
             }
         }
         best.1
+    }
+
+    #[test]
+    fn the_ramp_midpoint_is_the_linear_mean_of_its_stops() {
+        // `ramp_at` is the heat ramp every waterfall and flame cell is coloured from. Interpolating
+        // gamma codes put the midpoint of black and white at 128 - about 22% of the light - so the
+        // middle of every ramp sagged dark. In linear light it is 188.
+        let stops = [(0.0, Rgba::new(0, 0, 0, 255)), (1.0, Rgba::new(255, 255, 255, 255))];
+        let mid = ramp_at(&stops, 0.5);
+        assert!((186..=190).contains(&mid.r), "got {}, expected ~188 (linear), not 128 (gamma)", mid.r);
+        assert_eq!(mid, Canvas::sample_stops_rgba(&stops, 0.5), "the ramp must be the canvas sampler");
     }
 
     #[test]

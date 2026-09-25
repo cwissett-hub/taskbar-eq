@@ -917,6 +917,15 @@ impl Canvas {
         as_f32(stops[last].1)
     }
 
+    /// `sample_stops` rounded to an `Rgba`, for callers outside the canvas (the waterfall heat ramp,
+    /// and through it the flame) that want the same linear-light gradient sampler rather than a
+    /// second implementation.
+    pub fn sample_stops_rgba(stops: &[(f32, Rgba)], t: f32) -> Rgba {
+        let (r, g, b, a) = Self::sample_stops(stops, t);
+        let q = |v: f32| v.round().clamp(0.0, 255.0) as u8;
+        Rgba::new(q(r), q(g), q(b), q(a))
+    }
+
     /// Fills `[x, x+w) x [y, y+h)` with a vertical gradient through `stops`.
     /// Interpolated in straight colour space per scanline (see
     /// `sample_stops`), then premultiplied on store via `blend_px`.
