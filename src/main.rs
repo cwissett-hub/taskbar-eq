@@ -431,7 +431,7 @@ impl Ticker {
         // 5.5s. It matters more now than it did: with two drivers the real cadence varies, and
         // during an open menu it is nearer 31ms than 16ms.
         let opacity = self.gate.update(self.latest.rms, dt_ms.round() as u32);
-        self.smoother.update(&self.latest.bands);
+        self.smoother.update(&self.latest.bands, dt_ms);
 
         let t0 = std::time::Instant::now();
         // The shell part was decided above and returned early; what is left is whether the rect is
@@ -850,7 +850,7 @@ fn measure_levels() -> Result<()> {
             raw_peak = raw_peak.max(f.bands.iter().copied().fold(0.0f32, f32::max));
             raw_frames.push(f.bands);
             rms_seen.push(f.rms);
-            smoother.update(&f.bands);
+            smoother.update(&f.bands, 16.667);
             samples.push(*smoother.levels());
         }
         std::thread::sleep(std::time::Duration::from_millis(8));

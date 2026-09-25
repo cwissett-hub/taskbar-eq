@@ -718,7 +718,7 @@ mod tests {
                 for (j, v) in target.iter_mut().enumerate() {
                     *v = row.get(j).copied().unwrap_or(0.0);
                 }
-                sm.update(&target);
+                sm.update(&target, 16.667);
                 let lv = sm.levels();
                 if flux.update(&lv[..KICK_BANDS], 16.7, KICK_RATIO, KICK_REFRACTORY_MS) {
                     n += 1;

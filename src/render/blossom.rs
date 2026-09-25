@@ -1295,7 +1295,7 @@ mod tests {
             for (j, v) in target.iter_mut().enumerate() {
                 *v = row.get(j).copied().unwrap_or(0.0);
             }
-            sm.update(&target);
+            sm.update(&target, 16.667);
             let lv = sm.levels();
             if trig.update(&lv[..STRIKE_BASS_BANDS.min(nb)], 16.7, strength) {
                 fires += 1;
@@ -1709,7 +1709,7 @@ mod tests {
                         for (j, v) in target.iter_mut().enumerate() {
                             *v = row.get(j).copied().unwrap_or(0.0);
                         }
-                        sm.update(&target);
+                        sm.update(&target, 16.667);
                         let lv = sm.levels();
                         if trig.update(&lv[..bands.min(nb)], 16.7, strength) {
                             fires += 1;
