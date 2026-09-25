@@ -56,10 +56,11 @@ pub fn render(rows: &[Grouped]) -> String {
             shazam: songs::shazam_url(&g.find),
         })
         .collect();
-    // `</` -> `<\/` is the one escape that makes JSON safe inside a <script> block.
+    // Every `<` becomes `\u003c` (still valid JSON), so neither `</script>` nor `<!--<script` in a
+    // title can end or hijack the data block.
     let json = serde_json::to_string(&data)
         .unwrap_or_else(|_| "[]".into())
-        .replace("</", "<\\/");
+        .replace('<', "\\u003c");
     TEMPLATE
         .replace("/*DATA*/", &json)
         .replace("/*COUNT*/", &rows.len().to_string())
@@ -193,7 +194,20 @@ mod tests {
         let data_end = html[data_start..].find("</script>").unwrap() + data_start;
         let block = &html[data_start..data_end];
         assert!(!block.contains("</script>"));
-        assert!(block.contains("<\\/script>"));
+        assert!(block.contains("\\u003c/script"));
+    }
+
+    #[test]
+    fn a_comment_opener_in_a_title_cannot_swallow_the_page_script() {
+        // `<!--<script` puts the HTML parser into the "script data double escaped" state, after
+        // which the real `</script>` no longer closes the block and the page renders blank. No `<`
+        // may survive into the data block at all.
+        let html = render(&[row("<!--<script", "x")]);
+        let data_start = html.find("id=\"data\"").unwrap() + "id=\"data\"".len();
+        let data_end = html[data_start..].find("</script>").unwrap() + data_start;
+        let block = &html[data_start..data_end];
+        let json_start = block.find('>').unwrap() + 1;
+        assert!(!block[json_start..].contains('<'), "{block}");
     }
 
     /// Writes a sample page to target/eyeball/songs.html for a human (or a headless browser) to look

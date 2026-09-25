@@ -107,6 +107,7 @@ binding would quietly seize a chord machine-wide for every other program on the 
 | `random_colourway` | Another colourway of the family already showing |
 | `flourish` | Fire the current family's flourish now |
 | `flourish_toggle` | Flourishes on/off, persisted |
+| `identify_song` | Name the song currently playing, via Shazam (see Song identification) |
 
 **Binding one:** tray menu → the submenu → click the `…key:` line. A small **Set key** dialog opens,
 echoes the modifiers as you hold them, and commits on the first non-modifier key. `Esc` cancels,
@@ -293,7 +294,7 @@ refusing to start, so a partial file keeps working and a bad one cannot lock you
 | `media_backend` | `"session"` | `"session"` or `"media-keys"` — see Spotify transport above |
 | `show_track_name` | `true` | The track-change banner |
 | `flourishes` | `true` | Global on/off for flourishes, separate from each colourway's own rate |
-| `[hotkeys]` | all empty | `play_pause`, `next_track`, `prev_track`, `random_theme`, `random_colourway`, `flourish`, `flourish_toggle` |
+| `[hotkeys]` | all empty | `play_pause`, `next_track`, `prev_track`, `random_theme`, `random_colourway`, `flourish`, `flourish_toggle`, `identify_song` |
 | `autostart` | `false` | **A record, not the truth.** The live state is the registry `Run` value, which is what the menu reads |
 
 The same folder holds `taskbar-eq.log` (truncated per run) and a `themes\` directory for your own

@@ -16,6 +16,9 @@ use crate::dsp::shazam_sig::{resample_to_16k, Signature};
 use crate::net::shazam::{self, Outcome};
 
 static BUSY: AtomicBool = AtomicBool::new(false);
+/// Serialises the tests that flip `BUSY`.
+#[cfg(test)]
+static BUSY_TEST_LOCK: Mutex<()> = Mutex::new(());
 /// (text, change counter, sticky). Same protocol as `media::NOW_PLAYING`.
 static BANNER: Mutex<(String, u64, bool)> = Mutex::new((String::new(), 0, false));
 
@@ -43,26 +46,57 @@ fn end() {
     BUSY.store(false, Ordering::Release);
 }
 
-/// Polls `snapshot` until it holds `want_secs` of audio or `deadline` passes. Returns whatever
-/// arrived, or `None` if nothing did - a dead capture thread must end as "no match", not a hang.
+/// Held for the life of a run. Its `Drop` is the ONE place the recorder is uninstalled and `BUSY`
+/// cleared, so a panic anywhere in `run` - or an early return added later - cannot leave the
+/// feature saying "already listening" until the process restarts.
+struct Done;
+
+impl Drop for Done {
+    fn drop(&mut self) {
+        crate::win::capture::record_stop();
+        end();
+    }
+}
+
+/// The audio gathered so far: mono samples at the device rate (0 until the first chunk arrives).
+#[derive(Default)]
+pub struct Recording {
+    pub rate: u32,
+    pub buf: Vec<f32>,
+}
+
+impl Recording {
+    fn secs(&self) -> f32 {
+        if self.rate == 0 {
+            0.0
+        } else {
+            self.buf.len() as f32 / self.rate as f32
+        }
+    }
+}
+
+/// Drains `take` into `rec` until it holds `want_secs` of audio or `deadline` passes. Returns true
+/// when the target was reached. On a timeout `rec` keeps whatever did arrive - and stays empty if
+/// nothing did, which is how a dead capture thread ends as "no match" instead of a hang.
 pub fn wait_for_samples(
     deadline: Duration,
     want_secs: f32,
-    mut snapshot: impl FnMut() -> Option<(u32, Vec<f32>)>,
-) -> Option<(u32, Vec<f32>)> {
+    rec: &mut Recording,
+    mut take: impl FnMut() -> Option<(u32, Vec<f32>)>,
+) -> bool {
     let t0 = Instant::now();
-    let mut last: Option<(u32, Vec<f32>)> = None;
     loop {
-        if let Some((rate, buf)) = snapshot() {
-            if rate > 0 && buf.len() as f32 >= want_secs * rate as f32 {
-                return Some((rate, buf));
+        if let Some((rate, chunk)) = take() {
+            if rate > 0 {
+                rec.rate = rate;
             }
-            if !buf.is_empty() && rate > 0 {
-                last = Some((rate, buf));
+            rec.buf.extend_from_slice(&chunk);
+            if rec.secs() >= want_secs {
+                return true;
             }
         }
         if t0.elapsed() >= deadline {
-            return last;
+            return false;
         }
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -81,20 +115,28 @@ pub fn request() {
 }
 
 fn run() {
+    let _done = Done;
     crate::log::write("identify: listening");
     publish("listening...", true);
     crate::win::capture::record_start();
     let t0 = Instant::now();
+    let mut rec = Recording::default();
+    let mut posted_len = 0usize;
     let mut result: Option<Outcome> = None;
     for (i, &at) in POST_AT_SECS.iter().enumerate() {
         let remaining = OVERALL_DEADLINE.saturating_sub(t0.elapsed());
-        let Some((rate, buf)) =
-            wait_for_samples(remaining, at, crate::win::capture::record_snapshot)
-        else {
+        wait_for_samples(remaining, at, &mut rec, crate::win::capture::record_take);
+        if rec.buf.is_empty() || rec.rate == 0 {
             break;
-        };
-        let secs = buf.len() as f32 / rate as f32;
-        let mono16 = resample_to_16k(&buf, rate);
+        }
+        if rec.buf.len() == posted_len {
+            // The deadline passed with nothing new since the last post; posting the same audio
+            // again would only get the same answer.
+            break;
+        }
+        posted_len = rec.buf.len();
+        let (rate, secs) = (rec.rate, rec.secs());
+        let mono16 = resample_to_16k(&rec.buf, rate);
         let sig = Signature::from_mono_16k(&mono16);
         let peaks: usize = sig.bands.iter().map(|b| b.len()).sum();
         crate::log::write(&format!(
@@ -116,7 +158,6 @@ fn run() {
             break;
         }
     }
-    crate::win::capture::record_stop();
     match result {
         Some(Outcome::Match(f)) => {
             crate::log::write(&format!(
@@ -141,7 +182,7 @@ fn run() {
             publish("no match", false);
         }
     }
-    end();
+    // `_done` drops here: recorder uninstalled, BUSY cleared.
 }
 
 #[cfg(test)]
@@ -152,30 +193,53 @@ mod tests {
     #[test]
     fn wait_gives_up_when_no_audio_ever_arrives() {
         let t0 = std::time::Instant::now();
-        let got = wait_for_samples(Duration::from_millis(120), 1.0, || None);
-        assert!(got.is_none());
+        let mut rec = Recording::default();
+        let reached = wait_for_samples(Duration::from_millis(120), 1.0, &mut rec, || None);
+        assert!(!reached);
+        assert!(rec.buf.is_empty());
         assert!(t0.elapsed() >= Duration::from_millis(100));
     }
 
     #[test]
-    fn wait_returns_as_soon_as_enough_arrives() {
+    fn wait_accumulates_drained_chunks_and_stops_when_it_has_enough() {
         let mut calls = 0;
-        let got = wait_for_samples(Duration::from_secs(5), 0.5, || {
+        let mut rec = Recording::default();
+        let reached = wait_for_samples(Duration::from_secs(5), 0.5, &mut rec, || {
             calls += 1;
-            Some((16_000, vec![0.0; 4_000 * calls]))
+            Some((16_000, vec![0.0; 4_000]))
         });
-        let (rate, buf) = got.unwrap();
-        assert_eq!(rate, 16_000);
-        assert!(buf.len() >= 8_000);
-        assert!(calls <= 3);
+        assert!(reached);
+        assert_eq!(rec.rate, 16_000);
+        assert!(rec.buf.len() >= 8_000, "{}", rec.buf.len());
+        assert!(calls <= 3, "{calls}");
     }
 
     #[test]
-    fn wait_returns_what_it_has_at_the_deadline_if_any() {
-        let got = wait_for_samples(Duration::from_millis(80), 100.0, || {
+    fn wait_keeps_what_it_has_at_the_deadline() {
+        let mut rec = Recording::default();
+        let reached = wait_for_samples(Duration::from_millis(80), 100.0, &mut rec, || {
             Some((48_000, vec![0.0; 10]))
         });
-        assert_eq!(got.unwrap().1.len(), 10);
+        assert!(!reached);
+        assert!(rec.buf.len() >= 10);
+        assert_eq!(rec.rate, 48_000);
+    }
+
+    /// A panic anywhere in the run must not leave the feature jammed: `BUSY` set means every later
+    /// press is "already listening", and a recorder left installed grows without bound.
+    #[test]
+    fn a_panic_in_the_run_releases_busy_and_the_recorder() {
+        let _b = BUSY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _r = crate::win::capture::RECORDER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(try_begin());
+        let r = std::panic::catch_unwind(|| {
+            let _done = Done;
+            crate::win::capture::record_start();
+            panic!("boom");
+        });
+        assert!(r.is_err());
+        assert!(!BUSY.load(Ordering::Relaxed), "BUSY still set after a panic");
+        assert!(crate::win::capture::record_take().is_none(), "recorder still installed");
     }
 
     /// The whole pipeline against the real loopback device and the real Shazam endpoint, with
@@ -194,12 +258,14 @@ mod tests {
         }
         let _rx = crate::win::capture::start();
         crate::win::capture::record_start();
-        let got = wait_for_samples(Duration::from_secs(12), 6.0, crate::win::capture::record_snapshot);
+        let mut rec = Recording::default();
+        wait_for_samples(Duration::from_secs(12), 6.0, &mut rec, crate::win::capture::record_take);
         crate::win::capture::record_stop();
         if started {
             let _ = media::send(Action::PlayPause, Backend::Session);
         }
-        let (rate, buf) = got.expect("no audio arrived from the capture thread");
+        assert!(!rec.buf.is_empty(), "no audio arrived from the capture thread");
+        let (rate, buf) = (rec.rate, rec.buf);
         eprintln!("recorded {:.1}s @ {rate} Hz", buf.len() as f32 / rate as f32);
         let sig = Signature::from_mono_16k(&resample_to_16k(&buf, rate));
         let peaks: usize = sig.bands.iter().map(|b| b.len()).sum();
@@ -216,6 +282,7 @@ mod tests {
 
     #[test]
     fn busy_flag_blocks_a_second_run_and_clears_after() {
+        let _b = BUSY_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         assert!(try_begin());
         assert!(!try_begin(), "second press while running must be refused");
         end();

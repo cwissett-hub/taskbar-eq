@@ -101,7 +101,14 @@ pub enum TryRecvError {
 
 /// An optional second sink for the mono stream: while installed, every chunk the capture loop
 /// downmixes is also appended here, so `identify` can take a few seconds of audio without owning
-/// a device of its own. `None` costs one uncontended `try_lock` per chunk.
+/// a device of its own.
+///
+/// The consumer DRAINS rather than copies. The first version handed out a clone of the whole
+/// buffer under the mutex and had the audio thread `try_lock` - so every chunk that arrived during
+/// a 2 MB clone was silently dropped, sprinkling ~10 ms holes through the recording that Shazam's
+/// timing-based matcher would have felt. Now both sides hold the lock for a pointer swap: the audio
+/// thread's `extend` into a small, recently-drained Vec, and the consumer's `mem::take`. A blocking
+/// `lock` on the audio thread is fine at that duration; losing samples was not.
 struct Recorder {
     rate: u32,
     buf: Vec<f32>,
@@ -109,31 +116,34 @@ struct Recorder {
 
 static RECORDER: std::sync::Mutex<Option<Recorder>> = std::sync::Mutex::new(None);
 
+/// Serialises the tests that touch the process-global recorder (this file's and `identify`'s).
+#[cfg(test)]
+pub static RECORDER_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn recorder_lock() -> std::sync::MutexGuard<'static, Option<Recorder>> {
     RECORDER.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Installs an empty recorder. Thirteen seconds at 48 kHz is the most `identify` ever asks for.
+/// Installs an empty recorder.
 pub fn record_start() {
-    *recorder_lock() = Some(Recorder { rate: 0, buf: Vec::with_capacity(48_000 * 13) });
+    *recorder_lock() = Some(Recorder { rate: 0, buf: Vec::new() });
 }
 
 pub fn record_stop() {
     *recorder_lock() = None;
 }
 
-/// A copy of what has arrived so far, with the device's sample rate (0 until the first chunk).
-pub fn record_snapshot() -> Option<(u32, Vec<f32>)> {
-    recorder_lock().as_ref().map(|r| (r.rate, r.buf.clone()))
+/// Takes everything that has arrived since the last take, with the device's sample rate (0 until
+/// the first chunk). `None` when no recorder is installed.
+pub fn record_take() -> Option<(u32, Vec<f32>)> {
+    recorder_lock().as_mut().map(|r| (r.rate, std::mem::take(&mut r.buf)))
 }
 
-/// Called by the capture loop. `try_lock` so the audio thread never waits on a snapshot clone.
+/// Called by the capture loop for every chunk.
 pub fn record_push(rate: u32, mono: &[f32]) {
-    if let Ok(mut g) = RECORDER.try_lock() {
-        if let Some(r) = g.as_mut() {
-            r.rate = rate;
-            r.buf.extend_from_slice(mono);
-        }
+    if let Some(r) = recorder_lock().as_mut() {
+        r.rate = rate;
+        r.buf.extend_from_slice(mono);
     }
 }
 
@@ -238,21 +248,24 @@ mod tests {
         assert!(r.abs() < 1e-6, "right {r}");
     }
 
-    /// The ONLY test that touches the process-global recorder, so parallel test threads cannot
-    /// interleave with it.
+    /// Every test that touches the process-global recorder holds `RECORDER_TEST_LOCK`, so parallel
+    /// test threads cannot interleave with it.
     #[test]
-    fn recorder_collects_only_while_installed() {
+    fn recorder_drains_and_collects_only_while_installed() {
+        let _g = RECORDER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         record_stop();
         record_push(48_000, &[0.1, 0.2]);
-        assert!(record_snapshot().is_none(), "nothing installed, nothing kept");
+        assert!(record_take().is_none(), "nothing installed, nothing kept");
         record_start();
         record_push(48_000, &[0.1, 0.2]);
         record_push(48_000, &[0.3]);
-        let (rate, buf) = record_snapshot().unwrap();
-        assert_eq!(rate, 48_000);
-        assert_eq!(buf, vec![0.1, 0.2, 0.3]);
+        assert_eq!(record_take(), Some((48_000, vec![0.1, 0.2, 0.3])));
+        // Drained: the next take returns only what arrived since.
+        assert_eq!(record_take(), Some((48_000, vec![])));
+        record_push(48_000, &[0.4]);
+        assert_eq!(record_take(), Some((48_000, vec![0.4])));
         record_stop();
-        assert!(record_snapshot().is_none());
+        assert!(record_take().is_none());
     }
 }
 
