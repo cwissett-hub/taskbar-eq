@@ -1085,6 +1085,12 @@ mod registry_tests {
     /// directory - self-restoring, like `config::tests`' real-filesystem cases.
     #[test]
     fn registry_reads_the_real_appdata_themes_directory() {
+        // Reads Config::dir(), which honours the process-global
+        // TASKBAR_EQ_CONFIG_DIR override that config::tests sets and clears.
+        // Hold the shared lock and clear the override so this runs against the
+        // real %APPDATA% and never lands its marker in a config test's temp dir.
+        let _g = crate::config::CONFIG_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("TASKBAR_EQ_CONFIG_DIR");
         let dir = crate::config::Config::dir().join("themes");
         std::fs::create_dir_all(&dir).expect("themes dir should be creatable");
         let marker = dir.join("__registry_test_marker.toml");

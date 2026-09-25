@@ -201,6 +201,16 @@ impl Config {
     }
 }
 
+/// The one lock that serialises every test - in ANY module - that reads or
+/// writes `Config::dir()`/`Config::path()` or the `TASKBAR_EQ_CONFIG_DIR`
+/// override. The override is process-global and `cargo test` runs the binary's
+/// tests in parallel, so a test that touches the config directory without
+/// holding this can race a `config::tests` temp-dir closure and land its files
+/// in another test's directory. `pub(crate)` so `themes::tests` (which reads
+/// `Config::dir()`) shares the one discipline rather than inventing its own.
+#[cfg(test)]
+pub(crate) static CONFIG_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,7 +236,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         r
     }
-    static CONFIG_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn dir_honours_the_test_override() {
