@@ -25,7 +25,7 @@
 use crate::log;
 
 /// Which mechanism actually sends the command.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Backend {
     /// Address Spotify's media session directly. The default, and the reliable one.
@@ -33,6 +33,26 @@ pub enum Backend {
     Session,
     /// Synthesise the dedicated media keys and let the system route them.
     MediaKeys,
+}
+
+/// A LENIENT, hand-written deserialiser rather than the derive, so an unrecognised
+/// `media_backend` value can never fail the WHOLE config document and wipe the
+/// user's theme, width and hotkeys back to defaults. Anything but the two known
+/// backends is logged and falls back to `Session`, the reliable default. The
+/// `log::write` here is fine: config load happens only at startup and on
+/// hot-reload, never per frame.
+impl<'de> serde::Deserialize<'de> for Backend {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = <String as serde::Deserialize>::deserialize(d)?;
+        Ok(match s.as_str() {
+            "session" => Backend::Session,
+            "media-keys" => Backend::MediaKeys,
+            other => {
+                crate::log::write(&format!("config: media_backend {other:?} is not a backend; using session"));
+                Backend::Session
+            }
+        })
+    }
 }
 
 /// A transport command.

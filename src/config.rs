@@ -134,6 +134,14 @@ impl Default for Config {
 
 impl Config {
     pub fn dir() -> PathBuf {
+        // A test-only override so the suite never reads or writes the developer's
+        // real %APPDATA%\taskbar-eq. Empty is treated as unset, so exporting it
+        // blank cannot accidentally point the config at the current directory.
+        if let Ok(d) = std::env::var("TASKBAR_EQ_CONFIG_DIR") {
+            if !d.is_empty() {
+                return PathBuf::from(d);
+            }
+        }
         let base = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
         PathBuf::from(base).join("taskbar-eq")
     }
@@ -147,7 +155,9 @@ impl Config {
     pub fn load() -> Config {
         match std::fs::read_to_string(Self::path()) {
             Ok(s) => toml::from_str(&s).unwrap_or_else(|e| {
-                eprintln!("config: {e}; using defaults");
+                // The exe is a GUI-subsystem binary, so `eprintln!` goes nowhere;
+                // the app logger is the only channel a support request can read.
+                crate::log::write(&format!("config: {e}; using defaults"));
                 Config::default()
             }),
             Err(_) => Config::default(),
@@ -174,7 +184,10 @@ impl Config {
 
     pub fn save(&self) -> Result<()> {
         std::fs::create_dir_all(Self::dir())?;
-        std::fs::write(Self::path(), toml::to_string_pretty(self)?)?;
+        let tmp = Self::dir().join("config.toml.tmp");
+        std::fs::write(&tmp, toml::to_string_pretty(self)?)?;
+        // Rename is atomic on NTFS, so a crash mid-write can only lose the .tmp, never the config.
+        std::fs::rename(&tmp, Self::path())?;
         Ok(())
     }
 
@@ -191,17 +204,83 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
 
-    // Every test below that touches the real Config::path() file (the
-    // round-trip test plus the two load()-against-a-real-file tests added
-    // for the corrupt/missing-file finding) shares that one file on disk.
-    // A plain `cargo test` runs tests in the same binary in parallel by
-    // default, so without serialising them one test's write/restore can
-    // race another's - the exact failure mode already fixed for the
-    // registry in win::autostart::tests. Lock for the duration of any test
-    // that reads or writes Config::path().
-    static CONFIG_FILE_LOCK: Mutex<()> = Mutex::new(());
+    // Config lives at a fixed path derived from the environment, and several
+    // tests below need to read and write it without touching the developer's
+    // real %APPDATA%\taskbar-eq\config.toml. `Config::dir` honours the
+    // `TASKBAR_EQ_CONFIG_DIR` override, and this helper points it at a fresh,
+    // per-test temp dir for the duration of the closure.
+    //
+    // Environment variables are PROCESS-GLOBAL, and `cargo test` runs the
+    // tests in one binary in parallel by default, so every test that reads or
+    // writes the override - or that reads `Config::path()`/`Config::dir()` and
+    // would be confused by an override another test set - must hold
+    // `CONFIG_TEST_LOCK` for as long as it cares about the value.
+    fn with_temp_dir<T>(name: &str, f: impl FnOnce(&std::path::Path) -> T) -> T {
+        let _g = CONFIG_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("taskbar-eq-cfg-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::env::set_var("TASKBAR_EQ_CONFIG_DIR", &dir);
+        let r = f(&dir);
+        std::env::remove_var("TASKBAR_EQ_CONFIG_DIR");
+        let _ = std::fs::remove_dir_all(&dir);
+        r
+    }
+    static CONFIG_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn dir_honours_the_test_override() {
+        with_temp_dir("dir", |d| assert_eq!(Config::dir(), d));
+    }
+
+    #[test]
+    fn save_is_atomic_and_leaves_no_tmp_behind() {
+        with_temp_dir("atomic", |d| {
+            let mut c = Config::default();
+            c.width = 123;
+            c.save().unwrap();
+            assert!(d.join("config.toml").exists());
+            assert!(!d.join("config.toml.tmp").exists());
+            assert_eq!(Config::load().width, 123);
+        });
+    }
+
+    #[test]
+    fn a_stale_tmp_does_not_shadow_the_real_file() {
+        with_temp_dir("stale", |d| {
+            let mut c = Config::default();
+            c.width = 321;
+            c.save().unwrap();
+            std::fs::write(d.join("config.toml.tmp"), "width = 1\n").unwrap();
+            assert_eq!(Config::load().width, 321);
+            c.save().unwrap();
+            assert!(!d.join("config.toml.tmp").exists());
+        });
+    }
+
+    #[test]
+    fn an_unknown_media_backend_does_not_lose_the_rest_of_the_config() {
+        with_temp_dir("backend", |d| {
+            std::fs::create_dir_all(d).unwrap();
+            std::fs::write(d.join("config.toml"), "theme = \"vu-cream\"\nwidth = 300\nmedia_backend = \"nonsense\"\n").unwrap();
+            let c = Config::load();
+            assert_eq!(c.theme, "vu-cream");
+            assert_eq!(c.width, 300);
+            assert_eq!(c.media_backend, crate::win::media::Backend::Session);
+        });
+    }
+
+    #[test]
+    fn a_v020_config_without_the_new_keys_loads_intact() {
+        with_temp_dir("v020", |d| {
+            std::fs::create_dir_all(d).unwrap();
+            std::fs::write(d.join("config.toml"), "theme = \"tube-soviet\"\nwidth = 380\n[hotkeys]\nplay_pause = \"Win+Ctrl+Space\"\n").unwrap();
+            let c = Config::load();
+            assert_eq!(c.theme, "tube-soviet");
+            assert_eq!(c.hotkeys.play_pause, "Win+Ctrl+Space");
+            assert_eq!(c.hotkeys.identify_song, "");
+        });
+    }
 
     #[test]
     fn defaults_match_the_spec() {
@@ -250,51 +329,30 @@ mod tests {
     /// `save_then_load_round_trips_through_the_real_filesystem`.
     #[test]
     fn load_falls_back_to_defaults_on_a_real_corrupt_file() {
-        let _guard = CONFIG_FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let path = Config::path();
-        let backup = std::fs::read_to_string(&path).ok();
-
-        std::fs::create_dir_all(Config::dir()).expect("dir should be creatable");
-        std::fs::write(&path, "this is not toml {{{").expect("writing garbage should succeed");
-
-        assert_eq!(
-            Config::load(),
-            Config::default(),
-            "load() must fall back to defaults instead of panicking on a corrupt file"
-        );
-
-        match backup {
-            Some(original) => {
-                std::fs::write(&path, original).expect("restoring the original config must succeed");
-            }
-            None => {
-                std::fs::remove_file(&path).ok();
-            }
-        }
+        with_temp_dir("corrupt", |d| {
+            std::fs::create_dir_all(d).expect("dir should be creatable");
+            std::fs::write(d.join("config.toml"), "this is not toml {{{")
+                .expect("writing garbage should succeed");
+            assert_eq!(
+                Config::load(),
+                Config::default(),
+                "load() must fall back to defaults instead of panicking on a corrupt file"
+            );
+        });
     }
 
-    /// Same requirement, missing-file case: delete whatever is at
-    /// Config::path() and confirm load() still returns defaults rather than
-    /// propagating the I/O error.
+    /// Same requirement, missing-file case: confirm load() returns defaults
+    /// rather than propagating the I/O error when nothing is on disk.
     #[test]
     fn load_falls_back_to_defaults_on_a_missing_file() {
-        let _guard = CONFIG_FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let path = Config::path();
-        let backup = std::fs::read_to_string(&path).ok();
-
-        std::fs::remove_file(&path).ok();
-        assert!(!path.exists(), "precondition: file must actually be gone");
-
-        assert_eq!(
-            Config::load(),
-            Config::default(),
-            "load() must fall back to defaults instead of panicking on a missing file"
-        );
-
-        if let Some(original) = backup {
-            std::fs::create_dir_all(Config::dir()).expect("dir should be creatable");
-            std::fs::write(&path, original).expect("restoring the original config must succeed");
-        }
+        with_temp_dir("missing", |d| {
+            assert!(!d.join("config.toml").exists(), "precondition: file must actually be absent");
+            assert_eq!(
+                Config::load(),
+                Config::default(),
+                "load() must fall back to defaults instead of panicking on a missing file"
+            );
+        });
     }
 
     #[test]
@@ -306,6 +364,10 @@ mod tests {
 
     #[test]
     fn config_lives_under_appdata() {
+        // Reads Config::path(), so it must hold the lock and clear any override
+        // a parallel test left set, or it could observe a temp dir instead.
+        let _g = CONFIG_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("TASKBAR_EQ_CONFIG_DIR");
         let p = Config::path();
         assert!(p.ends_with("taskbar-eq/config.toml") || p.ends_with("taskbar-eq\\config.toml"));
     }
@@ -317,25 +379,14 @@ mod tests {
     /// back up and restore whatever real config was on disk before running.
     #[test]
     fn save_then_load_round_trips_through_the_real_filesystem() {
-        let _guard = CONFIG_FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let path = Config::path();
-        let backup = std::fs::read_to_string(&path).ok();
+        with_temp_dir("roundtrip", |d| {
+            let mut c = Config::default();
+            c.theme = "round-trip-test".into();
+            c.save().expect("save() should be able to create the config dir");
 
-        let mut c = Config::default();
-        c.theme = "round-trip-test".into();
-        c.save().expect("save() should be able to create %APPDATA%\\taskbar-eq");
-
-        assert!(path.exists(), "save() must leave a real, readable config.toml behind");
-        assert_eq!(Config::load(), c, "load() must read back exactly what save() wrote");
-
-        match backup {
-            Some(original) => {
-                std::fs::write(&path, original).expect("restoring the original config must succeed");
-            }
-            None => {
-                std::fs::remove_file(&path).ok();
-            }
-        }
+            assert!(d.join("config.toml").exists(), "save() must leave a real, readable config.toml behind");
+            assert_eq!(Config::load(), c, "load() must read back exactly what save() wrote");
+        });
     }
 }
 
