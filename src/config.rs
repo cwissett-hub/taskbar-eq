@@ -28,6 +28,8 @@ pub struct Hotkeys {
     pub flourish: String,
     /// Turn flourishes on or off, persisted across restarts.
     pub flourish_toggle: String,
+    /// Identify the current song with Shazam and show it in the banner.
+    pub identify_song: String,
 }
 
 impl Hotkeys {
@@ -47,6 +49,7 @@ impl Hotkeys {
             4 => &self.random_colourway,
             5 => &self.flourish,
             6 => &self.flourish_toggle,
+            7 => &self.identify_song,
             _ => return None,
         })
     }
@@ -60,6 +63,7 @@ impl Hotkeys {
             4 => &mut self.random_colourway,
             5 => &mut self.flourish,
             6 => &mut self.flourish_toggle,
+            7 => &mut self.identify_song,
             _ => return None,
         })
     }

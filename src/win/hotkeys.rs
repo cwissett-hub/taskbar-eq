@@ -52,11 +52,13 @@ pub enum Slot {
     Flourish,
     /// Turn flourishes on or off.
     FlourishToggle,
+    /// Identify the song currently playing, via Shazam. See `crate::identify`.
+    IdentifySong,
 }
 
 /// How many hotkey slots there are. Used for the config array and the outcome array, so adding a
 /// slot cannot leave one of them behind.
-pub const SLOTS: usize = 7;
+pub const SLOTS: usize = 8;
 
 impl Slot {
     pub const ALL: [Slot; SLOTS] = [
@@ -67,6 +69,7 @@ impl Slot {
         Slot::RandomColourway,
         Slot::Flourish,
         Slot::FlourishToggle,
+        Slot::IdentifySong,
     ];
 
     /// The `RegisterHotKey` id. Small and fixed, well inside the documented 0x0000..0xBFFF range
@@ -80,6 +83,7 @@ impl Slot {
             Slot::RandomColourway => 5,
             Slot::Flourish => 6,
             Slot::FlourishToggle => 7,
+            Slot::IdentifySong => 8,
         }
     }
 
@@ -96,7 +100,8 @@ impl Slot {
             Slot::RandomTheme
             | Slot::RandomColourway
             | Slot::Flourish
-            | Slot::FlourishToggle => None,
+            | Slot::FlourishToggle
+            | Slot::IdentifySong => None,
         }
     }
 
@@ -109,6 +114,7 @@ impl Slot {
             Slot::RandomColourway => "random colourway",
             Slot::Flourish => "flourish now",
             Slot::FlourishToggle => "flourishes on/off",
+            Slot::IdentifySong => "identify song",
         }
     }
 }
@@ -363,6 +369,9 @@ pub fn on_wm_hotkey(id: usize) -> bool {
                 crate::dsp::flourish::request();
             }
             Slot::FlourishToggle => TOGGLE_REQUEST.store(true, Ordering::Relaxed),
+            // Spawns a thread and returns; the listening, the network and the file write all
+            // happen off the wndproc.
+            Slot::IdentifySong => crate::identify::request(),
             // Every remaining slot has a media action, so this arm is unreachable - but written out
             // rather than left as a catch-all, so adding a slot with no action is a compile error
             // instead of a silent no-op.
