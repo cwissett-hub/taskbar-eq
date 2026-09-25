@@ -18,6 +18,10 @@ mod render;
 mod themes;
 mod tick;
 mod win;
+mod net;
+mod songs;
+mod history;
+mod identify;
 
 use anyhow::Result;
 use config::Config;

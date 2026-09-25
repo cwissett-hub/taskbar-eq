@@ -2,6 +2,7 @@
 name = "taskbar-eq"
 version = "0.1.0"
 edition = "2021"
+license = "GPL-3.0-or-later"
 
 [dependencies]
 anyhow = "1.0.104"
@@ -9,6 +10,10 @@ rustfft = "6.4.1"
 notify = "8.2.0"
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.4"
+serde_json = "1.0"
+base64 = "0.22"
+# Blocking HTTPS for the Shazam call. rustls so the exe stays self-contained; no async runtime.
+ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
 
 [dependencies.windows]
 version = "0.62.2"
