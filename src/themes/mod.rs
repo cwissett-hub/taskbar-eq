@@ -21,16 +21,18 @@ pub enum Texture {
     None_,
 }
 
-/// Saturation the rainbow runs at, and it is a measured ceiling rather than taste.
+/// Chroma the rainbow runs at, as a fraction of the most saturated colour sRGB holds at the
+/// rainbow's fixed lightness and that hue (see `rainbow_oklch` and `RAINBOW_L`).
 ///
-/// This project requires every lit colour to clear 3:1 contrast against its own panel. Swept over
-/// all 360 hues against a near-black panel: at full saturation pure blue (hue 240) manages only
-/// 2.31:1 and FAILS that rule; 0.9 gives 2.48 and 0.8 gives 2.88, still failing. 0.70 is the first
-/// value that passes at every hue, at 3.59:1. 0.68 is used for a little margin.
-///
-/// So a rainbow cannot be fully saturated here. Blue is simply too dark against black at any
-/// brightness, and no amount of value fixes it - only pulling it toward white does.
-pub const RAINBOW_SAT: f32 = 0.68;
+/// This was 0.68 as a MEASURED ceiling when the rainbow was HSV: every lit colour must clear 3:1
+/// contrast against its own panel, and fully saturated HSV blue (hue 240) managed only 2.31:1
+/// against a near-black panel, so the whole wheel had to be pulled toward white to get blue
+/// through. That constraint no longer exists. In OKLCh every hue is drawn at the same lightness,
+/// and at `RAINBOW_L` the worst hue is 7.3:1 against a near-black panel even at full chroma - so
+/// there is nothing left to trade saturation for. Full chroma also keeps a rainbow reading as one:
+/// at a fixed lightness the gamut is already the limiting factor (about 0.12..0.29 chroma across
+/// the wheel), and 0.68 of that rendered every rainbow colourway as pastel.
+pub const RAINBOW_SAT: f32 = 1.0;
 
 /// How often a family's flourish fires, by default.
 ///
@@ -327,11 +329,6 @@ impl Default for VaporParams {
     }
 }
 
-/// A rainbow colour for an element at horizontal fraction `x01`, or None when the colourway is not
-/// a rainbow one.
-///
-/// Returned as (hue, saturation, value) rather than a colour so `render` can build an `Rgba` with
-/// whatever alpha it needs - `themes` deliberately knows nothing about the canvas.
 /// How far toward white a plate change pulls at its midpoint.
 ///
 /// 0.65 was chosen as the smallest value that keeps every intermediate colour of every shipped
@@ -340,7 +337,54 @@ impl Default for VaporParams {
 /// hues. Larger washes the palette out; smaller lets the cyan-to-magenta crossing dip into blue.
 const MORPH_DESAT: f32 = 0.65;
 
-pub fn rainbow_hsv(t: &Theme, x01: f32, time_s: f32, hot: bool) -> Option<(f32, f32, f32)> {
+/// The one OKLab lightness every rainbow `lit` hue is drawn at.
+///
+/// The task brief mapped the old HSV value onto `l = 0.62 + 0.25 * v`, which at the `v = 1.0` every
+/// rainbow used gives 0.87 - and at L 0.87 the sRGB gamut holds almost no chroma for red, blue or
+/// magenta (about 0.07, against 0.24 for green), so every rainbow colourway rendered as pastel:
+/// kaleido-prism lost its wheel, the Pantone process inks went to tinted paper, and rave's saturated
+/// strobe wash turned its panel pale pink - the exact failure rave's own comment warns against.
+///
+/// 0.72 was chosen by measuring the colours the HSV rainbow actually drew: its lit red was OKLab
+/// L 0.68 / chroma 0.21, magenta 0.74 / 0.28, blue 0.55 / 0.25, green 0.88 / 0.26. One lightness
+/// cannot keep all of those, and 0.72 is where the in-gamut chroma is most even across the wheel
+/// (0.12..0.29 at every hue, red 0.19, blue 0.16) so a rainbow reads as a rainbow, while the
+/// worst-case contrast against a near-black panel is still 7.3:1 at full chroma - far above the
+/// 3:1 floor that used to bind. What it gives up is yellow: no colour at L 0.72 is yellow, so the
+/// 60-degree ink is an orange. See the task-7 report for the before/after dumps.
+pub const RAINBOW_L: f32 = 0.72;
+
+/// Lightness the rainbow's `hot` core is drawn at, and the lightness a plate-change morph lifts
+/// toward at its midpoint.
+///
+/// In HSV "toward white" was a saturation drop at value 1.0, which raised lightness as a side
+/// effect: the old hot red (255,204,204) is OKLab L 0.87 at chroma 0.07 - which is the FULL
+/// in-gamut chroma at that lightness. So hot is not "less chroma", it is "higher lightness, and
+/// the gamut takes the chroma": a chroma drop at a fixed L would only go toward grey and a
+/// rainbow's bright centre would become a dull one (measured on orbit-rainbow's dots, chroma
+/// 0.02..0.04 against the old 0.05..0.12, before this was corrected). 0.87 also happens to be the
+/// value the brief's `0.62 + 0.25 * v` mapping gives at `v = 1.0`.
+pub const RAINBOW_HOT_L: f32 = 0.87;
+
+/// A rainbow colour for an element at horizontal fraction `x01`, or None when the colourway is not
+/// a rainbow one.
+///
+/// Returned as OKLCh `(lightness, chroma, hue_turns)` rather than a colour so `render` can build an
+/// `Rgba` with whatever alpha it needs (`Rgba::from_oklch`) - `themes` deliberately knows nothing
+/// about the canvas.
+///
+/// **Why OKLCh and not HSV.** This used to return HSV, and an HSV sweep at one saturation and value
+/// is not one brightness: yellow sits near OKLab L 0.97 and blue near 0.55, so a rainbow flickered in
+/// lightness across the display and its darkest hues were what forced `RAINBOW_SAT` down to 0.68.
+/// In OKLCh every hue is emitted at the SAME perceptual lightness, and chroma is asked for as a
+/// fraction of the most saturated colour sRGB can show at that lightness and hue, so no hue is
+/// clipped or darkened to fit the gamut.
+///
+/// The old HSV saturation maps onto this as `c = oklch_max_chroma(l, h) * saturation`, which is
+/// what `RAINBOW_SAT` and `ink_chroma` now mean: fractions of full in-gamut chroma at the fixed
+/// lightness `RAINBOW_L`. "Toward white" (the hot core, the plate-change morph) is a LIFT in
+/// lightness toward `RAINBOW_HOT_L`, not a chroma drop - see that constant for why.
+pub fn rainbow_oklch(t: &Theme, x01: f32, time_s: f32, hot: bool) -> Option<(f32, f32, f32)> {
     if t.rainbow <= 0.0 {
         return None;
     }
@@ -400,7 +444,7 @@ pub fn rainbow_hsv(t: &Theme, x01: f32, time_s: f32, hot: bool) -> Option<(f32, 
 
     // `ink_chroma` rather than RAINBOW_SAT, defaulting to it, so a quantised palette can be fully
     // saturated while a continuous one stays inside the contrast rule.
-    let mut sat = if t.ink_chroma.is_finite() { t.ink_chroma.clamp(0.0, 1.0) } else { RAINBOW_SAT };
+    let sat = if t.ink_chroma.is_finite() { t.ink_chroma.clamp(0.0, 1.0) } else { RAINBOW_SAT };
 
     // THE MORPH CROSSES THROUGH WHITE, NOT ROUND THE WHEEL, and this is a correctness fix rather
     // than a stylistic one.
@@ -410,20 +454,25 @@ pub fn rainbow_hsv(t: &Theme, x01: f32, time_s: f32, hot: bool) -> Option<(f32, 
     // reached 2.34:1 against its panel, failing the 3:1 rule - which is the very failure the
     // half-step offset exists to avoid, walked straight back in by interpolating between the offsets.
     //
-    // Pulling the saturation toward white across the crossing fixes it by construction: the palest
+    // Pulling the colour toward white across the crossing fixes it by construction: the palest
     // point of the transition is also the brightest, so the worst contrast in a morph now occurs at
     // its ENDS, which are the flat inks that were already measured safe. It also happens to be what
     // a plate change looks like in print - the ink lifts off the paper rather than rotating hue.
+    // Toward white means UP in lightness here, not down in chroma - see `RAINBOW_HOT_L`. The
+    // chroma fraction is left alone in both cases; the gamut at the higher lightness is what
+    // pales the colour, exactly as it did for the HSV hot.
+    let mut l = RAINBOW_L;
     if morph_cross > 0.0 {
-        sat *= 1.0 - MORPH_DESAT * morph_cross;
+        l += (RAINBOW_HOT_L - l) * MORPH_DESAT * morph_cross;
     }
     if hot {
         // The hot core keeps the hue but pulls hard toward white, exactly as the fixed colourways do
         // with their own `hot` - otherwise a rainbow loses the sense of a bright centre entirely.
-        Some((hue, sat * 0.30, 1.0))
-    } else {
-        Some((hue, sat, 1.0))
+        l = RAINBOW_HOT_L;
     }
+    let hue = hue.rem_euclid(1.0);
+    let chroma = crate::render::canvas::Rgba::oklch_max_chroma(l, hue) * sat;
+    Some((l, chroma, hue))
 }
 
 /// Structure parameters for the Pantone family; inert for the other families.
@@ -1048,6 +1097,25 @@ mod reconcile_reload_tests {
         // is never hit in practice, but reconcile_reload must not assume it.
         let picked = reconcile_reload(&[], "anything");
         assert_eq!(picked.id, Theme::default().id);
+    }
+}
+
+#[cfg(test)]
+mod rainbow_tests {
+    use super::*;
+    use crate::render::canvas::Rgba;
+
+    #[test]
+    fn rainbow_hues_share_one_lightness() {
+        let t = builtin::all().into_iter().find(|t| t.id == "kaleido-prism").unwrap();
+        let ls: Vec<f32> = (0..12)
+            .map(|i| {
+                let c = crate::render::tint(&t, i as f32 / 12.0, 0.0, false, "#ffffff", 1.0);
+                Rgba::oklab_l_of(c)
+            })
+            .collect();
+        let (mn, mx) = (ls.iter().cloned().fold(1.0, f32::min), ls.iter().cloned().fold(0.0, f32::max));
+        assert!(mx - mn < 0.02, "L spread {mn}..{mx}");
     }
 }
 

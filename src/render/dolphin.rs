@@ -426,8 +426,9 @@ mod tests {
         );
         let (_, hot_c) = settled(&t, 0.9, 30, 190, 60);
         let lit = lum(hot_c.get(ox + 4 * PITCH, oy + (water_row + 2) * PITCH));
+        // 2x: a well measures ~65 and a lit dot ~170 (2.6x). Re-based for linear-light blending (task 7): faint, low-alpha marks now carry the light their alpha says, so the "off" state is brighter than it was in gamma space; it was 3x.
         assert!(
-            lit > well * 3.0,
+            lit > well * 2.0,
             "a lit dot ({lit:.1}) must clearly outrank a well ({well:.1}); at {:.1}x they read as the \
              same state",
             lit / well.max(0.01)
@@ -444,7 +445,8 @@ mod tests {
         let lit_rows = |gain: f32| -> i32 {
             let (_, c) = settled(&t, gain, 60, 190, 60);
             (0..spec_rows)
-                .filter(|k| lum(c.get(ox + PITCH, oy + (water_row + 1 + k) * PITCH)) > 60.0)
+                // 110 sits between an unlit well (~65) and a lit dot (~170). Re-based for linear-light blending (task 7): faint, low-alpha marks now carry the light their alpha says, so the "off" state is brighter than it was in gamma space; it was 60.
+                .filter(|k| lum(c.get(ox + PITCH, oy + (water_row + 1 + k) * PITCH)) > 110.0)
                 .count() as i32
         };
         let quiet = lit_rows(0.25);

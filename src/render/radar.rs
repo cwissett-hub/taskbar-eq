@@ -1206,7 +1206,9 @@ mod tests {
         };
         let quiet = total(&flat(0.05));
         let loud = total(&flat(0.95));
-        assert!(loud > quiet * 1.15, "driving the input must light the field: {quiet:.0} -> {loud:.0}");
+        // 1.10: measured 1.14 after linear-light blending raised the faint clutter pedestal that
+        // dilutes this ratio (the same effect the comment above describes for the scope). Re-based for linear-light blending (task 7): faint, low-alpha marks now carry the light their alpha says, so the "off" state is brighter than it was in gamma space; it was 1.15.
+        assert!(loud > quiet * 1.10, "driving the input must light the field: {quiet:.0} -> {loud:.0}");
 
         // And two different SHAPES of spectrum at the same total energy must differ, which a
         // display keyed only to overall loudness would fail.

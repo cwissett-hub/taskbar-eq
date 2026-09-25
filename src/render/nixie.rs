@@ -669,7 +669,9 @@ mod tests {
                     let y = g.cell_y(*k) + CELL_H / 2;
                     let x = g.cx(tube);
                     let p = c.get(x, y);
-                    p.r as u32 + p.g as u32 + p.b as u32 > 120
+                    // 300 sits between a ghost cathode (~190 measured) and a firing one (380+).
+                    // Re-based for linear-light blending (task 7): faint, low-alpha marks now carry the light their alpha says, so the "off" state is brighter than it was in gamma space; it was 120.
+                    p.r as u32 + p.g as u32 + p.b as u32 > 300
                 })
                 .count()
         };

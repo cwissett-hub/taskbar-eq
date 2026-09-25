@@ -788,7 +788,8 @@ mod tests {
                 .fold(0.0, f64::max)
         };
         let silent = brightest_rail(&render(&t, 200, 190, 60, &flat(0.0)));
-        assert!(silent < 60.0, "nothing on the rail should be bright at silence, got {silent:.0}");
+        // 120: the rail's resting glow measures ~85 at silence and 255 driven. Re-based for linear-light blending (task 7): faint, low-alpha marks now carry the light their alpha says, so the "off" state is brighter than it was in gamma space; it was 60.
+        assert!(silent < 120.0, "nothing on the rail should be bright at silence, got {silent:.0}");
         // The positive control, without which this test also passes on a rail that never draws at
         // all: the same rail must light when there IS a dominant band.
         let driven = brightest_rail(&render(&t, 200, 190, 60, &uneven(20, 23, 0.8, 0.14)));

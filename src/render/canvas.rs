@@ -183,9 +183,86 @@ impl Rgba {
 
     /// Linear light to an 8-bit sRGB channel.
     fn encode_srgb(v: f32) -> u8 {
-        let v = v.clamp(0.0, 1.0);
-        let e = if v <= 0.003_130_8 { 12.92 * v } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 };
-        (e.clamp(0.0, 1.0) * 255.0).round() as u8
+        Self::linear_to_srgb(v)
+    }
+
+    /// 8-bit sRGB channel to linear light, 0.0..=1.0.
+    ///
+    /// **Why linear light at all.** Every blend, gradient and blur in this canvas used to average
+    /// the 8-bit sRGB codes directly. sRGB codes are gamma-ENCODED - code 128 is about 22% of the
+    /// light of code 255, not 50% - so averaging them averages the wrong quantity: a black-to-white
+    /// gradient dipped to a dark grey in the middle, and a half-alpha white glow over black read as
+    /// a mid grey, dimmer than the colour it was meant to be. Averaging in linear light gives the
+    /// physically right answer (the midpoint of black and white is code 188), which is also what
+    /// the eye expects from "half as bright".
+    ///
+    /// A 256-entry table because there are only 256 inputs and this sits under every pixel of every
+    /// blend; `OnceLock` so the table is built once, on first use, with no `unsafe` and no build
+    /// step. Alpha is NOT gamma-encoded and never goes through this - it is composited linearly as
+    /// it always was.
+    pub fn srgb_to_linear(v: u8) -> f32 {
+        static LUT: std::sync::OnceLock<[f32; 256]> = std::sync::OnceLock::new();
+        LUT.get_or_init(|| {
+            let mut t = [0.0f32; 256];
+            for (i, e) in t.iter_mut().enumerate() {
+                let v = i as f32 / 255.0;
+                *e = if v <= 0.040_45 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) };
+            }
+            t
+        })[v as usize]
+    }
+
+    /// Linear light to the sRGB transfer curve, as a CONTINUOUS 0.0..=255.0 code value.
+    ///
+    /// Kept continuous so callers that dither (the gradients) can still do so before rounding.
+    ///
+    /// A 4096-entry table with linear interpolation between entries, not `powf`. Measured in
+    /// release on a 380x60 canvas: a full-canvas alpha blend onto an opaque panel cost 1.31 ms with
+    /// `powf` per channel, 0.84 ms with this table, and 0.61 ms once `blend_over` got its opaque-
+    /// destination fast path (0.75 ms onto a translucent layer; bloom at radius 3: 1.71 -> 1.27 ms).
+    /// The old integer blend was 0.02 ms, so this is the real cost of doing it right, against a
+    /// 16 ms frame. A table of ROUNDED bytes would have been wrong: 4096 steps only resolve the
+    /// dark end to ~0.8 of a code. Interpolating a table of continuous code values fixes that - the
+    /// curve's first 13 entries are the exact linear segment, and beyond it the interpolation
+    /// error is under 0.005 of a code everywhere (measured worst 0.0041).
+    pub fn linear_to_srgb_f(v: f32) -> f32 {
+        const N: usize = 4096;
+        static LUT: std::sync::OnceLock<[f32; N + 1]> = std::sync::OnceLock::new();
+        let lut = LUT.get_or_init(|| {
+            let mut t = [0.0f32; N + 1];
+            for (i, e) in t.iter_mut().enumerate() {
+                let v = i as f32 / N as f32;
+                let s = if v <= 0.003_130_8 { 12.92 * v } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 };
+                *e = s.clamp(0.0, 1.0) * 255.0;
+            }
+            t
+        });
+        let v = if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 };
+        let x = v * N as f32;
+        let i = (x as usize).min(N - 1);
+        let f = x - i as f32;
+        lut[i] + (lut[i + 1] - lut[i]) * f
+    }
+
+    /// Linear light to an 8-bit sRGB channel.
+    pub fn linear_to_srgb(v: f32) -> u8 {
+        Self::linear_to_srgb_f(v).round() as u8
+    }
+
+    /// Interpolates two straight colours in LINEAR light; alpha interpolates linearly as-is.
+    ///
+    /// The one colour-mix implementation for the whole renderer. Four families used to carry their
+    /// own private `lerp`/`mix` over 8-bit codes, and each of them darkened its midpoints for the
+    /// reason `srgb_to_linear` explains; they all delegate here now, so there is exactly one place
+    /// where "half way between two colours" is defined.
+    pub fn lerp_linear(a: Rgba, b: Rgba, t: f32) -> Rgba {
+        let t = if t.is_finite() { t.clamp(0.0, 1.0) } else { 0.0 };
+        let ch = |x: u8, y: u8| {
+            let (lx, ly) = (Self::srgb_to_linear(x), Self::srgb_to_linear(y));
+            Self::linear_to_srgb(lx + (ly - lx) * t)
+        };
+        let alpha = (a.a as f32 + (b.a as f32 - a.a as f32) * t).round().clamp(0.0, 255.0) as u8;
+        Rgba::new(ch(a.r, b.r), ch(a.g, b.g), ch(a.b, b.b), alpha)
     }
 
     pub fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
@@ -299,20 +376,51 @@ impl Canvas {
         }
     }
 
-    /// Source-over on premultiplied values.
+    /// Source-over on premultiplied values, composited in LINEAR light.
+    ///
+    /// Both pixels are unpacked to straight colour, decoded to linear light and re-premultiplied
+    /// there, so the alpha-weighted mean is taken of LIGHT rather than of gamma codes (see
+    /// `Rgba::srgb_to_linear` for why that matters: half-alpha white over black is code 188, not
+    /// 128). Alpha itself is linear already and is composited exactly as before. The result is
+    /// re-encoded and packed through `pack`, so the premultiplied invariant `r,g,b <= a` holds by
+    /// construction.
     fn blend_over(dst: u32, src: u32) -> u32 {
         let sa = src >> 24;
         if sa == 255 {
             return src;
         }
-        let inv = 255 - sa;
-        let ch = |sh: u32| {
-            let s = (src >> sh) & 0xff;
-            let d = (dst >> sh) & 0xff;
-            (s + (d * inv + 127) / 255).min(255)
+        if sa == 0 {
+            return dst;
+        }
+        let da = dst >> 24;
+        if da == 0 {
+            // Nothing underneath: the source IS the result (and `unpack` would have nothing to
+            // divide by).
+            return src;
+        }
+        let s = Self::unpack(src);
+        let sa_f = sa as f32 / 255.0;
+        let inv = 1.0 - sa_f;
+        if da == 255 {
+            // The common case - a mark landing on an opaque panel - and the one every family pays
+            // for on every pixel. An opaque destination is stored un-premultiplied, the result is
+            // opaque too, and neither end needs the integer divides in `unpack`/`pack`. Measured
+            // at about a third of the general path's cost.
+            let ch = |sv: u8, dv: u32| {
+                let lin = Rgba::srgb_to_linear(sv) * sa_f + Rgba::srgb_to_linear(dv as u8) * inv;
+                Rgba::linear_to_srgb(lin) as u32
+            };
+            return 0xff00_0000 | (ch(s.r, (dst >> 16) & 0xff) << 16) | (ch(s.g, (dst >> 8) & 0xff) << 8) | ch(s.b, dst & 0xff);
+        }
+        let d = Self::unpack(dst);
+        let da_f = d.a as f32 / 255.0;
+        let out_a = sa_f + da_f * inv;
+        let ch = |sv: u8, dv: u8| {
+            // Premultiplied in linear light: light emitted times coverage.
+            let lin = Rgba::srgb_to_linear(sv) * sa_f + Rgba::srgb_to_linear(dv) * da_f * inv;
+            Rgba::linear_to_srgb(lin / out_a)
         };
-        let a = (sa + (((dst >> 24) & 0xff) * inv + 127) / 255).min(255);
-        (a << 24) | (ch(16) << 16) | (ch(8) << 8) | ch(0)
+        Self::pack(Rgba::new(ch(s.r, d.r), ch(s.g, d.g), ch(s.b, d.b), (out_a * 255.0).round() as u8))
     }
 
     pub fn rounded_rect(&mut self, x: i32, y: i32, w: i32, h: i32, r: i32, c: Rgba) {
@@ -535,63 +643,88 @@ impl Canvas {
         }
     }
 
+    /// Blurs a copy of the canvas and lays the result UNDER the original as a halo.
+    ///
+    /// Done in LINEAR light: each pixel is decoded to linear premultiplied light (light times
+    /// coverage), box-blurred in two passes, scaled, and re-encoded. Blurring gamma codes (as this
+    /// once did) under-represents the light in a bright mark's surroundings, so the halo fell off
+    /// too fast and read darker than the colour it came from.
     pub fn bloom(&mut self, radius: i32, strength: f32) {
         if radius <= 0 || strength <= 0.0 {
             return;
         }
         let (w, h) = (self.w, self.h);
-        let src = self.px.clone();
-        let mut tmp = vec![0u32; src.len()];
+        // Linear premultiplied [a, r, g, b] per pixel.
+        let src: Vec<[f32; 4]> = self.px.iter().map(|&p| Self::unpack_linear_pm(p)).collect();
+        let mut tmp = vec![[0.0f32; 4]; src.len()];
 
-        let blur = |input: &[u32], out: &mut [u32], horizontal: bool| {
+        let blur = |input: &[[f32; 4]], out: &mut [[f32; 4]], horizontal: bool| {
             for y in 0..h {
                 for x in 0..w {
-                    let (mut a, mut r, mut g, mut b, mut n) = (0u32, 0u32, 0u32, 0u32, 0u32);
+                    let (mut acc, mut n) = ([0.0f32; 4], 0u32);
                     for d in -radius..=radius {
                         let (sx, sy) = if horizontal { (x + d, y) } else { (x, y + d) };
                         if sx < 0 || sy < 0 || sx >= w || sy >= h {
                             continue;
                         }
                         let p = input[(sy * w + sx) as usize];
-                        a += p >> 24;
-                        r += (p >> 16) & 0xff;
-                        g += (p >> 8) & 0xff;
-                        b += p & 0xff;
+                        for k in 0..4 {
+                            acc[k] += p[k];
+                        }
                         n += 1;
                     }
-                    let n = n.max(1);
-                    out[(y * w + x) as usize] =
-                        ((a / n) << 24) | ((r / n) << 16) | ((g / n) << 8) | (b / n);
+                    let n = n.max(1) as f32;
+                    out[(y * w + x) as usize] = [acc[0] / n, acc[1] / n, acc[2] / n, acc[3] / n];
                 }
             }
         };
 
         blur(&src, &mut tmp, true);
-        let mut halo = vec![0u32; src.len()];
+        let mut halo = vec![[0.0f32; 4]; src.len()];
         blur(&tmp, &mut halo, false);
 
         for i in 0..self.px.len() {
             let hp = halo[i];
             // Scale while PRESERVING the premultiplied invariant (r,g,b <= a).
             //
-            // Scaling the four channels independently and clamping each at 255 breaks
+            // Scaling the four channels independently and clamping each at 1.0 breaks
             // it: for any real pixel alpha is the largest channel, so alpha saturates
-            // FIRST while r,g,b are still below 255. The result is an opaque pixel with
+            // FIRST while r,g,b are still below 1.0. The result is an opaque pixel with
             // dark colour - i.e. a black wash wherever the halo is strongest, which is
             // exactly the "black box around everything" this produced. Clamp by the
             // single limiting factor instead, so the colour keeps its hue and only its
             // brightness changes.
-            let (ha, hr, hg, hb) = (hp >> 24, (hp >> 16) & 0xff, (hp >> 8) & 0xff, hp & 0xff);
-            let peak = ha.max(hr).max(hg).max(hb) as f32;
-            let k = if peak * strength > 255.0 && peak > 0.0 {
-                255.0 / peak
-            } else {
-                strength
-            };
-            let scale = |v: u32| ((v as f32 * k).round().min(255.0)) as u32;
-            let scaled = (scale(ha) << 24) | (scale(hr) << 16) | (scale(hg) << 8) | scale(hb);
-            self.px[i] = Self::blend_over(scaled, src[i]);
+            let peak = hp[0].max(hp[1]).max(hp[2]).max(hp[3]);
+            let k = if peak * strength > 1.0 && peak > 0.0 { 1.0 / peak } else { strength };
+            // Source-over of the original on top of its own halo, in linear premultiplied light.
+            let s = src[i];
+            let inv = 1.0 - s[0];
+            let out = [
+                s[0] + hp[0] * k * inv,
+                s[1] + hp[1] * k * inv,
+                s[2] + hp[2] * k * inv,
+                s[3] + hp[3] * k * inv,
+            ];
+            self.px[i] = Self::pack_linear_pm(out);
         }
+    }
+
+    /// Unpacks a stored pixel to linear premultiplied light `[a, r, g, b]`, each 0.0..=1.0.
+    fn unpack_linear_pm(p: u32) -> [f32; 4] {
+        let c = Self::unpack(p);
+        let a = c.a as f32 / 255.0;
+        [a, Rgba::srgb_to_linear(c.r) * a, Rgba::srgb_to_linear(c.g) * a, Rgba::srgb_to_linear(c.b) * a]
+    }
+
+    /// Packs linear premultiplied light `[a, r, g, b]` back to a stored pixel via `pack`, so the
+    /// premultiplied invariant holds by construction.
+    fn pack_linear_pm(v: [f32; 4]) -> u32 {
+        let a = v[0].clamp(0.0, 1.0);
+        if a <= 0.0 {
+            return 0;
+        }
+        let ch = |x: f32| Rgba::linear_to_srgb((x / a).min(1.0));
+        Self::pack(Rgba::new(ch(v[1]), ch(v[2]), ch(v[3]), (a * 255.0).round() as u8))
     }
 
     /// Shared per-pixel source-over blend for primitives (the line and the
@@ -753,6 +886,10 @@ impl Canvas {
     /// already-premultiplied values would darken the midpoints, since a
     /// translucent stop's colour would bleed toward black as its own alpha
     /// shrinks, rather than staying the same hue and fading.
+    ///
+    /// The colour channels are interpolated in LINEAR light and re-encoded to a continuous sRGB
+    /// code (`Rgba::linear_to_srgb_f`), so the midpoint of black and white is ~188 rather than 128
+    /// and a gradient no longer dips dark in the middle. Alpha is interpolated as-is.
     fn sample_stops(stops: &[(f32, Rgba)], t: f32) -> (f32, f32, f32, f32) {
         let as_f32 = |c: Rgba| (c.r as f32, c.g as f32, c.b as f32, c.a as f32);
         if stops.is_empty() {
@@ -769,10 +906,12 @@ impl Canvas {
             let (p0, c0) = stops[i];
             let (p1, c1) = stops[i + 1];
             if t >= p0 && t <= p1 {
-                let (r0, g0, b0, a0) = as_f32(c0);
-                let (r1, g1, b1, a1) = as_f32(c1);
                 let f = (t - p0) / (p1 - p0).max(f32::EPSILON);
-                return (r0 + (r1 - r0) * f, g0 + (g1 - g0) * f, b0 + (b1 - b0) * f, a0 + (a1 - a0) * f);
+                let ch = |x: u8, y: u8| {
+                    let (lx, ly) = (Rgba::srgb_to_linear(x), Rgba::srgb_to_linear(y));
+                    Rgba::linear_to_srgb_f(lx + (ly - lx) * f)
+                };
+                return (ch(c0.r, c1.r), ch(c0.g, c1.g), ch(c0.b, c1.b), c0.a as f32 + (c1.a as f32 - c0.a as f32) * f);
             }
         }
         as_f32(stops[last].1)
@@ -1228,6 +1367,23 @@ mod tests {
         assert_eq!(c.get(6, 3), Rgba::TRANSPARENT, "right of rect");
         assert_eq!(c.get(2, 2), Rgba::TRANSPARENT, "above rect");
         assert_eq!(c.get(2, 8), Rgba::TRANSPARENT, "below rect");
+    }
+
+    #[test]
+    fn half_white_over_black_is_linear_light() {
+        let mut c = Canvas::new(1, 1);
+        c.fill_rect(0, 0, 1, 1, Rgba::new(0, 0, 0, 255));
+        c.fill_rect(0, 0, 1, 1, Rgba::new(255, 255, 255, 128));
+        let r = (c.bits()[0] >> 16) & 0xff;
+        assert!((186..=190).contains(&r), "got {r}, expected ~188 (linear), not 128 (gamma)");
+    }
+
+    #[test]
+    fn gradient_midpoint_is_the_linear_mean() {
+        let stops = [(0.0, Rgba::new(0, 0, 0, 255)), (1.0, Rgba::new(255, 255, 255, 255))];
+        let (r, _, _, _) = Canvas::sample_stops(&stops, 0.5);
+        let r = r.round() as u32;
+        assert!((186..=190).contains(&r), "got {r}, expected ~188 (linear), not ~128 (gamma)");
     }
 
     #[test]
@@ -1882,7 +2038,9 @@ mod tests {
         let mut flat = Canvas::new(4, 3);
         flat.vertical_gradient(0, 0, 4, 3, &stops, false);
         let row: Vec<u8> = (0..4).map(|x| flat.get(x, 1).r).collect();
-        assert_eq!(row, vec![128, 128, 128, 128], "without dithering row 1 quantises flat");
+        // 188 is the linear-light midpoint of black and full red (it was 128 when gradients averaged
+        // gamma codes; see `Rgba::srgb_to_linear`).
+        assert_eq!(row, vec![188, 188, 188, 188], "without dithering row 1 quantises flat");
 
         let mut dithered = Canvas::new(4, 3);
         dithered.vertical_gradient(0, 0, 4, 3, &stops, true);

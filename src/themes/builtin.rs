@@ -4384,10 +4384,11 @@ mod tests {
         for t in rainbows {
             let mut worst = (f32::MAX, 0u32);
             for deg in 0..360 {
-                let (h, s, v) = crate::themes::rainbow_hsv(&t, deg as f32 / 360.0, 0.0, false)
+                let (l, ch, h) = crate::themes::rainbow_oklch(&t, deg as f32 / 360.0, 0.0, false)
                     .expect("a rainbow colourway must yield a colour");
-                let (r, g, b) = hsv_to_rgb(h, s, v);
-                let hex = format!("#{r:02x}{g:02x}{b:02x}");
+                // The colour actually drawn: `render::tint` builds it with exactly this call.
+                let c = crate::render::canvas::Rgba::from_oklch(l, ch, h, 1.0);
+                let hex = format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b);
                 let c = contrast(&hex, &t.panel);
                 if c < worst.0 {
                     worst = (c, deg as u32);
@@ -4402,27 +4403,6 @@ mod tests {
                 t.panel
             );
         }
-    }
-
-    /// Mirrors `Rgba::from_hsv` so the contrast check above measures the colours actually drawn.
-    fn hsv_to_rgb(hue_turns: f32, sat: f32, val: f32) -> (u8, u8, u8) {
-        let h = hue_turns.rem_euclid(1.0) * 6.0;
-        let c = val * sat;
-        let x = c * (1.0 - ((h % 2.0) - 1.0).abs());
-        let m = val - c;
-        let (r, g, b) = match h as i32 {
-            0 => (c, x, 0.0),
-            1 => (x, c, 0.0),
-            2 => (0.0, c, x),
-            3 => (0.0, x, c),
-            4 => (x, 0.0, c),
-            _ => (c, 0.0, x),
-        };
-        (
-            ((r + m) * 255.0).round() as u8,
-            ((g + m) * 255.0).round() as u8,
-            ((b + m) * 255.0).round() as u8,
-        )
     }
 
     #[test]

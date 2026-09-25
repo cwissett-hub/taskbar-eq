@@ -465,12 +465,11 @@ fn rand01(seed: u32, n: u32) -> f32 {
     hash(seed ^ n.wrapping_mul(0x9e37_79b9)) as f32 / u32::MAX as f32
 }
 
-/// Straight-colour blend. Used for the depth ramp and the film/sheen mixes; every result is drawn
-/// at alpha 255 into the body, so this never touches the premultiplied invariant.
+/// Straight-colour blend in linear light (`Rgba::lerp_linear`, the one implementation for every
+/// family). Used for the depth ramp and the film/sheen mixes; every result is drawn at alpha 255
+/// into the body, so this never touches the premultiplied invariant.
 fn mix(a: Rgba, b: Rgba, t: f32) -> Rgba {
-    let t = if t.is_finite() { t.clamp(0.0, 1.0) } else { 0.0 };
-    let ch = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round().clamp(0.0, 255.0) as u8;
-    Rgba::new(ch(a.r, b.r), ch(a.g, b.g), ch(a.b, b.b), ch(a.a, b.a))
+    Rgba::lerp_linear(a, b, t)
 }
 
 impl Fluid {

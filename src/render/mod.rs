@@ -116,8 +116,8 @@ pub fn tint(
     fallback: &str,
     alpha: f32,
 ) -> canvas::Rgba {
-    match crate::themes::rainbow_hsv(t, x01, time_s, hot) {
-        Some((h, s, v)) => canvas::Rgba::from_hsv(h, s, v, alpha),
+    match crate::themes::rainbow_oklch(t, x01, time_s, hot) {
+        Some((l, c, h)) => canvas::Rgba::from_oklch(l, c, h, alpha),
         None => canvas::Rgba::from_hex(fallback, alpha),
     }
 }

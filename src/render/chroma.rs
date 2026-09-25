@@ -271,10 +271,11 @@ fn stripe_widths(resp: &[f32], interior: i32, swell: f32) -> Vec<i32> {
 /// Alpha is forced to 255 rather than carried, because this composites within the field
 /// buffer, and every pixel of that buffer must reach the canvas fully opaque - the overlay is
 /// composited with per-pixel alpha over the weather widget, so anything less is a hole.
+///
+/// Mixed in linear light by `Rgba::lerp_linear`, the one implementation for every family.
 fn mix(base: Rgba, over: Rgba, k: f32) -> Rgba {
-    let k = if k.is_finite() { k.clamp(0.0, 1.0) } else { 0.0 };
-    let f = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * k).round().clamp(0.0, 255.0) as u8;
-    Rgba::new(f(base.r, over.r), f(base.g, over.g), f(base.b, over.b), 255)
+    let c = Rgba::lerp_linear(base, over, k);
+    Rgba::new(c.r, c.g, c.b, 255)
 }
 
 /// Whether a halftone dot covers this pixel at the given ink coverage.

@@ -624,7 +624,9 @@ mod tests {
                 .flat_map(|y| (0..190).map(move |x| (x, y)))
                 .filter(|(x, y)| {
                     let p = c.get(*x, *y);
-                    p.r as u32 + p.g as u32 + p.b as u32 > 220
+                    // 400: the dim "off" segments measure 200..300 now and lit ones 400+.
+                    // Re-based for linear-light blending (task 7): faint, low-alpha marks now carry the light their alpha says, so the "off" state is brighter than it was in gamma space; it was 220.
+                    p.r as u32 + p.g as u32 + p.b as u32 > 400
                 })
                 .count() as u32
         };

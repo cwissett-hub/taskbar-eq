@@ -254,10 +254,9 @@ fn field(w: i32, h: i32) -> (i32, i32, i32, i32) {
     (1, 2, w - 2, h - 4)
 }
 
+/// Linear-light colour mix; see `Rgba::lerp_linear`, the one implementation for every family.
 fn lerp(a: Rgba, b: Rgba, t: f32) -> Rgba {
-    let t = t.clamp(0.0, 1.0);
-    let f = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round().clamp(0.0, 255.0) as u8;
-    Rgba { r: f(a.r, b.r), g: f(a.g, b.g), b: f(a.b, b.b), a: f(a.a, b.a) }
+    Rgba::lerp_linear(a, b, t)
 }
 
 impl Kaleido {

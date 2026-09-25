@@ -726,7 +726,9 @@ mod tests {
     fn inked_in_bar(c: &Canvas, w: i32, h: i32, barcode: f32, b: usize, y: i32) -> i32 {
         let (_, _, _, _, ox) = geometry(w, h, barcode);
         let bx = ox + b as i32 * BAR_PITCH;
-        (0..BAR_W).filter(|k| lum(c.get(bx + k, y)) > 50.0).count() as i32
+        // 100 sits between a screened-out cell (~62 measured) and solid ink (~155). Re-based for linear-light blending (task 7): faint, low-alpha marks now carry the light their alpha says, so the "off" state is brighter than it was in gamma space;
+        // it was 50.
+        (0..BAR_W).filter(|k| lum(c.get(bx + k, y)) > 100.0).count() as i32
     }
 
     fn render(t: &Theme, d: &FrameData, w: i32, h: i32) -> Canvas {
@@ -925,7 +927,8 @@ mod tests {
         let t = builtin::pantone_halftone();
         let c = render(&t, &flat(0.0), 190, 60);
         let (field_top, field_bot, _, _, _) = geometry(190, 60, t.pantone.barcode);
-        let count_at = |y: i32| (3..187).filter(|&x| lum(c.get(x, y)) > 30.0).count();
+        // 50 sits between bare paper (~35 measured) and the lightest inked cell (~63). Re-based for linear-light blending (task 7): faint, low-alpha marks now carry the light their alpha says, so the "off" state is brighter than it was in gamma space; it was 30.
+        let count_at = |y: i32| (3..187).filter(|&x| lum(c.get(x, y)) > 50.0).count();
         let near_base = count_at(field_bot - 2);
         let near_top = count_at(field_top + 2);
         assert!(near_base > 0, "the screen must ink something at the baseline");
@@ -934,7 +937,7 @@ mod tests {
             "coverage must ramp: {near_base} dots at the baseline vs {near_top} near the top"
         );
         // Alternating along the row, i.e. a lattice.
-        let on: Vec<bool> = (3..187).map(|x| lum(c.get(x, field_bot - 2)) > 30.0).collect();
+        let on: Vec<bool> = (3..187).map(|x| lum(c.get(x, field_bot - 2)) > 50.0).collect();
         let transitions = on.windows(2).filter(|p| p[0] != p[1]).count();
         assert!(transitions >= 20, "the screen is not a lattice, saw {transitions} transitions");
     }
