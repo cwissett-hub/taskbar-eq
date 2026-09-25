@@ -22,6 +22,16 @@
 //! Both axes are written as general repeats rather than the single reflection the steady pattern needs,
 //! because the flourish subdivides both - see the note on it below.
 //!
+//! # The frame never empties
+//!
+//! The audio gate opens at -55 dBFS, so this family is handed quiet-but-audible frames whose bands sit
+//! below `LEVEL_FLOOR`. On those the facet quantisation drove every cell to the panel colour and the
+//! panel became a black slab - and a kaleidoscope that stops dead reads as a freeze, not as quiet. So
+//! the CORE of every rosette (out to `MIN_RADIUS_FRAC` of its radius) is always drawn at the lowest,
+//! dim facet. It is a minimum floor, not a rescale: a loud frame already lights the core past that step
+//! and is left bit-for-bit unchanged, while `LEVEL_FLOOR` still marks where the rim petals and the spin
+//! begin to move.
+//!
 //! # RADIUS IS FREQUENCY, which is what makes it a meter
 //!
 //! The band a pixel reads is chosen by its distance from the nearest rosette centre: bass at the centre,
@@ -125,6 +135,21 @@ const MIN_CELL: i32 = 9;
 const LEVEL_FLOOR: f32 = 0.119;
 const LEVEL_SPAN: f32 = 0.456;
 const LEVEL_GAMMA: f32 = 0.6;
+
+/// The quiet floor: how much of each rosette's radius is ALWAYS lit, measured as a fraction of the
+/// cell's half-height (the cell side, which is half the field height - one rosette radius).
+///
+/// The gate opens at -55 dBFS, so this family is regularly handed frames whose bands sit below the
+/// p10 of loud music (`LEVEL_FLOOR`). On such a frame every facet quantised to zero and resolved to
+/// `dark`, and the whole panel went to the flat panel colour: a black slab. A kaleidoscope that stops
+/// dead reads as a freeze, so the frame never empties - the core of every rosette out to this radius
+/// is forced to at least the lowest facet step, drawn dim (the `lit` end of the ramp, never `hot`).
+///
+/// This is a MINIMUM, not a rescale: on any frame loud enough that the audio already lights the core
+/// past the lowest step, `max` leaves it untouched, so the loud image is bit-for-bit as before. Only
+/// the CORE is floored, not the rim - `LEVEL_FLOOR` still governs where the outer petals and the spin
+/// begin to move, so louder material still visibly reorganises the pattern.
+const MIN_RADIUS_FRAC: f32 = 0.35;
 
 /// The smallest panel this family will draw on.
 const MIN_W: i32 = 60;
@@ -302,6 +327,16 @@ impl Family for Kaleido {
 
         // ---- resolve one quarter-rosette ----
         let dark = Rgba::from_hex(&t.panel, 1.0);
+        // The r01 radius (0..1 of the corner distance) below which the core is floored. MIN_RADIUS_FRAC
+        // is expressed as a fraction of the cell's half-height, so convert it into r01 units with the
+        // same rmax the tables were built against - keeping the floor a fixed fraction of the rosette
+        // regardless of cell size, rather than a fixed pixel count that would shrink to nothing on a
+        // small panel.
+        let rmax = (((folds.cell_w - 1) * (folds.cell_w - 1)
+            + (folds.cell_h - 1) * (folds.cell_h - 1)) as f32)
+            .sqrt()
+            .max(1.0);
+        let core_r01 = (MIN_RADIUS_FRAC * folds.cell_h as f32 / rmax).clamp(0.0, 1.0);
         let cells = (folds.cell_w * folds.cell_h) as usize;
         for i in 0..cells.min(folds.cell.len()) {
             let lv = ((d.levels[folds.band[i] as usize] - LEVEL_FLOOR) / LEVEL_SPAN)
@@ -309,7 +344,14 @@ impl Family for Kaleido {
                 .powf(LEVEL_GAMMA);
             let petal = 0.5 + 0.5 * (folds.ang[i] * PETALS + phase).sin();
             // Quantised into flat facets - see FACETS. The floor is what puts a hard edge between steps.
-            let v = ((lv * (0.30 + 0.70 * petal)) * FACETS).floor() / FACETS;
+            let mut steps = (lv * (0.30 + 0.70 * petal) * FACETS).floor();
+            // The quiet floor - see MIN_RADIUS_FRAC. Inside the core radius the rosette never goes fully
+            // dark: force at least the lowest facet. `max` makes this a minimum, so a frame already loud
+            // enough to light the core is left exactly as it was.
+            if folds.r01[i] <= core_r01 {
+                steps = steps.max(1.0);
+            }
+            let v = steps / FACETS;
             folds.cell[i] = if v <= 0.0 {
                 dark
             } else {
@@ -649,6 +691,50 @@ mod tests {
                     }
                 }
                 assert!(lit > w * 20, "{} drew almost nothing at {w}px: {lit}", t.id);
+            }
+        }
+    }
+
+    /// The panel colour packed as this family draws it, for the "lit pixel" comparison below.
+    ///
+    /// `bits()` is premultiplied 0xAARRGGBB; the panel is opaque (`panel_alpha` 1.0) so its RGB is
+    /// carried unchanged, and both the rounded-rect background AND the `dark` facet resolve to exactly
+    /// this value. A pixel counts as LIT only if it differs from it - that is what makes a black slab
+    /// score zero.
+    fn panel_rgb(t: &Theme) -> u32 {
+        let p = Rgba::from_hex(&t.panel, 1.0);
+        ((p.r as u32) << 16) | ((p.g as u32) << 8) | p.b as u32
+    }
+
+    /// Quiet-but-audible material must still show a rosette, not a black slab.
+    ///
+    /// The gate opens at -55 dBFS, so the family is asked to draw levels well below the p10 of loud
+    /// music. Before the floor, every facet on such a frame resolved to `dark` and the panel emptied -
+    /// "a kaleidoscope that stops dead reads as a freeze". This pins a minimum amount of lit structure
+    /// at every shipped size and colourway.
+    #[test]
+    fn quiet_material_still_shows_a_rosette_at_every_size() {
+        for t in builtin::all().into_iter().filter(|t| t.family == "kaleido") {
+            for (w, h) in [(190, 48), (380, 48), (380, 60)] {
+                let mut fam = Kaleido::default();
+                let mut c = Canvas::new(w, h);
+                let mut d = FrameData { dt_ms: 16.7, ..FrameData::default() };
+                for v in d.levels.iter_mut() {
+                    *v = 0.12;
+                }
+                d.rms_l = 0.05;
+                d.rms_r = 0.05;
+                for _ in 0..30 {
+                    fam.draw(&mut c, &t, &d);
+                }
+                let pr = panel_rgb(&t);
+                let lit = c.bits().iter().filter(|p| (**p >> 24) > 0 && (**p & 0xffffff) != pr).count();
+                assert!(
+                    lit as f32 >= 0.05 * (w * h) as f32,
+                    "{} {w}x{h}: only {lit} lit pixels at level 0.12 (need {})",
+                    t.id,
+                    (0.05 * (w * h) as f32) as i32
+                );
             }
         }
     }
