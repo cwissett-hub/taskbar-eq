@@ -6,7 +6,7 @@ history. Newest first within each section. Commit hashes link the claim to the e
 **Last updated:** SONG IDENTIFICATION SHIPS (v0.2.0). Press a key while anything plays and the banner
 names the song via Shazam; every find goes to `songs.jsonl`; Songs -> Song history opens a dark
 cyberpunk page with Spotify / Apple Music / YouTube / Shazam links. Live-tested: six seconds of Spotify
-off the loopback came back as "Earth Move Edit - Daire" on the first post. 660 tests green. The repo is
+off the loopback came back as "Earth Move Edit - Daire" on the first post. 662 tests green. The repo is
 now GPL-3 because the fingerprinting is a port of SongRec.
 
 Earlier: FOUR NEW FAMILIES and a bug that had been shipping a black screen. 150 colourways
