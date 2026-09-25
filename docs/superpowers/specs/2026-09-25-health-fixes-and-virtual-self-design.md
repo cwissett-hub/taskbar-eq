@@ -99,12 +99,11 @@ check via the dump tests; the rainbow test asserts every hue step has the same O
 - `--help` prints usage for `--console`, `--diagnose`, `--levels`, `--stress`, `--version`, and
   exits; `--version` prints `taskbar-eq <CARGO_PKG_VERSION>`. Unknown `--flags` print help and exit
   1 rather than silently launching the overlay.
-- `.cargo/config.toml` with `[build] rustflags = ["--remap-path-prefix=<abs repo>=."]` is NOT
-  portable; instead `build.rs` is left alone and `Cargo.toml` gains `[profile.release] ... ` plus a
-  documented `cargo rustc` line? No - simplest portable fix: `[profile.release] debug = false,
-  strip = true` is already set; add `panic = "abort"` (drops the unwinding tables that carry paths)
-  and verify with `grep -c cwisset target/release/taskbar-eq.exe` == 0. If paths survive, add
-  `RUSTFLAGS=--remap-path-prefix` to the README build line and to the CI job instead.
+- No build-machine path in the exe. `[profile.release] panic = "abort"` drops the unwinding
+  tables that carry `C:\Users\<name>\...` panic locations; verify with
+  `grep -c cwisset target/release/taskbar-eq.exe` == 0. If any survive, document
+  `RUSTFLAGS=--remap-path-prefix=<repo>=.` in the README build line and the CI job (a
+  `.cargo/config.toml` with an absolute path is not portable, so it is not used).
 - `rust-version = "1.85"` (or whatever `cargo msrv`-free inspection of used features justifies;
   default to the toolchain that built it minus nothing: record the current stable).
 - `main.rs`: the three CLI probes (`diagnose`, `measure_levels`, `stress` and their helpers) move
