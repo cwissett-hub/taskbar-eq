@@ -62,6 +62,12 @@ const ID_RANDOM_THEME_NOW: usize = 1120;
 const ID_RANDOM_COLOURWAY_NOW: usize = 1121;
 const ID_FLOURISH_NOW: usize = 1122;
 const ID_FLOURISH_TOGGLE: usize = 1123;
+const ID_IDENTIFY_NOW: usize = 1124;
+const ID_SONG_HISTORY: usize = 1125;
+const ID_SONGS_FOLDER: usize = 1126;
+/// Ten recent songs live here. Below ID_THEME_BASE (2000) because the theme arm is `>=`.
+const ID_SONG_BASE: usize = 1900;
+const SONG_SLOTS: usize = 10;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TrayEvent {
@@ -84,6 +90,33 @@ pub enum TrayEvent {
     SetBackend(crate::win::media::Backend),
     /// Open config.toml in whatever the user edits text with.
     EditConfig,
+    /// Identify the current song now, from the menu, without a key bound.
+    IdentifyNow,
+    /// Open a link in the default browser.
+    OpenUrl(String),
+    /// Write and open the HTML song history.
+    SongHistory,
+    /// Reveal the folder holding songs.jsonl.
+    OpenSongsFolder,
+}
+
+/// One recent song in the Songs submenu: the label as the menu shows it, the URL it opens.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SongEntry {
+    pub label: String,
+    pub url: String,
+}
+
+/// Builds the Songs submenu entries from the store. `&` doubled because a lone ampersand is a
+/// menu accelerator marker and would vanish.
+pub fn song_entries(recent: &[crate::songs::Find]) -> Vec<SongEntry> {
+    recent
+        .iter()
+        .map(|f| SongEntry {
+            label: format!("{} - {}", f.title, f.artist).replace('&', "&&"),
+            url: crate::songs::spotify_url(f),
+        })
+        .collect()
 }
 
 /// What the menu needs to know about the transport state in order to draw itself.
@@ -234,8 +267,9 @@ impl Tray {
         current_theme: &str,
         recents: &[String],
         transport: &TransportState,
+        songs: &[SongEntry],
     ) -> Option<TrayEvent> {
-        self.show_menu_for(&self.themes, autostart, current_theme, recents, transport)
+        self.show_menu_for(&self.themes, autostart, current_theme, recents, transport, songs)
     }
 
     /// Shows the context menu built from an explicit theme list. This is the
@@ -250,6 +284,7 @@ impl Tray {
         current_theme: &str,
         recents: &[String],
         transport: &TransportState,
+        songs: &[SongEntry],
     ) -> Option<TrayEvent> {
         unsafe {
             // Before CreatePopupMenu: the theme is resolved when the menu is created, so
@@ -501,6 +536,43 @@ impl Tray {
                 let _ = AppendMenuW(menu, MF_POPUP, sub.0 as usize, w!("Flourishes"));
             }
 
+            // ---- Songs ------------------------------------------------------------------------
+            // The identification is offered as an ACTION as well as a binding, like the shuffles
+            // and flourishes: it must work before any key is set. Slot 7 is `Slot::IdentifySong`.
+            if let Ok(sub) = CreatePopupMenu() {
+                let _ = AppendMenuW(sub, MF_STRING, ID_IDENTIFY_NOW, w!("Identify this song now"));
+                {
+                    let text = format!("Identify key:  {}", transport.keys[7]);
+                    let mut wide: Vec<u16> =
+                        text.encode_utf16().chain(std::iter::once(0)).collect();
+                    let _ = AppendMenuW(
+                        sub,
+                        MF_STRING,
+                        ID_BIND_BASE + 7,
+                        windows::core::PCWSTR(wide.as_mut_ptr()),
+                    );
+                }
+                let _ = AppendMenuW(sub, MF_SEPARATOR, 0, None);
+                if songs.is_empty() {
+                    let _ =
+                        AppendMenuW(sub, MF_STRING | MF_DISABLED | MF_GRAYED, 0, w!("no songs yet"));
+                }
+                for (i, s) in songs.iter().take(SONG_SLOTS).enumerate() {
+                    let mut wide: Vec<u16> =
+                        s.label.encode_utf16().chain(std::iter::once(0)).collect();
+                    let _ = AppendMenuW(
+                        sub,
+                        MF_STRING,
+                        ID_SONG_BASE + i,
+                        windows::core::PCWSTR(wide.as_mut_ptr()),
+                    );
+                }
+                let _ = AppendMenuW(sub, MF_SEPARATOR, 0, None);
+                let _ = AppendMenuW(sub, MF_STRING, ID_SONG_HISTORY, w!("Song history..."));
+                let _ = AppendMenuW(sub, MF_STRING, ID_SONGS_FOLDER, w!("Open songs folder"));
+                let _ = AppendMenuW(menu, MF_POPUP, sub.0 as usize, w!("Songs"));
+            }
+
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
             // Top level rather than inside the Spotify submenu: config.toml carries the theme, the
             // width and every timing as well as the key bindings, so it is not a transport setting.
@@ -576,6 +648,18 @@ impl Tray {
             }
             if id == ID_RANDOM_COLOURWAY_NOW {
                 return Some(TrayEvent::RandomNow(crate::themes::pick::RandomKind::SameFamily));
+            }
+            if id == ID_IDENTIFY_NOW {
+                return Some(TrayEvent::IdentifyNow);
+            }
+            if id == ID_SONG_HISTORY {
+                return Some(TrayEvent::SongHistory);
+            }
+            if id == ID_SONGS_FOLDER {
+                return Some(TrayEvent::OpenSongsFolder);
+            }
+            if (ID_SONG_BASE..ID_SONG_BASE + SONG_SLOTS).contains(&id) {
+                return songs.get(id - ID_SONG_BASE).map(|s| TrayEvent::OpenUrl(s.url.clone()));
             }
             if (ID_BIND_BASE..ID_BIND_BASE + crate::win::hotkeys::SLOTS).contains(&id) {
                 return Some(TrayEvent::BindKey(id - ID_BIND_BASE));
@@ -814,6 +898,19 @@ unsafe extern "system" fn tray_wndproc(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn song_entries_escape_menu_ampersands_and_carry_spotify_urls() {
+        let f = crate::songs::Find {
+            title: "Rock & Roll".into(),
+            artist: "X".into(),
+            shazam_key: "k".into(),
+            ..Default::default()
+        };
+        let e = song_entries(&[f]);
+        assert_eq!(e[0].label, "Rock && Roll - X");
+        assert!(e[0].url.starts_with("https://open.spotify.com/search/"));
+    }
     use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 
     /// Proves the one mechanism a timer-driven render tick depends on: `WM_TIMER` IS delivered

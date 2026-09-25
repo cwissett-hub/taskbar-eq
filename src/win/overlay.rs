@@ -307,6 +307,27 @@ pub fn open_path(path: &std::path::Path) -> Result<()> {
     }
 }
 
+/// Opens a URL in the default browser. Same `ShellExecuteW` as `open_path`, minus the Notepad
+/// fallback - there is no sensible fallback for a link.
+pub fn open_url(url: &str) -> Result<()> {
+    let wide: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
+    let r = unsafe {
+        windows::Win32::UI::Shell::ShellExecuteW(
+            None,
+            windows::core::w!("open"),
+            windows::core::PCWSTR(wide.as_ptr()),
+            None,
+            None,
+            windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+        )
+    };
+    if (r.0 as usize) > 32 {
+        Ok(())
+    } else {
+        Err(anyhow!("ShellExecuteW returned {} for {url}", r.0 as usize))
+    }
+}
+
 pub fn open_widgets_panel() -> Result<()> {
     let key = |vk: VIRTUAL_KEY, up: bool| INPUT {
         r#type: INPUT_KEYBOARD,

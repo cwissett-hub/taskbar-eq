@@ -158,6 +158,8 @@ struct Ticker {
     /// loaded, and announcing it would mean a banner every time the app launches rather than when
     /// something actually changes.
     track_seq: u64,
+    /// Change counter of `identify::banner()` last acted on.
+    identify_seq: u64,
     /// Whether the banner is wanted at all.
     show_track_name: bool,
     /// How long the previous tick spent in each of its slow candidates, in milliseconds.
@@ -452,7 +454,19 @@ impl Ticker {
             // After the family, so it sits over whatever was drawn, and BEFORE `scale_alpha`, so the
             // reveal/hide fade applies to the banner too rather than leaving it at full strength
             // while the meter fades away underneath it.
-            if self.show_track_name {
+            //
+            // Two sources share the one banner: a track change (optional, `show_track_name`) and
+            // the song identifier (always - the user asked for it by pressing a key). The
+            // identifier's text is sticky while listening and fades normally once it has an answer.
+            let (id_text, id_seq, id_sticky) = identify::banner();
+            if id_seq != self.identify_seq {
+                self.identify_seq = id_seq;
+                self.banner = if id_sticky {
+                    render::banner::Banner::new_sticky(&id_text, r.h - 4)
+                } else {
+                    render::banner::Banner::new(&id_text, r.h - 4)
+                };
+            } else if self.show_track_name {
                 let (title, seq) = win::media::now_playing();
                 if seq != self.track_seq {
                     self.track_seq = seq;
@@ -463,14 +477,14 @@ impl Ticker {
                         render::banner::Banner::new(&title, r.h - 4)
                     };
                 }
-                if let Some(b) = self.banner.as_mut() {
-                    if !b.advance(dt_ms) {
-                        self.banner = None;
-                    }
+            }
+            if let Some(b) = self.banner.as_mut() {
+                if !b.advance(dt_ms) {
+                    self.banner = None;
                 }
-                if let Some(b) = self.banner.as_ref() {
-                    b.draw(&mut canvas, &self.theme, self.time_s);
-                }
+            }
+            if let Some(b) = self.banner.as_ref() {
+                b.draw(&mut canvas, &self.theme, self.time_s);
             }
             // Apply the reveal/hide fade. The gate has computed this opacity - with tests - since
             // it was written, but nothing ever consumed it, so the overlay popped in and out
@@ -1258,6 +1272,7 @@ fn main() -> Result<()> {
             rect_window: std::time::Instant::now(),
             banner: None,
             track_seq: win::media::now_playing().1,
+            identify_seq: identify::banner().1,
             show_track_name: cfg.show_track_name,
         });
     });
@@ -1374,12 +1389,17 @@ fn main() -> Result<()> {
             // the ticker itself. Holding this borrow across the call would turn the fix into a
             // no-op - the timer would fire, fail to borrow, and drop every tick.
             let current = with_ticker(|t| t.theme.id.clone()).unwrap_or_default();
+            // The song list is read from disk here, on a right-click, which is the only time
+            // it is needed - so a find made a moment ago is already in the menu.
+            let song_entries =
+                win::tray::song_entries(&songs::recent_distinct(&songs::load(), 10));
             let chosen =
                 tray.show_menu(
                     win::autostart::is_enabled(),
                     &current,
                     &cfg.recents,
                     &transport_state(&outcomes, &cfg),
+                    &song_entries,
                 );
             match chosen {
                 Some(TrayEvent::Quit) => break,
@@ -1391,6 +1411,22 @@ fn main() -> Result<()> {
                         if let Err(e) = cfg.save() {
                             log::write(&format!("config save failed: {e}"));
                         }
+                    }
+                }
+                Some(TrayEvent::IdentifyNow) => identify::request(),
+                Some(TrayEvent::OpenUrl(url)) => {
+                    if let Err(e) = win::overlay::open_url(&url) {
+                        log::write(&format!("could not open {url}: {e}"));
+                    }
+                }
+                Some(TrayEvent::SongHistory) => {
+                    if let Err(e) = history::open() {
+                        log::write(&format!("song history: {e}"));
+                    }
+                }
+                Some(TrayEvent::OpenSongsFolder) => {
+                    if let Err(e) = win::overlay::open_path(&Config::dir()) {
+                        log::write(&format!("could not open the songs folder: {e}"));
                     }
                 }
                 Some(TrayEvent::FlourishNow) => {
