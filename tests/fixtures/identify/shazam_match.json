@@ -1,0 +1,28 @@
+{
+  "matches": [{"id": "123", "offset": 5.1, "timeskew": 0.0001, "frequencyskew": 0.0}],
+  "timestamp": 1758800000000,
+  "timezone": "Europe/Paris",
+  "tagid": "00000000-0000-0000-0000-000000000000",
+  "track": {
+    "layout": "5",
+    "type": "MUSIC",
+    "key": "5933917",
+    "title": "Resonance",
+    "subtitle": "HOME",
+    "isrc": "QZDA61474185",
+    "url": "https://www.shazam.com/track/5933917/resonance",
+    "share": {"href": "https://www.shazam.com/track/5933917/resonance", "subject": "Resonance - HOME"},
+    "images": {"coverart": "https://is1-ssl.mzstatic.com/image/thumb/x/400x400bb.jpg", "coverarthq": "https://is1-ssl.mzstatic.com/image/thumb/x/800x800bb.jpg"},
+    "hub": {
+      "type": "APPLEMUSIC",
+      "options": [{"caption": "OPEN", "actions": [{"name": "hub:applemusic:deeplink", "type": "applemusicopen", "uri": "https://music.apple.com/gb/album/resonance/1234?i=5678"}]}],
+      "providers": [
+        {"type": "SPOTIFY", "actions": [{"name": "hub:spotify:searchdeeplink", "type": "uri", "uri": "spotify:search:Resonance%20HOME"}]},
+        {"type": "DEEZER", "actions": [{"name": "hub:deezer:searchdeeplink", "type": "uri", "uri": "deezer-query://www.deezer.com/play?query=x"}]}
+      ]
+    },
+    "sections": [
+      {"type": "SONG", "metadata": [{"title": "Album", "text": "Odyssey"}, {"title": "Label", "text": "Midwest Collective"}, {"title": "Released", "text": "2014"}]}
+    ]
+  }
+}
