@@ -164,9 +164,8 @@ impl Signature {
             put32(&mut out, 0x60030040 + band as u32);
             put32(&mut out, body.len() as u32);
             out.extend_from_slice(&body);
-            for _ in 0..((4 - body.len() % 4) % 4) {
-                out.push(0);
-            }
+            let pad = (4 - body.len() % 4) % 4;
+            out.resize(out.len() + pad, 0);
         }
         let size_minus_header = (out.len() - 48) as u32;
         out[8..12].copy_from_slice(&size_minus_header.to_le_bytes());

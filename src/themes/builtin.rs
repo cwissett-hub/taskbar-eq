@@ -1,4 +1,10 @@
-use super::{OrbitParams, 
+// The theme literals end each `*Params` block with `..Params::default()` even when every field is
+// listed, so that adding a field to a Params struct later does not have to be echoed into every one
+// of these ~20 colourway definitions. clippy sees the spread as having no effect today; it is there
+// for the day it does.
+#![allow(clippy::needless_update)]
+
+use super::{OrbitParams,
     ChromaParams, FluidParams, PantoneParams, RadarParams, Texture, Theme, TubeParams, VaporParams,
     Zone,
 };

@@ -333,7 +333,7 @@ impl Canvas {
     }
 
     fn unpack(p: u32) -> Rgba {
-        let a = (p >> 24) as u32;
+        let a = p >> 24;
         if a == 0 {
             return Rgba::TRANSPARENT;
         }

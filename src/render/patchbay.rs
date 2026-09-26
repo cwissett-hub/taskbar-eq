@@ -220,7 +220,7 @@ fn jack_rows(h: i32) -> (i32, i32) {
 /// which makes its sag worthless as a cue. Alternating gives a chevron of cables that never
 /// touch, so each droop is separable.
 fn cable_ends(i: usize) -> (usize, usize) {
-    if i % 2 == 0 {
+    if i.is_multiple_of(2) {
         (2 * i, 2 * i + 1)
     } else {
         (2 * i + 1, 2 * i)

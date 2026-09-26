@@ -1081,8 +1081,12 @@ Requires the [Rust stable MSVC toolchain](https://rustup.rs). No other dependenc
 git clone https://github.com/cwissett-hub/taskbar-eq
 cd taskbar-eq
 cargo build --release        # -> target/release/taskbar-eq.exe
-cargo test                   # the full suite
+cargo test                   # the full suite (fast; the slow sweeps are excluded)
+cargo test --release slow_ -- --ignored   # the slow whole-registry render sweeps
 ```
+
+The default `cargo test` skips five whole-registry render sweeps that each take tens of seconds;
+run them (and only them) with the `slow_` line above before shipping a rendering change.
 
 Building yourself also sidesteps the SmartScreen prompt entirely.
 

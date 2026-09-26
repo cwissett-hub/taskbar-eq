@@ -9,6 +9,23 @@
 // binary that hides its own window (which flickers visibly before it manages to). This takes the
 // first: see `attach_console_if_wanted`.
 #![windows_subsystem = "windows"]
+// Clippy allows that are wrong for THIS code, not blanket silencing:
+// - needless_range_loop: the DSP and render loops index by position, usually across two or three
+//   parallel arrays or with neighbour access (`x[i]`, `x[i+1]`), where the index form reads clearer
+//   than a zipped enumerate.
+// - manual_clamp: `x.max(a).min(b)` and `x.clamp(a, b)` differ on NaN inputs, and the
+//   poisoned-spectrum guards deliberately push NaN through the render path; keep the saturating form.
+// - field_reassign_with_default: test setup builds fixtures by assigning a field or two after
+//   `default()`, which is clearer than a struct-update literal listing every default.
+// - assertions_on_constants: several tests assert relationships between tuning constants on purpose,
+//   so the build fails if the constants are ever retuned into overlap.
+// - doc_lazy_continuation: the doc prose wraps clauses onto a line that starts "- ", used as a dash,
+//   not as a markdown bullet.
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::manual_clamp)]
+#![allow(clippy::field_reassign_with_default)]
+#![allow(clippy::assertions_on_constants)]
+#![allow(clippy::doc_lazy_continuation)]
 
 mod config;
 mod log;
@@ -958,7 +975,7 @@ fn measure_levels() -> Result<()> {
 
     log::write(&format!(
         "bass mean p50 {:.4}  p90 {:.4}  max {:.4}  (BOLT_FLOOR is 0.35)",
-        pick(&smoothed_bass.iter().copied().collect::<Vec<_>>().clone(), 0.5),
+        pick(&smoothed_bass.to_vec().clone(), 0.5),
         pick(&{ let mut v = smoothed_bass.clone(); v.sort_by(|a,b| a.partial_cmp(b).unwrap()); v }, 0.9),
         smoothed_bass.iter().copied().fold(0.0f32, f32::max)
     ));

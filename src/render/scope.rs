@@ -625,7 +625,7 @@ mod tests {
         let mut worst = i32::MAX;
         let mut frame = 0usize;
         for pass in 0..6 {
-            for row in seq.iter().chain(std::iter::repeat(&quiet).take(20)) {
+            for row in seq.iter().chain(std::iter::repeat_n(&quiet, 20)) {
                 let mut levels = [0.0f32; NUM_BANDS];
                 for (i, v) in levels.iter_mut().enumerate() {
                     *v = row.get(i).copied().unwrap_or(0.0);

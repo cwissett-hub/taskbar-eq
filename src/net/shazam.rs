@@ -7,6 +7,9 @@ use crate::dsp::shazam_sig::Signature;
 use crate::songs::Find;
 use serde_json::Value;
 
+// `Match` is the common, short-lived success payload; boxing it to shrink the rare NoMatch/Error
+// variants would add an allocation and indirection to the case that matters for nothing worth it.
+#[allow(clippy::large_enum_variant)]
 pub enum Outcome {
     Match(Find),
     NoMatch,

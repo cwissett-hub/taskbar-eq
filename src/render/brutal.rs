@@ -572,7 +572,7 @@ mod tests {
     /// A frame with a hard transient on the given step, so the flip detector has something to find.
     fn beat_frame(t_s: f32, period: usize, k: usize, gain: f32) -> FrameData {
         let mut d = FrameData { dt_ms: 16.7, time_s: t_s, ..FrameData::default() };
-        let hit = k % period == 0;
+        let hit = k.is_multiple_of(period);
         for (i, v) in d.levels.iter_mut().enumerate() {
             let f = i as f32 / crate::dsp::bands::NUM_BANDS as f32;
             let shape = (1.0 - f).powf(1.4) * 0.5 + 0.14;
@@ -1270,7 +1270,7 @@ mod tests {
                 k += 1;
             }
             for j in 0..5 {
-                fam.draw(&mut c, &t, &beat_frame((k + j) as f32 * 0.0167, 18, (k + j) as usize, 0.9));
+                fam.draw(&mut c, &t, &beat_frame((k + j) as f32 * 0.0167, 18, k + j, 0.9));
             }
             write(format!("brutal-slam-{}", if hanging { "ceiling" } else { "floor" }), &c);
         }

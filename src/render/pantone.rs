@@ -435,7 +435,7 @@ impl Family for Pantone {
             let mut i = 0usize;
             while x < w - 2 {
                 let sw = barcode_width(i).min(w - 2 - x);
-                if i % 2 == 0 {
+                if i.is_multiple_of(2) {
                     c.fill_rect(x, interior_top, sw, bc_h, ink_col);
                 }
                 x += sw;
@@ -1083,10 +1083,10 @@ mod tests {
             for x in (bx - BAR_GAP)..bx {
                 let p = dean(&dirty_c, x, y);
                 let q = dean(&clean_c, x, y);
-                if p.0 > p.2 + 40 && !(q.0 > q.2 + 40) {
+                if p.0 > p.2 + 40 && (q.0 <= q.2 + 40) {
                     red_fringe += 1;
                 }
-                if p.2 > p.0 + 40 && !(q.2 > q.0 + 40) {
+                if p.2 > p.0 + 40 && (q.2 <= q.0 + 40) {
                     blue_fringe += 1;
                 }
             }
@@ -1188,7 +1188,7 @@ mod tests {
                 let mut err = 0i64;
                 for x in 20..170 {
                     let src = x - off;
-                    if src < 1 || src > 188 {
+                    if !(1..=188).contains(&src) {
                         continue;
                     }
                     let d = pick(&b.get(x, row)) as i64 - pick(&a.get(src, row)) as i64;

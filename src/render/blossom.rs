@@ -276,7 +276,7 @@ const PETAL_BLOOM_MIN: i32 = 3;
 ///
 /// Storeys are 2-3 rows, never 1: a single-row waist is erased by a 1px closing because the wide roof
 /// rows above and below dilate into it, and holding the tiers apart is the entire job.
-
+///
 /// The tenshu, 41x28 - chosen from four candidates for having the clearest castle read.
 const CASTLE_TIERS: [&str; 28] = [
     "...................###...................",
@@ -548,6 +548,8 @@ impl Blossom {
     /// Its own layer because `Canvas::bloom` composites its halo UNDERNEATH the content that made it, and
     /// this family's sky is fully opaque - a bolt drawn straight onto the panel would get no halo at all.
     fn bolt_layer(&self, w: i32, h: i32, t: &Theme, bright: f32) -> Option<Canvas> {
+        // `!(bright > 0.0)` is deliberately true for NaN; partial_cmp would obscure that.
+        #[allow(clippy::neg_cmp_op_on_partial_ord)]
         if !(bright > 0.0) {
             return None; // false for NaN, which is the point
         }
@@ -648,7 +650,7 @@ impl Blossom {
         let key = Rgba::from_hex(&t.panel, 1.0);
         let rows_v: Vec<&[u8]> = mask.iter().map(|r| r.as_bytes()).collect();
         let solid = |ry: i32, rx: i32| -> bool {
-            if ry < 0 || rx < 0 || ry >= rows as i32 {
+            if ry < 0 || rx < 0 || ry >= rows {
                 return false;
             }
             let line = rows_v[ry as usize];
@@ -1187,7 +1189,6 @@ mod tests {
 
     /// The branch is the anchor and must always be there, whatever the audio does.
     ///
-
     /// The castle must OCCLUDE the moon - asked for as "the moon can be peeking out behind the castle" -
     /// and that deserves a test rather than trust in the arithmetic, because the placement was already
     /// wrong twice by exactly this failure: anchored to a panel fraction it landed ten columns short of

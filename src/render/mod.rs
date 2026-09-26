@@ -183,8 +183,12 @@ mod dispatch_tests {
     /// dimensions again. Each family was only ever eyeballed at 190x60, so this is the guard
     /// that a user selecting a theme cannot take the process down with an out-of-bounds write
     /// or a divide-by-zero in geometry that assumed the reference size.
+    ///
+    /// Slow sweep over the whole registry: excluded from the default suite.
+    /// Run: `cargo test --release slow_ -- --ignored`
     #[test]
-    fn every_colourway_renders_at_every_plausible_overlay_size() {
+    #[ignore]
+    fn slow_every_colourway_renders_at_every_plausible_overlay_size() {
         let sizes = [
             (190, 60), // the reference
             (150, 48), // smaller widget / lower DPI
@@ -227,8 +231,12 @@ mod dispatch_tests {
 
     /// The same, but at silence and with a poisoned spectrum, since a NaN reaching a geometry
     /// calculation is how the vaporwave scroll phase was permanently corrupted.
+    ///
+    /// Slow sweep over the whole registry: excluded from the default suite.
+    /// Run: `cargo test --release slow_ -- --ignored`
     #[test]
-    fn every_colourway_survives_silence_and_a_poisoned_spectrum() {
+    #[ignore]
+    fn slow_every_colourway_survives_silence_and_a_poisoned_spectrum() {
         for theme in builtin::all() {
             for spoil in [0usize, 1, 2] {
                 let mut d = FrameData::default();
@@ -252,6 +260,33 @@ mod dispatch_tests {
                 let mut c = Canvas::new(190, 60);
                 for _ in 0..4 {
                     family.draw(&mut c, &theme, &d);
+                }
+            }
+        }
+    }
+
+    /// Cheap enough for the default suite: every colourway at three sizes, two levels, asserting
+    /// the frame is not empty and not one flat colour. This is the guard that would have caught
+    /// pipes shipping black under 49 rows.
+    #[test]
+    fn every_colourway_is_visibly_alive_at_three_sizes() {
+        for t in crate::themes::builtin::all() {
+            for (w, h) in [(190, 48), (380, 48), (380, 60)] {
+                for level in [0.15f32, 0.6] {
+                    let mut fam = family_for(&t.family);
+                    let mut c = Canvas::new(w, h);
+                    let mut d = FrameData::default();
+                    for v in d.levels.iter_mut() { *v = level; }
+                    d.peaks = d.levels;
+                    // FrameData carries per-channel RMS, not a single `rms`; feed both.
+                    d.rms_l = level;
+                    d.rms_r = level;
+                    for _ in 0..20 { fam.draw(&mut c, &t, &d); }
+                    let px = c.bits();
+                    let lit = px.iter().filter(|p| (**p >> 24) > 8).count();
+                    let distinct: std::collections::HashSet<u32> = px.iter().map(|p| *p & 0xffffff).collect();
+                    assert!(lit as f32 >= 0.02 * px.len() as f32, "{} {w}x{h} @{level}: {lit} lit", t.id);
+                    assert!(distinct.len() >= 2, "{} {w}x{h} @{level}: one flat colour", t.id);
                 }
             }
         }
@@ -326,8 +361,12 @@ mod opacity {
     /// Swept across levels precisely because that second bug was LEVEL-DEPENDENT: the hot core only
     /// exists on a loud bar, so the holes appeared "occasionally, not constantly" and a single-level
     /// test would have missed them entirely.
+    ///
+    /// Slow sweep over the whole registry: excluded from the default suite.
+    /// Run: `cargo test --release slow_ -- --ignored`
     #[test]
-    fn no_family_leaves_a_transparent_pixel_inside_its_panel() {
+    #[ignore]
+    fn slow_no_family_leaves_a_transparent_pixel_inside_its_panel() {
         let (w, h) = (190, 60);
         let mut worst: Option<(String, f32, i32, i32, u8)> = None;
         let mut offenders = std::collections::BTreeMap::new();

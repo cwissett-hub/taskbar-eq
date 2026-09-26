@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct Find {
     /// Unix seconds.
     pub when: i64,
@@ -27,23 +28,6 @@ pub struct Find {
     pub app_version: String,
 }
 
-impl Default for Find {
-    fn default() -> Self {
-        Find {
-            when: 0,
-            title: String::new(),
-            artist: String::new(),
-            album: None,
-            cover_url: None,
-            shazam_url: None,
-            apple_music_url: None,
-            spotify_uri: None,
-            isrc: None,
-            shazam_key: String::new(),
-            app_version: String::new(),
-        }
-    }
-}
 
 pub fn path() -> PathBuf {
     crate::config::Config::dir().join("songs.jsonl")

@@ -303,10 +303,8 @@ impl Family for Dolphin {
         let mask: &[&str; SPRITE_H as usize] = &BODY[self.tail.min(PHASES - 1)];
         let body = if leap > 0.01 { hot } else { lit };
         let on = |rx: i32, ry: i32| -> bool {
-            ry >= 0
-                && ry < SPRITE_H
-                && rx >= 0
-                && rx < SPRITE_W
+            (0..SPRITE_H).contains(&ry)
+                && (0..SPRITE_W).contains(&rx)
                 && mask[ry as usize].as_bytes()[rx as usize] == b'#'
         };
         // KEYLINE FIRST. Without it the dolphin is lit dots on a lit lattice with nothing between
@@ -342,13 +340,13 @@ impl Family for Dolphin {
 
         // ---- splash: breaking the waterline throws dots along it ----
         let nose = sx + SPRITE_W - 1;
-        let breaking = sy + SPRITE_H - 1 >= water_row && arc < 0.55;
+        let breaking = sy + SPRITE_H > water_row && arc < 0.55;
         for col in 0..cols {
             let near = (col - nose).abs();
             let add = if breaking && near <= 3 { 1.0 - near as f32 / 4.0 } else { 0.0 };
             let next = (self.splash[col as usize] - dt / SPLASH_MS).max(0.0).max(add);
             self.splash[col as usize] = if next.is_finite() { next.clamp(0.0, 1.0) } else { 0.0 };
-            if self.splash[col as usize] > 0.35 && water_row - 1 >= 0 {
+            if self.splash[col as usize] > 0.35 && water_row > 0 {
                 c.fill_rect(ox + col * PITCH, oy + (water_row - 1) * PITCH, DOT, DOT, hot);
             }
         }

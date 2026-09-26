@@ -269,11 +269,11 @@ impl Family for Rave {
         let kicked = self.kick.update(&d.levels[..nb], dt, KICK_RATIO, KICK_REFRACTORY_MS);
         if kicked {
             self.kicks = self.kicks.wrapping_add(1);
-            let accent = self.kicks % ACCENT_EVERY == 0;
+            let accent = self.kicks.is_multiple_of(ACCENT_EVERY);
             self.strobe = if accent { STROBE_ACCENT } else { STROBE_KICK };
             // An IMPULSE into the spring, alternating direction so consecutive kicks throw the rig the
             // other way instead of pumping it further in one.
-            let dir = if self.kicks % 2 == 0 { 1.0 } else { -1.0 };
+            let dir = if self.kicks.is_multiple_of(2) { 1.0 } else { -1.0 };
             self.snap_v += dir * SNAP_RAD * std::f32::consts::TAU * SNAP_HZ;
         }
         self.strobe -= self.strobe * (dt / STROBE_MS).min(1.0);
@@ -349,7 +349,7 @@ impl Family for Rave {
         let total = (EMITTERS * per).max(1);
         // Colour flips on every kick, and on a rainbow colourway the hue steps too. On a fixed colourway
         // `tint` returns the hex unchanged, so the flip between `lit` and `hot` is what carries it there.
-        let flip = self.kicks % 2 == 0;
+        let flip = self.kicks.is_multiple_of(2);
         let hue = (self.kicks as f32 * 0.137).rem_euclid(1.0);
         let core_hex = if flip { &t.hot } else { &t.lit };
         let core = crate::render::tint(t, hue, d.time_s, flip, core_hex, 1.0);
@@ -414,7 +414,7 @@ mod tests {
     /// A kick every `period_frames`, so the detector has something on the grid to find.
     fn kick_frame(t_s: f32, period_frames: usize, k: usize, gain: f32) -> FrameData {
         let mut d = FrameData { dt_ms: 16.7, time_s: t_s, ..FrameData::default() };
-        let hit = k % period_frames == 0;
+        let hit = k.is_multiple_of(period_frames);
         for (i, v) in d.levels.iter_mut().enumerate() {
             let f = i as f32 / crate::dsp::bands::NUM_BANDS as f32;
             let shape = (1.0 - f).powf(1.3) * 0.55 + 0.16;

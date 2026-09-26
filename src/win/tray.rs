@@ -227,7 +227,7 @@ impl Tray {
             for (i, ch) in "Taskbar EQ".encode_utf16().enumerate() {
                 tip[i] = ch;
             }
-            let mut nid = NOTIFYICONDATAW {
+            let nid = NOTIFYICONDATAW {
                 cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
                 hWnd: hwnd,
                 uID: 1,
@@ -247,7 +247,7 @@ impl Tray {
                 szTip: tip,
                 ..Default::default()
             };
-            if !Shell_NotifyIconW(NIM_ADD, &mut nid).as_bool() {
+            if !Shell_NotifyIconW(NIM_ADD, &nid).as_bool() {
                 return Err(anyhow!("Shell_NotifyIconW(NIM_ADD) failed"));
             }
 
@@ -734,13 +734,13 @@ impl Tray {
 impl Drop for Tray {
     fn drop(&mut self) {
         unsafe {
-            let mut nid = NOTIFYICONDATAW {
+            let nid = NOTIFYICONDATAW {
                 cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
                 hWnd: self.hwnd,
                 uID: 1,
                 ..Default::default()
             };
-            let _ = Shell_NotifyIconW(NIM_DELETE, &mut nid);
+            let _ = Shell_NotifyIconW(NIM_DELETE, &nid);
         }
     }
 }
@@ -1021,7 +1021,9 @@ mod tests {
         }
     }
 
+    /// Creates a real tray icon on the desktop; run by hand.
     #[test]
+    #[ignore]
     fn new_creates_and_drop_removes_the_tray_icon() {
         let tray = Tray::new(&[MenuItem::new("vfd-ice", "VFD Ice", "segmented")])
             .expect("tray icon creation should succeed on a real desktop session");
@@ -1105,7 +1107,9 @@ mod tests {
         assert_eq!(crate::themes::family_label(""), "Other");
     }
 
+    /// Creates a real tray icon on the desktop; run by hand.
     #[test]
+    #[ignore]
     fn set_themes_replaces_the_stored_list_so_a_hot_reload_is_reflected() {
         let mut tray = Tray::new(&[MenuItem::new("old", "Old", "segmented")])
             .expect("tray icon creation should succeed on a real desktop session");
@@ -1126,7 +1130,9 @@ mod tests {
         );
     }
 
+    /// Creates a real tray icon on the desktop; run by hand.
     #[test]
+    #[ignore]
     fn right_click_sets_the_flag_but_poll_never_synthesises_quit() {
         let mut tray = Tray::new(&[])
             .expect("tray icon creation should succeed on a real desktop session");

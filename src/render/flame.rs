@@ -574,7 +574,7 @@ impl Family for Flame {
             .as_ref()
             .map(|g| g.width() != cw || g.height() != ch)
             .unwrap_or(true);
-        if stale || self.frame % SPILL_FAR_EVERY == 0 {
+        if stale || self.frame.is_multiple_of(SPILL_FAR_EVERY) {
             let mut far = spill.clone();
             far.bloom(SPILL_FAR_RADIUS, SPILL_FAR_ALPHA);
             self.far_glow = Some(far);
@@ -1008,6 +1008,8 @@ mod tests {
     #[ignore]
     fn probe_flame_cost() {
         let d = flat(0.45);
+        // A one-off probe table of named constructors; a type alias would not read more clearly.
+        #[allow(clippy::type_complexity)]
         let cases: [(&str, Box<dyn Fn() -> Box<dyn Family>>); 4] = [
             ("flame (2 blooms + field)", Box::new(|| Box::new(Flame::default()))),
             ("waterfall", Box::new(|| Box::new(crate::render::waterfall::Waterfall::default()))),

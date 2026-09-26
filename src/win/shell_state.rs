@@ -165,28 +165,52 @@ pub fn tick_interval_ms() -> u32 {
 pub const ACTIVE_TICK_MS: u32 = 16;
 pub const SUSPENDED_TICK_MS: u32 = 250;
 
+/// Puts the published state back to its documented defaults, for tests only.
+///
+/// The tests share this module's process-global atomics, so each one that touches them resets
+/// first and holds `tests::SERIAL` while it runs; without both, one test reads another's leftovers.
+#[cfg(test)]
+fn reset() {
+    NOTIFICATION_STATE.store(0, Ordering::SeqCst);
+    TASKBAR_VISIBLE.store(true, Ordering::SeqCst);
+    FULLSCREEN_FOREGROUND.store(false, Ordering::SeqCst);
+    DISPLAY_OFF.store(false, Ordering::SeqCst);
+    SUSPENDED.store(false, Ordering::SeqCst);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Serialises the tests that touch this module's process-global atomics. Cargo runs tests in
+    /// parallel threads, so without this one test's stores race another's reads - which is how the
+    /// state tests flaked in a full run while passing in isolation.
+    static SERIAL: Mutex<()> = Mutex::new(());
 
     #[test]
     fn the_defaults_show_the_overlay_rather_than_hiding_it() {
-        // Read BEFORE anything calls `start`, which is the state a first frame could see if seeding
-        // ever failed. Getting these the wrong way round is the difference between one stray frame
-        // and a meter that never appears at all - and the second is the bug that would get reported
-        // as "it stopped working" with nothing in the log.
+        let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        // Getting these the wrong way round is the difference between one stray frame and a meter
+        // that never appears at all - and the second is the bug that would get reported as "it
+        // stopped working" with nothing in the log.
         //
-        // Deliberately does not call `start()`: this test asserts the static initialisers, and a
-        // poll would overwrite them with whatever this machine happens to be doing.
+        // Asserts the ACTUAL module statics via `reset()` and the real accessors, not fresh locals:
+        // the old version loaded brand-new `AtomicI32::new(0)`/`AtomicBool::new(true)` values, which
+        // could never fail however the real defaults were declared.
+        reset();
         assert_eq!(
-            AtomicI32::new(0).load(Ordering::Relaxed),
+            notification_state(),
             0,
             "the notification-state default must be the same value the API errors to"
         );
         assert!(
-            AtomicBool::new(true).load(Ordering::Relaxed),
+            taskbar_visible(),
             "the taskbar-visible default must be the one that SHOWS the overlay"
         );
+        assert!(!fullscreen_foreground(), "a fullscreen foreground default would block the overlay");
+        assert!(!display_off(), "a display-off default would block the overlay");
+        assert!(!suspended(), "the overlay must not start suspended");
         // And the values the visibility policy treats as blocking must not be the default.
         assert_ne!(0, super::super::visibility::QUNS_FULLSCREEN);
         assert_ne!(0, super::super::visibility::QUNS_PRESENTATION);
@@ -194,6 +218,7 @@ mod tests {
 
     #[test]
     fn starting_twice_does_not_leave_two_pollers() {
+        let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         // `--diagnose` and the render loop both run in this process.
         start();
         assert!(RUNNING.load(Ordering::SeqCst), "the first start should have claimed the flag");
@@ -215,6 +240,7 @@ mod tests {
         // The bound is deliberately generous: 200k loads is about a millisecond, and 200k shell
         // calls is several minutes, so there are five orders of magnitude between pass and fail and
         // no amount of load on the build machine can blur them.
+        let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         start();
         let t0 = std::time::Instant::now();
         let mut acc = 0i64;
@@ -224,7 +250,7 @@ mod tests {
         }
         let ms = t0.elapsed().as_millis();
         // Consumed so the loop cannot be optimised away entirely.
-        assert!(acc >= 0 || acc < 0);
+        std::hint::black_box(acc);
         assert!(ms < 500, "400k reads took {ms}ms - these are not atomic loads any more");
     }
 
@@ -236,6 +262,7 @@ mod tests {
         // The costly part - skipping the once-a-second UIA enumeration - is structural rather than
         // testable here: the tick returns before `rediscover_rect` is reached. That call was measured
         // at a 70ms median and 188ms worst case, which is what made this worth doing.
+        let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         use super::super::visibility::{should_show, Inputs, QUNS_FULLSCREEN, QUNS_PRESENTATION};
         let widget = Some(crate::geom::Rect { x: 1425, y: 1140, w: 190, h: 60 });
 
@@ -281,6 +308,7 @@ mod tests {
 
     #[test]
     fn the_accessors_return_what_was_published() {
+        let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         // The publish path, without the shell: the render thread has to see a stored value rather
         // than re-reading anything.
         NOTIFICATION_STATE.store(super::super::visibility::QUNS_FULLSCREEN, Ordering::Relaxed);

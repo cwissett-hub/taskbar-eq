@@ -1167,7 +1167,7 @@ mod tests {
         for probe in [1usize, 5] {
             let behind = r.pos - probe as f32;
             assert!(
-                behind < 0.0 || behind > TRAIL_CELLS + 1.0,
+                !(0.0..=TRAIL_CELLS + 1.0).contains(&behind),
                 "probe column {probe} is under the sweep at {} - retune the frame count",
                 r.pos
             );

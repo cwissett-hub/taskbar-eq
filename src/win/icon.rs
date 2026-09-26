@@ -262,7 +262,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         for s in [16, 20, 24, 32, 48, 64, 128, 256] {
             for dark in [true, false] {
-                let c = if dark { glyph(s, dark) } else { glyph(s, dark) };
+                let c = glyph(s, dark);
                 let mut out = Vec::with_capacity((s * s * 4) as usize);
                 for y in 0..s {
                     for x in 0..s {

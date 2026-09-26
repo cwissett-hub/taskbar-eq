@@ -1336,7 +1336,7 @@ mod tests {
         d
     }
 
-    fn pct(v: &mut Vec<f32>, p: f32) -> f32 {
+    fn pct(v: &mut [f32], p: f32) -> f32 {
         v.sort_by(|a, b| a.partial_cmp(b).unwrap());
         v[(((v.len() - 1) as f32) * p) as usize]
     }
@@ -2985,8 +2985,11 @@ mod tests {
         );
     }
 
+    /// Slow sweep over the whole registry: excluded from the default suite.
+    /// Run: `cargo test --release slow_ -- --ignored`
     #[test]
-    fn every_fluid_colourway_renders_and_they_differ_structurally_not_just_in_hue() {
+    #[ignore]
+    fn slow_every_fluid_colourway_renders_and_they_differ_structurally_not_just_in_hue() {
         // The rejection this guards is a sibling family that shipped five colourways of which
         // three rendered near-identically. Pixel inequality is too weak a test for that - two
         // colourways can differ by one hex and pass it - so the assertion is on the PHYSICS the
@@ -3123,6 +3126,8 @@ mod tests {
     /// This is the guard against the defect that has shipped twice: a theme field documented at
     /// length that no drawing code ever reads (the vaporwave auto-ranger, the Pantone ink
     /// quantisation). A grep proves a field is MENTIONED; this proves it changes pixels.
+    // A table of (name, setter) probes; a named alias for the fn-pointer tuple would not clarify it.
+    #[allow(clippy::type_complexity)]
     fn param_probes() -> Vec<(&'static str, fn(&mut crate::themes::FluidParams))> {
         vec![
             ("surface", |p| p.surface = 0.70),
@@ -3150,8 +3155,11 @@ mod tests {
         ]
     }
 
+    /// Slow sweep over the whole registry: excluded from the default suite.
+    /// Run: `cargo test --release slow_ -- --ignored`
     #[test]
-    fn every_fluid_theme_field_changes_what_is_drawn() {
+    #[ignore]
+    fn slow_every_fluid_theme_field_changes_what_is_drawn() {
         let frames = real_music();
         // A base with every optional element switched ON, so a field whose effect is gated by
         // another one is still reachable - `film` does nothing at zero iridescence, and testing it

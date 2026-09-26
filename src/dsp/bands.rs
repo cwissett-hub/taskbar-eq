@@ -598,7 +598,7 @@ mod tests {
         for (bin, c) in buf.iter_mut().enumerate() {
             let f = bin as f32 * bin_hz;
             let f = if f > rate / 2.0 { rate - f } else { f };
-            let env = if f < F_LOW || f > F_HIGH {
+            let env = if !(F_LOW..=F_HIGH).contains(&f) {
                 0.0
             } else {
                 let octaves_above_low = (f / F_LOW).log2();

@@ -199,85 +199,6 @@ pub fn channel_rms(src: &[f32], channels: usize) -> (f32, f32) {
     ((sl / n).sqrt(), (sr / n).sqrt())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn downmixes_stereo_by_averaging() {
-        let src = [1.0, 0.0, 0.5, 0.5, -1.0, 1.0];
-        assert_eq!(interleaved_to_mono(&src, 2), vec![0.5, 0.5, 0.0]);
-    }
-
-    #[test]
-    fn passes_mono_through_unchanged() {
-        let src = [0.1, -0.2, 0.3];
-        assert_eq!(interleaved_to_mono(&src, 1), vec![0.1, -0.2, 0.3]);
-    }
-
-    #[test]
-    fn handles_surround_channel_counts() {
-        // 6ch: all ones must average to one, not overflow.
-        let src = vec![1.0f32; 12];
-        assert_eq!(interleaved_to_mono(&src, 6), vec![1.0, 1.0]);
-    }
-
-    #[test]
-    fn tolerates_a_truncated_final_frame() {
-        // WASAPI can hand back a partial frame; must not panic.
-        let src = [1.0, 1.0, 1.0];
-        let out = interleaved_to_mono(&src, 2);
-        assert_eq!(out.len(), 1, "partial trailing frame is dropped, not panicked on");
-    }
-
-    #[test]
-    fn zero_channels_is_survivable() {
-        assert!(interleaved_to_mono(&[1.0, 2.0], 0).is_empty());
-        assert_eq!(channel_rms(&[1.0, 2.0], 0), (0.0, 0.0));
-    }
-
-    #[test]
-    fn rms_of_silence_is_zero() {
-        assert_eq!(channel_rms(&vec![0.0; 64], 2), (0.0, 0.0));
-    }
-
-    #[test]
-    fn rms_separates_the_two_channels() {
-        // Left full-scale DC, right silent.
-        let src: Vec<f32> = (0..64).map(|i| if i % 2 == 0 { 1.0 } else { 0.0 }).collect();
-        let (l, r) = channel_rms(&src, 2);
-        assert!((l - 1.0).abs() < 1e-6, "left {l}");
-        assert!(r.abs() < 1e-6, "right {r}");
-    }
-
-    /// Every test that touches the process-global recorder holds `RECORDER_TEST_LOCK`, so parallel
-    /// test threads cannot interleave with it.
-    #[test]
-    fn device_poll_is_at_most_once_per_second() {
-        let t0 = std::time::Instant::now();
-        assert!(!should_poll_device(t0, t0 + std::time::Duration::from_millis(999)));
-        assert!(should_poll_device(t0, t0 + std::time::Duration::from_millis(1000)));
-    }
-
-    #[test]
-    fn recorder_drains_and_collects_only_while_installed() {
-        let _g = RECORDER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        record_stop();
-        record_push(48_000, &[0.1, 0.2]);
-        assert!(record_take().is_none(), "nothing installed, nothing kept");
-        record_start();
-        record_push(48_000, &[0.1, 0.2]);
-        record_push(48_000, &[0.3]);
-        assert_eq!(record_take(), Some((48_000, vec![0.1, 0.2, 0.3])));
-        // Drained: the next take returns only what arrived since.
-        assert_eq!(record_take(), Some((48_000, vec![])));
-        record_push(48_000, &[0.4]);
-        assert_eq!(record_take(), Some((48_000, vec![0.4])));
-        record_stop();
-        assert!(record_take().is_none());
-    }
-}
-
 use windows::Win32::Media::Audio::{
     eConsole, eRender, IAudioCaptureClient, IAudioClient, IMMDeviceEnumerator, MMDeviceEnumerator,
     AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK,
@@ -573,5 +494,84 @@ fn capture_loop(tx: &FrameSender) -> Result<()> {
                 ring.drain(..excess);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn downmixes_stereo_by_averaging() {
+        let src = [1.0, 0.0, 0.5, 0.5, -1.0, 1.0];
+        assert_eq!(interleaved_to_mono(&src, 2), vec![0.5, 0.5, 0.0]);
+    }
+
+    #[test]
+    fn passes_mono_through_unchanged() {
+        let src = [0.1, -0.2, 0.3];
+        assert_eq!(interleaved_to_mono(&src, 1), vec![0.1, -0.2, 0.3]);
+    }
+
+    #[test]
+    fn handles_surround_channel_counts() {
+        // 6ch: all ones must average to one, not overflow.
+        let src = vec![1.0f32; 12];
+        assert_eq!(interleaved_to_mono(&src, 6), vec![1.0, 1.0]);
+    }
+
+    #[test]
+    fn tolerates_a_truncated_final_frame() {
+        // WASAPI can hand back a partial frame; must not panic.
+        let src = [1.0, 1.0, 1.0];
+        let out = interleaved_to_mono(&src, 2);
+        assert_eq!(out.len(), 1, "partial trailing frame is dropped, not panicked on");
+    }
+
+    #[test]
+    fn zero_channels_is_survivable() {
+        assert!(interleaved_to_mono(&[1.0, 2.0], 0).is_empty());
+        assert_eq!(channel_rms(&[1.0, 2.0], 0), (0.0, 0.0));
+    }
+
+    #[test]
+    fn rms_of_silence_is_zero() {
+        assert_eq!(channel_rms(&vec![0.0; 64], 2), (0.0, 0.0));
+    }
+
+    #[test]
+    fn rms_separates_the_two_channels() {
+        // Left full-scale DC, right silent.
+        let src: Vec<f32> = (0..64).map(|i| if i % 2 == 0 { 1.0 } else { 0.0 }).collect();
+        let (l, r) = channel_rms(&src, 2);
+        assert!((l - 1.0).abs() < 1e-6, "left {l}");
+        assert!(r.abs() < 1e-6, "right {r}");
+    }
+
+    /// Every test that touches the process-global recorder holds `RECORDER_TEST_LOCK`, so parallel
+    /// test threads cannot interleave with it.
+    #[test]
+    fn device_poll_is_at_most_once_per_second() {
+        let t0 = std::time::Instant::now();
+        assert!(!should_poll_device(t0, t0 + std::time::Duration::from_millis(999)));
+        assert!(should_poll_device(t0, t0 + std::time::Duration::from_millis(1000)));
+    }
+
+    #[test]
+    fn recorder_drains_and_collects_only_while_installed() {
+        let _g = RECORDER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        record_stop();
+        record_push(48_000, &[0.1, 0.2]);
+        assert!(record_take().is_none(), "nothing installed, nothing kept");
+        record_start();
+        record_push(48_000, &[0.1, 0.2]);
+        record_push(48_000, &[0.3]);
+        assert_eq!(record_take(), Some((48_000, vec![0.1, 0.2, 0.3])));
+        // Drained: the next take returns only what arrived since.
+        assert_eq!(record_take(), Some((48_000, vec![])));
+        record_push(48_000, &[0.4]);
+        assert_eq!(record_take(), Some((48_000, vec![0.4])));
+        record_stop();
+        assert!(record_take().is_none());
     }
 }

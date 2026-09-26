@@ -992,7 +992,7 @@ mod tests {
         ring(&mut c, 30, 30, 20, col);
         let solo = c.get(30, 10).a;
         assert!(solo > 0, "the ring did not draw at twelve o'clock");
-        let diag = (20.0f32 * 0.7071).round() as i32;
+        let diag = (20.0f32 * std::f32::consts::FRAC_1_SQRT_2).round() as i32;
         let d = c.get(30 + diag, 30 - diag).a;
         assert!(d > 0, "the ring has a gap on its diagonal");
         assert_eq!(d, solo, "the diagonal composited twice: {d} vs {solo}");
