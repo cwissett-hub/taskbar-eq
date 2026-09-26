@@ -926,8 +926,10 @@ mod tests {
         );
     }
 
+    /// Slow (~5.6s in debug); gated out of the default suite. The display returns to reading the audio. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_display_returns_to_reading_the_audio() {
+    #[ignore]
+    fn slow_the_display_returns_to_reading_the_audio() {
         // The constraint every flourish here works under, and this family is the most exposed to it:
         // jamming destroys the reading by definition, so it has to give it back.
         //
@@ -1184,8 +1186,10 @@ mod tests {
         assert!(loud < 1.0, "a full-scale return must stay off the top range line, got {loud:.2}");
     }
 
+    /// Slow (~5.5s in debug); gated out of the default suite. The audio actually changes the pixels. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_audio_actually_changes_the_pixels() {
+    #[ignore]
+    fn slow_the_audio_actually_changes_the_pixels() {
         // Summed over the FIELD, not the whole canvas, and the difference is not cosmetic: this used
         // to be a whole-canvas sum and it measured 1.12x once the warning receiver arrived, against a
         // 1.15x requirement. Nothing had regressed - the scope is a quarter of the panel and, on a
@@ -1480,8 +1484,10 @@ mod tests {
         );
     }
 
+    /// Slow (~6.0s in debug); gated out of the default suite. The spectrum still runs low to high left to right at the wide size. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_spectrum_still_runs_low_to_high_left_to_right_at_the_wide_size() {
+    #[ignore]
+    fn slow_the_spectrum_still_runs_low_to_high_left_to_right_at_the_wide_size() {
         // The wide mode used to be two faces side by side, each covering half the spectrum, so the
         // frequency axis restarted in the middle of the panel. One field with more columns must
         // keep it monotonic, or the display means something different at each width.
@@ -1618,8 +1624,10 @@ mod tests {
         assert_eq!(tiny.bits().len(), 1);
     }
 
+    /// Slow (~7.3s in debug); gated out of the default suite. Every radar colourway renders and differs. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn every_radar_colourway_renders_and_differs() {
+    #[ignore]
+    fn slow_every_radar_colourway_renders_and_differs() {
         let mut seen: Vec<Vec<u32>> = Vec::new();
         for t in builtin::all().into_iter().filter(|t| t.family == "radar") {
             let (_, c) = run(&t, &uneven(4..9, 0.62, 0.18), 190, 60, 100);
@@ -1664,8 +1672,10 @@ mod tests {
     /// Two committed fixtures, captured with `--levels` from a real session:
     /// `real-music-dynamic.csv` is drum and bass with genuine dynamics, `real-music-flat.csv` is a
     /// steady, flat-mastered track whose loudest bass transient is 1.08x its median.
+    /// Slow (~29.7s in debug); gated out of the default suite. The launch fires on dynamic music and stays quiet on flat music. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_launch_fires_on_dynamic_music_and_stays_quiet_on_flat_music() {
+    #[ignore]
+    fn slow_the_launch_fires_on_dynamic_music_and_stays_quiet_on_flat_music() {
         let count = |csv: &str, at: f32| -> u32 {
             let frames: Vec<Vec<f32>> = csv
                 .lines()

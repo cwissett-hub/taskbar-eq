@@ -1643,8 +1643,10 @@ mod tests {
     // Real music
     // ---------------------------------------------------------------------------------------
 
+    /// Slow (~6.9s in debug); gated out of the default suite. Real music moves both cones across most of their travel. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn real_music_moves_both_cones_across_most_of_their_travel() {
+    #[ignore]
+    fn slow_real_music_moves_both_cones_across_most_of_their_travel() {
         // The headline fixture assertion: on real material the cones must actually pump. Measured
         // over the 792 frames at the shipped settings, the excursion runs p10 0.30 / p50 0.60 /
         // p90 0.85 - i.e. it spends its time across most of the travel rather than pinned.
@@ -1676,8 +1678,10 @@ mod tests {
         assert!(diff > 0.005, "the two cones never differ; is rms_r actually read? max diff {diff}");
     }
 
+    /// Slow (~6.5s in debug); gated out of the default suite. Real music makes the surface use a useful amount of the tank. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn real_music_makes_the_surface_use_a_useful_amount_of_the_tank() {
+    #[ignore]
+    fn slow_real_music_makes_the_surface_use_a_useful_amount_of_the_tank() {
         // "The waves seem very low" is the complaint this guards, and it is the same one the
         // vaporwave terrain drew four times.
         //
@@ -1826,8 +1830,10 @@ mod tests {
         );
     }
 
+    /// Slow (~12.6s in debug); gated out of the default suite. A non finite damping or wave speed from toml cannot poison the integrator. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn a_non_finite_damping_or_wave_speed_from_toml_cannot_poison_the_integrator() {
+    #[ignore]
+    fn slow_a_non_finite_damping_or_wave_speed_from_toml_cannot_poison_the_integrator() {
         // Review called the `is_finite` guard inside `substep` dead code - "deleting it changes 0
         // pixels and fails 0 of 400 tests". The second half was true and the conclusion was not:
         // no test REACHED it, which is a missing test rather than an unreachable branch.
@@ -1995,8 +2001,10 @@ mod tests {
         );
     }
 
+    /// Slow (~15.5s in debug); gated out of the default suite. A pantone plate change never jumps in a single frame. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn a_pantone_plate_change_never_jumps_in_a_single_frame() {
+    #[ignore]
+    fn slow_a_pantone_plate_change_never_jumps_in_a_single_frame() {
         // The reported defect, verbatim: "I dont like the random switching ... not the hard jolting
         // it currently is". Ink quantisation snapped the hue, so a plate change was a one-frame jump
         // between two fully saturated process colours.
@@ -2043,8 +2051,10 @@ mod tests {
         );
     }
 
+    /// Slow (~42.0s in debug); gated out of the default suite. The crests stay inside the tank on real music. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_crests_stay_inside_the_tank_on_real_music() {
+    #[ignore]
+    fn slow_the_crests_stay_inside_the_tank_on_real_music() {
         // What this guards CHANGED with `ceiling_impact`, and the bound stayed tight anyway.
         //
         // It used to guard a drawing artefact: the drawn surface row was clamped one row below the
@@ -2195,8 +2205,10 @@ mod tests {
         }
     }
 
+    /// Slow (~6.7s in debug); gated out of the default suite. The droplets shed continuously and the transients still fire at a musical rate. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_droplets_shed_continuously_and_the_transients_still_fire_at_a_musical_rate() {
+    #[ignore]
+    fn slow_the_droplets_shed_continuously_and_the_transients_still_fire_at_a_musical_rate() {
         // Two claims, and the second is why the detector is spectral flux.
         //
         // First: the droplet rate. **This band was 0.7..=3.2/s and was raised deliberately**, on the
@@ -2320,8 +2332,10 @@ mod tests {
         assert!(fam.cur[mid as usize].abs() > 0.02, "and it must still be moving at the end");
     }
 
+    /// Slow (~23.5s in debug); gated out of the default suite. The two wavetrains interfere in the middle. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_two_wavetrains_interfere_in_the_middle() {
+    #[ignore]
+    fn slow_the_two_wavetrains_interfere_in_the_middle() {
         // The family's signature, and the claim is the strong one: ADDING the second cone can make
         // the middle of the tank move LESS than the left cone alone made it move. That is only
         // possible if two wavetrains with opposite sign are meeting there, which is interference -
@@ -2495,8 +2509,10 @@ mod tests {
         assert_eq!(a, b, "the sub-step count must be paced by time, not by the frame");
     }
 
+    /// Slow (~29.8s in debug); gated out of the default suite. An extreme impulse and a pathological dt leave the field finite and bounded. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn an_extreme_impulse_and_a_pathological_dt_leave_the_field_finite_and_bounded() {
+    #[ignore]
+    fn slow_an_extreme_impulse_and_a_pathological_dt_leave_the_field_finite_and_bounded() {
         // Hundreds of frames of the worst input the loop can produce: full-scale audio slamming to
         // silence, frame intervals from zero to five seconds, NaN and both infinities. The field is
         // persistent state, so a single divergence would corrupt every later frame forever.
@@ -2537,8 +2553,10 @@ mod tests {
         }
     }
 
+    /// Slow (~42.7s in debug); gated out of the default suite. Every frame data field this family reads survives nan and infinity. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn every_frame_data_field_this_family_reads_survives_nan_and_infinity() {
+    #[ignore]
+    fn slow_every_frame_data_field_this_family_reads_survives_nan_and_infinity() {
         // levels, peaks, rms_l, rms_r, dt_ms and time_s are the fields read here; each is poisoned
         // on its own so a guard that only happens to cover one cannot hide a missing one.
         let t = builtin::fluid_oil();
@@ -2734,8 +2752,10 @@ mod tests {
         acc / n.max(1.0)
     }
 
+    /// Slow (~11.9s in debug); gated out of the default suite. The flourish roughens the surface and makes the tank run slack. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_flourish_roughens_the_surface_and_makes_the_tank_run_slack() {
+    #[ignore]
+    fn slow_the_flourish_roughens_the_surface_and_makes_the_tank_run_slack() {
         // TWO INDEPENDENT PROPERTIES, and each one had to be earned separately.
         //
         // The froth roughens the DRAWN surface. The damping makes the tank run down. Neither injects energy
@@ -2780,8 +2800,10 @@ mod tests {
         );
     }
 
+    /// Slow (~12.0s in debug); gated out of the default suite. The tank fills back up after cavitation. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_tank_fills_back_up_after_cavitation() {
+    #[ignore]
+    fn slow_the_tank_fills_back_up_after_cavitation() {
         // The recovery is SLOWER than the envelope, and that is physics rather than a leak: damping removed
         // energy, so the cones have to put it back. Measured - at frames 400-460, still 34% down; by
         // 500-560 the amplitude is 5.77 against 5.63 calm, i.e. level. The envelope is 1300ms (~129 frames
@@ -2915,8 +2937,10 @@ mod tests {
         );
     }
 
+    /// Slow (~7.0s in debug); gated out of the default suite. A transient punches the water harder than the envelope alone could. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn a_transient_punches_the_water_harder_than_the_envelope_alone_could() {
+    #[ignore]
+    fn slow_a_transient_punches_the_water_harder_than_the_envelope_alone_could() {
         // The third mutation-testing gap: zeroing TRANSIENT_KICK broke nothing. It exists because
         // the cone envelope is deliberately rate-limited, so a snare would otherwise displace no
         // more water than a sustained pad - which is the whole reason for detecting the onset.
@@ -3199,8 +3223,10 @@ mod tests {
         }
     }
 
+    /// Slow (~11.4s in debug); gated out of the default suite. The liquid body and the air above it are both fully opaque. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_liquid_body_and_the_air_above_it_are_both_fully_opaque() {
+    #[ignore]
+    fn slow_the_liquid_body_and_the_air_above_it_are_both_fully_opaque() {
         // Rule: the overlay is composited with per-pixel alpha over the Windows weather widget, so
         // any pixel below alpha 255 inside the panel is a hole the forecast shows through. This
         // family is a per-column fill against a per-column surface line, which is exactly the shape

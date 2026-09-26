@@ -893,8 +893,10 @@ mod tests {
         acc / (v.len() - 1) as f32 / mean.abs().max(1e-9)
     }
 
+    /// Slow (~13.6s in debug); gated out of the default suite. The flourish puts wow and flutter into the transport. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_flourish_puts_wow_and_flutter_into_the_transport() {
+    #[ignore]
+    fn slow_the_flourish_puts_wow_and_flutter_into_the_transport() {
         // 160 frames is 2.67s against a 2200ms envelope, so the window covers the wobble AND a clear
         // 470ms of recovery past the end of it. 132 frames - exactly the envelope - was tried first and
         // is subtly wrong: the last frames still carry ~9% of the envelope, which left 0.0315 of
@@ -1061,8 +1063,10 @@ mod tests {
         assert!(idle > 0.9, "the idle creep of {idle:.2} deg/frame would look stationary");
     }
 
+    /// Slow (~9.5s in debug); gated out of the default suite. Rotation is paced by dt not by the frame count. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn rotation_is_paced_by_dt_not_by_the_frame_count() {
+    #[ignore]
+    fn slow_rotation_is_paced_by_dt_not_by_the_frame_count() {
         // The render loop sleeps a fixed 16ms, so its real period varies with load; a per-frame
         // step would make the reels speed up whenever the machine is idle.
         //

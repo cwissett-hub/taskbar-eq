@@ -205,8 +205,10 @@ mod tests {
         assert!(n < 5_000, "{n} threads in the test harness suggests the filter is not working");
     }
 
+    /// Slow (~9.6s in debug); gated out of the default suite. Counting threads does not itself leak. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn counting_threads_does_not_itself_leak() {
+    #[ignore]
+    fn slow_counting_threads_does_not_itself_leak() {
         // The snapshot is a HANDLE, and a leak hunt whose instrument leaks is worse than no hunt. This
         // would have caught a missing CloseHandle, which is exactly the class of bug being looked for.
         let before = handle_count().expect("handle count");

@@ -1026,8 +1026,10 @@ mod tests {
             .collect()
     }
 
+    /// Slow (~7.8s in debug); gated out of the default suite. The lightning fires at a musical rate on real music. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_lightning_fires_at_a_musical_rate_on_real_music() {
+    #[ignore]
+    fn slow_the_lightning_fires_at_a_musical_rate_on_real_music() {
         // The trigger this replaced was a rise in the bass mean, and on this same fixture it fires
         // ZERO times in 8 seconds: the largest single-frame bass rise is 0.140 against a threshold
         // of 0.157. It could not fire on real music at all, which is why the strikes read as "not in

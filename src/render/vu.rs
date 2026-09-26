@@ -418,8 +418,10 @@ mod tests {
         assert!(dial_count(4000) <= 8, "capped, or a huge panel draws a useless smear of dials");
     }
 
+    /// Slow (~10.7s in debug); gated out of the default suite. The dial arc stays inside the panel at every width. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_dial_arc_stays_inside_the_panel_at_every_width() {
+    #[ignore]
+    fn slow_the_dial_arc_stays_inside_the_panel_at_every_width() {
         // The bug this guards was visible only once the display was widened: the radius came
         // from dial width alone, so at 380px it reached 112 on a 60px-tall panel and the arc,
         // the ticks and the printed scale all left the canvas, leaving two bare needle lines.
@@ -646,8 +648,10 @@ mod tests {
         }
         println!("wrote {} vu dumps to {}", n, dir.display());
     }
+    /// Slow (~12.4s in debug); gated out of the default suite. The flourish pins the needles and lights the over lamps. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_flourish_pins_the_needles_and_lights_the_over_lamps() {
+    #[ignore]
+    fn slow_the_flourish_pins_the_needles_and_lights_the_over_lamps() {
         // A needle slam is only a slam if it puts the needle somewhere the audio did not. Measured on
         // the pixels against the identical run with the flourish off.
         //

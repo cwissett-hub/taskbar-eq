@@ -1081,12 +1081,17 @@ Requires the [Rust stable MSVC toolchain](https://rustup.rs). No other dependenc
 git clone https://github.com/cwissett-hub/taskbar-eq
 cd taskbar-eq
 cargo build --release        # -> target/release/taskbar-eq.exe
-cargo test                   # the full suite (fast; the slow sweeps are excluded)
-cargo test --release slow_ -- --ignored   # the slow whole-registry render sweeps
+cargo test                   # the default suite - fast, so you actually run it before committing
+cargo test --release slow_ -- --ignored   # the slow set (run in release; this is the CI job)
 ```
 
-The default `cargo test` skips five whole-registry render sweeps that each take tens of seconds;
-run them (and only them) with the `slow_` line above before shipping a rendering change.
+The default `cargo test` is kept short enough to run before every commit: every test that takes
+more than ~5 s single-threaded in debug is gated behind `#[ignore]` with a `slow_` prefix. That
+`slow_` set covers the whole-registry render sweeps AND the per-family real-music / flourish checks
+(each drives a long audio fixture). Run it with the `slow_` line above before shipping a rendering or
+DSP change; it is the set CI runs on every push (the workflow still needs wiring up - see `TODO.md`).
+The fast default suite still keeps the cheap structural guard
+(`every_colourway_is_visibly_alive_at_two_sizes`) and all the golden tests.
 
 Building yourself also sidesteps the SmartScreen prompt entirely.
 

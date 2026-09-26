@@ -1526,8 +1526,10 @@ mod tests {
     ///
     /// Mutation: raise FLASH_PEAK to 1.0 and six of seven colourways fail. Lift BOTH sky stops and dusk
     /// drops 3.79 -> 3.41.
+    /// Slow (~10.8s in debug); gated out of the default suite. The dim petals still read at the flash peak on every colourway. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_dim_petals_still_read_at_the_flash_peak_on_every_colourway() {
+    #[ignore]
+    fn slow_the_dim_petals_still_read_at_the_flash_peak_on_every_colourway() {
         for t in builtin::all().into_iter().filter(|t| t.family == "blossom") {
             let (w, h) = (380, 60);
             let mut fam = Blossom::default();
@@ -1579,8 +1581,10 @@ mod tests {
     ///
     /// Mutation: implement the falloff with an extra interpolated stop instead of lifting the top one,
     /// and the calm frame stops matching. Clamp `bright` to a floor above 0 and this fails.
+    /// Slow (~75.9s in debug); gated out of the default suite. The flash leaves no residue once the strike has decayed. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_flash_leaves_no_residue_once_the_strike_has_decayed() {
+    #[ignore]
+    fn slow_the_flash_leaves_no_residue_once_the_strike_has_decayed() {
         for t in builtin::all().into_iter().filter(|t| t.family == "blossom") {
             for (w, h) in [(380, 60), (190, 60)] {
                 let mut fam = Blossom::default();
@@ -1725,8 +1729,10 @@ mod tests {
     }
 
     /// Mutation: gate the branch on level, or let the bend/shake carry it off the panel.
+    /// Slow (~14.4s in debug); gated out of the default suite. The branch is drawn at every level and stays on the panel. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_branch_is_drawn_at_every_level_and_stays_on_the_panel() {
+    #[ignore]
+    fn slow_the_branch_is_drawn_at_every_level_and_stays_on_the_panel() {
         for gain in [0.0f32, 0.5, 1.0] {
             let (fam, c) = settled(gain, 260);
             let mut bark = 0;

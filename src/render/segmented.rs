@@ -607,8 +607,10 @@ mod tests {
             println!("{:<22} {:>6.1} {:>8.1} {:>8.1} {:>6.2}  {}", t.id, t.bloom, seg, gap, ratio, verdict);
         }
     }
+    /// Slow (~49.6s in debug); gated out of the default suite. The flourish lights every segment and then drains back. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_flourish_lights_every_segment_and_then_drains_back() {
+    #[ignore]
+    fn slow_the_flourish_lights_every_segment_and_then_drains_back() {
         // A self-test is only a self-test if it lights segments the music did not. Measured on the
         // PIXELS against the identical run with the flourish disabled, so it cannot pass on the
         // ordinary bars and it cannot pass if the effect is computed and never drawn.

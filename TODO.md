@@ -361,12 +361,18 @@ closed; all nine flourishes done, review sheet written, README current.
 
 ## Notes to self
 
-- **The slow render sweeps are excluded from `cargo test`.** Five whole-registry sweeps (the two
-  `slow_every_colourway_*` in `render/mod.rs`, `slow_no_family_leaves_a_transparent_pixel_inside_its_panel`,
-  and the two `slow_every_fluid_*` in `render/fluid.rs`) are `#[ignore]`d because each takes tens of
-  seconds. Run them before shipping a rendering change:
-  `cargo test --release slow_ -- --ignored`. The cheap
-  `every_colourway_is_visibly_alive_at_three_sizes` guard stays in the default suite.
+- **The default `cargo test` is kept fast so it actually gets run pre-commit.** Every test over
+  ~5 s single-threaded in debug is gated behind a `slow_` prefix + `#[ignore]`: not just the
+  whole-registry render/opacity sweeps but the whole population of per-family real-music / flourish
+  checks (each drives a long audio fixture). ~56 tests in total. Run the lot in release before
+  shipping a rendering or DSP change: `cargo test --release slow_ -- --ignored`. The cheap
+  `every_colourway_is_visibly_alive_at_two_sizes` guard and all the golden tests stay in the default
+  suite. To find the population again, run the suite single-threaded and diff `finished in`:
+  `cargo test -- --test-threads=1 --nocapture` (see
+  `.superpowers/sdd/2026-09-25-health-fixes/slow_tests_over_5s.txt`).
+- **TODO: wire up CI.** `cargo test --release slow_ -- --ignored` is meant to run in CI on every
+  push (that is where the gated slow set earns its keep), but there is no `.github/workflows` yet.
+  Add one that runs the fast suite + the slow set + `cargo clippy --all-targets -- -D warnings`.
 
 - **Restore the file BEFORE the run, never only after.** Twice now a mutation sweep timed out
   mid-iteration and left a mutant constant in the tree, and the next thing I measured was silently

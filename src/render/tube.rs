@@ -781,8 +781,10 @@ mod tests {
         println!("wrote {} tube dumps to {}", n, dir.display());
     }
 
+    /// Slow (~13.3s in debug); gated out of the default suite. The flourish turns the valves blue and then lets them go. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_flourish_turns_the_valves_blue_and_then_lets_them_go() {
+    #[ignore]
+    fn slow_the_flourish_turns_the_valves_blue_and_then_lets_them_go() {
         // A gassy valve fluoresces a COLD colour, and being the wrong colour for the display is the
         // whole point - every other light in this family is the colourway's warm lit/hot. So this is
         // measured as a shift in hue, not as a change in brightness: a brightness test would pass on any

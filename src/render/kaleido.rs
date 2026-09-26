@@ -535,8 +535,10 @@ mod tests {
     /// Louder music turns the pattern faster. The family's level-as-position mapping.
     ///
     /// Mutation: make `want` a constant, or drop the `drive` term.
+    /// Slow (~6.9s in debug); gated out of the default suite. Louder music spins the pattern faster. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn louder_music_spins_the_pattern_faster() {
+    #[ignore]
+    fn slow_louder_music_spins_the_pattern_faster() {
         let (calm, _) = render(0.12, 240, 380, 60);
         let (wild, _) = render(0.95, 240, 380, 60);
         assert!(

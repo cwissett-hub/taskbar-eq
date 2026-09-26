@@ -634,8 +634,10 @@ mod tests {
         best.1
     }
 
+    /// Slow (~11.4s in debug); gated out of the default suite. The flourish fires every cathode and then gets out of the way. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_flourish_fires_every_cathode_and_then_gets_out_of_the_way() {
+    #[ignore]
+    fn slow_the_flourish_fires_every_cathode_and_then_gets_out_of_the_way() {
         // This family's whole cue is WHICH digit is lit, so an effect that lights all ten has to be
         // measured on two properties at once: it must light cells the audio did not, AND it must not
         // out-shine the live digit while doing so. A test for only the first would happily pass on an

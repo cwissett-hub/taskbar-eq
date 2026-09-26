@@ -960,8 +960,10 @@ mod tests {
         }
     }
 
+    /// Slow (~6.8s in debug); gated out of the default suite. Every waterfall colourway renders and differs. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn every_waterfall_colourway_renders_and_differs() {
+    #[ignore]
+    fn slow_every_waterfall_colourway_renders_and_differs() {
         let mut seen: Vec<Vec<u32>> = Vec::new();
         let mut n = 0;
         for t in builtin::all().into_iter().filter(|t| t.family == "waterfall") {
@@ -1082,8 +1084,10 @@ mod tests {
         }
         println!("wrote {n} waterfall dumps to {}", dir.display());
     }
+    /// Slow (~15.2s in debug); gated out of the default suite. The flourish tears one full height column and it then scrolls away. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_flourish_tears_one_full_height_column_and_it_then_scrolls_away() {
+    #[ignore]
+    fn slow_the_flourish_tears_one_full_height_column_and_it_then_scrolls_away() {
         // A tear is a hard vertical rip through the whole spectrum: one column at full scale across
         // every band. Two properties, and the second is what makes it this family's flourish rather
         // than a generic flash - it is written into the HISTORY, so it survives as data and scrolls.

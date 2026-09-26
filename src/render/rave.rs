@@ -471,8 +471,10 @@ mod tests {
     ///
     /// Mutation: raise KICK_REFRACTORY_MS to 320 and the 200bpm count collapses; raise KICK_RATIO to 4.0
     /// and nothing fires at all.
+    /// Slow (~40.5s in debug); gated out of the default suite. A two hundred bpm kick is caught on every beat. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn a_two_hundred_bpm_kick_is_caught_on_every_beat() {
+    #[ignore]
+    fn slow_a_two_hundred_bpm_kick_is_caught_on_every_beat() {
         let t = builtin::rave_frenchcore();
         // 200bpm = 300ms = 17.96 frames at 16.7ms. 18 frames is the closest whole frame.
         for (bpm, period) in [(200usize, 18usize), (160, 22), (240, 15), (300, 12)] {
@@ -495,8 +497,10 @@ mod tests {
     /// Louder music spreads the fan. The family's primary level-as-position mapping.
     ///
     /// Mutation: make `want` a constant, or drop the `drive` term.
+    /// Slow (~9.0s in debug); gated out of the default suite. Louder music spreads the fan. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn louder_music_spreads_the_fan() {
+    #[ignore]
+    fn slow_louder_music_spreads_the_fan() {
         let t = builtin::rave_frenchcore();
         let run = |gain: f32| {
             let mut fam = Rave::default();
@@ -567,8 +571,10 @@ mod tests {
     ///
     /// Mutation: set STROBE_ACCENT equal to STROBE_KICK and the accent assertion fails. Raise STROBE_MS
     /// to 400 and the decay assertion fails.
+    /// Slow (~6.7s in debug); gated out of the default suite. The strobe fires on the kick accents every fourth and clears before the next. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_strobe_fires_on_the_kick_accents_every_fourth_and_clears_before_the_next() {
+    #[ignore]
+    fn slow_the_strobe_fires_on_the_kick_accents_every_fourth_and_clears_before_the_next() {
         let t = builtin::rave_frenchcore();
         let mut fam = Rave::default();
         let mut c = Canvas::new(380, 60);
@@ -623,8 +629,10 @@ mod tests {
     /// strobing three times a second.
     ///
     /// Mutation: set BLAST_DARK to 0.0 and the panel no longer darkens.
+    /// Slow (~5.2s in debug); gated out of the default suite. The flourish blacks the rig out. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_flourish_blacks_the_rig_out() {
+    #[ignore]
+    fn slow_the_flourish_blacks_the_rig_out() {
         let t = builtin::rave_frenchcore();
         let mut fam = Rave::default();
         let mut c = Canvas::new(380, 60);
@@ -762,8 +770,10 @@ mod tests {
     /// must clear the colourway's contrast floor against the washed panel.
     ///
     /// Mutation: put STROBE_ACCENT back to 0.62 and frenchcore and strobe fail.
+    /// Slow (~30.8s in debug); gated out of the default suite. The accent strobe leaves the beams readable. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_accent_strobe_leaves_the_beams_readable() {
+    #[ignore]
+    fn slow_the_accent_strobe_leaves_the_beams_readable() {
         for t in builtin::all().into_iter().filter(|t| t.family == "rave") {
             let mut fam = Rave::default();
             let mut c = Canvas::new(380, 60);

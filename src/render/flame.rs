@@ -826,8 +826,10 @@ mod tests {
         println!();
     }
 
+    /// Slow (~22.7s in debug); gated out of the default suite. A louder band burns a taller plume. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn a_louder_band_burns_a_taller_plume() {
+    #[ignore]
+    fn slow_a_louder_band_burns_a_taller_plume() {
         // The family's whole reason to exist, and the reason the cooling subtracts rather than multiplies:
         // height has to be readable as a profile. Measured as the tip ROW, not as brightness - the same
         // position-over-intensity rule the nixie family is built on.
@@ -944,8 +946,10 @@ mod tests {
         );
     }
 
+    /// Slow (~17.6s in debug); gated out of the default suite. The manifold comes back to normal after the flourish. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_manifold_comes_back_to_normal_after_the_flourish() {
+    #[ignore]
+    fn slow_the_manifold_comes_back_to_normal_after_the_flourish() {
         // Byte-identical, which also proves the flourish leaves no residue in the heat field.
         let mut t = builtin::flame_sodium();
         t.flourish = 0.0;

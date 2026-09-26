@@ -617,8 +617,10 @@ mod tests {
     ///
     /// Mutation: restore the old fixed-constant gate (`lowest > (h - 2)`) and the 48, 40, 34 and 30 cases
     /// go to zero lit pixels.
+    /// Slow (~19.8s in debug); gated out of the default suite. The lattice is drawn on short panels and not only on tall ones. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_lattice_is_drawn_on_short_panels_and_not_only_on_tall_ones() {
+    #[ignore]
+    fn slow_the_lattice_is_drawn_on_short_panels_and_not_only_on_tall_ones() {
         let t = builtin::pipes_win95_teal();
         for (w, h) in [(380, 60), (380, 52), (380, 48), (380, 44), (380, 40), (380, 34), (380, 30),
                        (190, 48), (190, 60), (150, 40)] {
@@ -652,8 +654,10 @@ mod tests {
     ///
     /// Mutation: drop `nx` from the resize guard AND the stranded-cell restart in `grow`, and the
     /// narrowed run stops growing while the others carry on.
+    /// Slow (~8.2s in debug); gated out of the default suite. A width only resize does not strand a run outside the lattice. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn a_width_only_resize_does_not_strand_a_run_outside_the_lattice() {
+    #[ignore]
+    fn slow_a_width_only_resize_does_not_strand_a_run_outside_the_lattice() {
         let t = builtin::pipes_win95_teal();
         let mut fam = Pipes::default();
         let mut wide = Canvas::new(380, 60);

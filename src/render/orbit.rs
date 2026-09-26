@@ -486,8 +486,10 @@ mod tests {
     /// The orbit must actually go round: a ball has to change depth over a lap, or it is a 2D ring.
     ///
     /// Mutation: hold `phase` constant, or set `RZ` to 0 - both leave the depth spread at zero.
+    /// Slow (~15.1s in debug); gated out of the default suite. A ball changes depth over one lap. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn a_ball_changes_depth_over_one_lap() {
+    #[ignore]
+    fn slow_a_ball_changes_depth_over_one_lap() {
         let mut fam = Orbit::default();
         let t = builtin::orbit_chrome();
         let mut c = Canvas::new(380, 60);

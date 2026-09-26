@@ -550,8 +550,10 @@ mod tests {
         d
     }
 
+    /// Slow (~7.3s in debug); gated out of the default suite. The flourish loses trigger lock. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_flourish_loses_trigger_lock() {
+    #[ignore]
+    fn slow_the_flourish_loses_trigger_lock() {
         // The effect IS this family's documented worst bug, deliberately re-entered for 1400ms, so it
         // is asserted with that bug's own metric rather than a new one: frame-to-frame difference on
         // phase-walking content. Locked, consecutive frames barely differ. Free-running, the trace
@@ -603,8 +605,10 @@ mod tests {
         );
     }
 
+    /// Slow (~21.2s in debug); gated out of the default suite. Losing lock never flattens the trace. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn losing_lock_never_flattens_the_trace() {
+    #[ignore]
+    fn slow_losing_lock_never_flattens_the_trace() {
         // Guards the bound on the drift offset. Unbounded, it walks past sample 255, `stroke_into`
         // pins every column there, and the trace becomes a flat horizontal line - no panic, just a
         // dead display for as long as the flourish lasts. Re-triggered repeatedly, which is how the

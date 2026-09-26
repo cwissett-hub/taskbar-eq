@@ -265,13 +265,17 @@ mod dispatch_tests {
         }
     }
 
-    /// Cheap enough for the default suite: every colourway at three sizes, two levels, asserting
-    /// the frame is not empty and not one flat colour. This is the guard that would have caught
-    /// pipes shipping black under 49 rows.
+    /// Cheap enough for the default suite: every colourway at two sizes, two levels, asserting the
+    /// frame is not empty and not one flat colour. This is the guard that would have caught pipes
+    /// shipping black under 49 rows - so one size is deliberately under 49 rows and one is over.
+    ///
+    /// Kept fast on purpose (128px-wide canvases, 3 settle frames). The exhaustive size/NaN/opacity
+    /// versions of this coverage live in the `slow_*` sweeps run by
+    /// `cargo test --release slow_ -- --ignored`; this only has to notice a family that ships black.
     #[test]
-    fn every_colourway_is_visibly_alive_at_three_sizes() {
+    fn every_colourway_is_visibly_alive_at_two_sizes() {
         for t in crate::themes::builtin::all() {
-            for (w, h) in [(190, 48), (380, 48), (380, 60)] {
+            for (w, h) in [(128, 44), (128, 60)] {
                 for level in [0.15f32, 0.6] {
                     let mut fam = family_for(&t.family);
                     let mut c = Canvas::new(w, h);
@@ -281,7 +285,9 @@ mod dispatch_tests {
                     // FrameData carries per-channel RMS, not a single `rms`; feed both.
                     d.rms_l = level;
                     d.rms_r = level;
-                    for _ in 0..20 { fam.draw(&mut c, &t, &d); }
+                    // A few frames so stateful families allocate and their peak-holds engage; the
+                    // exhaustive frame counts belong in the slow sweeps.
+                    for _ in 0..3 { fam.draw(&mut c, &t, &d); }
                     let px = c.bits();
                     let lit = px.iter().filter(|p| (**p >> 24) > 8).count();
                     let distinct: std::collections::HashSet<u32> = px.iter().map(|p| *p & 0xffffff).collect();

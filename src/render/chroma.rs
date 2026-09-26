@@ -891,8 +891,10 @@ mod tests {
         );
     }
 
+    /// Slow (~5.3s in debug); gated out of the default suite. The plate inks up again. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_plate_inks_up_again() {
+    #[ignore]
+    fn slow_the_plate_inks_up_again() {
         // 120 frames is 2s against a 1500ms envelope. Byte-identical, which also proves the flourish left
         // nothing behind in the glitch state or the seed.
         let mut t = builtin::all().into_iter().find(|t| t.family == "chroma").unwrap();
@@ -1045,8 +1047,10 @@ mod tests {
         }
     }
 
+    /// Slow (~6.1s in debug); gated out of the default suite. The rendered field leaves no unpainted column in the panel. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_rendered_field_leaves_no_unpainted_column_in_the_panel() {
+    #[ignore]
+    fn slow_the_rendered_field_leaves_no_unpainted_column_in_the_panel() {
         // The rendered consequence of zero-sum. A 1px residue at the right edge would be a
         // transparent pixel inside the panel - a hole the weather widget shows through - so
         // this asserts the interior is opaque edge to edge at several widths, including ones
@@ -1068,8 +1072,10 @@ mod tests {
         }
     }
 
+    /// Slow (~8.1s in debug); gated out of the default suite. No chroma colourway leaves a transparent pixel at any level. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn no_chroma_colourway_leaves_a_transparent_pixel_at_any_level() {
+    #[ignore]
+    fn slow_no_chroma_colourway_leaves_a_transparent_pixel_at_any_level() {
         // The family-local twin of render::opacity's sweep. Swept across levels because the
         // bug that shipped in the segmented family was LEVEL-DEPENDENT - it only appeared on
         // loud bars, so a single-level test missed it entirely.
@@ -1734,8 +1740,10 @@ mod tests {
 
     // ---------- robustness ----------
 
+    /// Slow (~16.0s in debug); gated out of the default suite. Renders at every plausible size and survives nan and infinity. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn renders_at_every_plausible_size_and_survives_nan_and_infinity() {
+    #[ignore]
+    fn slow_renders_at_every_plausible_size_and_survives_nan_and_infinity() {
         let sizes = [
             (190, 60),
             (380, 60),

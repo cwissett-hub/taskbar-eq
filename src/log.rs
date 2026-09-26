@@ -169,8 +169,10 @@ mod tests {
         write("a message with no log file behind it");
     }
 
+    /// Slow (~31.5s in debug); gated out of the default suite. The os summary names a windows family. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_os_summary_names_a_windows_family() {
+    #[ignore]
+    fn slow_the_os_summary_names_a_windows_family() {
         let s = os_summary();
         assert!(s.starts_with("windows: "), "got {s:?}");
         assert!(

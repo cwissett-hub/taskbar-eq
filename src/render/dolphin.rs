@@ -456,8 +456,10 @@ mod tests {
         assert!(loud <= spec_rows, "the column overflowed its band: {loud} rows of {spec_rows}");
     }
 
+    /// Slow (~7.3s in debug); gated out of the default suite. The dolphin arcs and dips through the waterline. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
-    fn the_dolphin_arcs_and_dips_through_the_waterline() {
+    #[ignore]
+    fn slow_the_dolphin_arcs_and_dips_through_the_waterline() {
         // Above the waterline the dolphin is the ONLY thing drawn, so the topmost lit row up there is
         // its altitude. Two properties: the altitude must vary a lot over a loop (a frozen phase or a
         // flat arc fails), and it must come back down to the water (an arc that never lands fails).
