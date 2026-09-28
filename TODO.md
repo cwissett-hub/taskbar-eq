@@ -26,7 +26,15 @@ Earlier still: 150 colourways across 22 families, every one with a flourish. See
 
 ## In progress
 
-Nothing right now.
+Nothing right now. Queued, in order:
+
+1. **Virtual Self families** (`vswings`, `vsghost`, `vsorb`) — plan in
+   `docs/superpowers/plans/2026-09-25-virtual-self-families.md`, ships as v0.2.2.
+2. **Two more themes requested 2026-09-28**, to brainstorm and spec before building:
+   something **Bones / TeamSESH** themed, and something **Cyberpunk 2077** themed.
+3. **The live `--levels` check** of the two-FFT bass path against real music (Task 4 deferred
+   it for want of audio) — needs Spotify playing; note it overwrites
+   `tests/fixtures/real-music-bands.csv`.
 
 ## Waiting on you
 
