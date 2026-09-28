@@ -38,6 +38,7 @@ pub mod blossom;
 pub mod kaleido;
 pub mod rave;
 pub mod brutal;
+pub mod vswings;
 
 use crate::dsp::bands::NUM_BANDS;
 use crate::themes::Theme;
@@ -128,9 +129,9 @@ pub fn tint(
 /// `segmented` for anything unrecognised, so a theme carrying a typo'd or unimplemented
 /// family name would silently render as the wrong meter instead of failing. This list is
 /// what lets that be asserted, and adding a family is a one-line change in one place.
-pub const KNOWN_FAMILIES: [&str; 22] = [
+pub const KNOWN_FAMILIES: [&str; 23] = [
     "segmented", "scope", "vu", "vapor", "tube", "nixie", "waterfall", "reel", "patchbay", "radar", "pantone", "chroma", "fluid",
-    "flame", "dolphin", "mesh", "pipes", "orbit", "blossom", "kaleido", "rave", "brutal",
+    "flame", "dolphin", "mesh", "pipes", "orbit", "blossom", "kaleido", "rave", "brutal", "vswings",
 ];
 
 pub fn family_for(id: &str) -> Box<dyn Family> {
@@ -156,6 +157,7 @@ pub fn family_for(id: &str) -> Box<dyn Family> {
         "kaleido" => Box::new(kaleido::Kaleido::default()),
         "rave" => Box::new(rave::Rave::default()),
         "brutal" => Box::new(brutal::Brutal::default()),
+        "vswings" => Box::new(vswings::Vswings::default()),
         "tube" => Box::new(tube::Tube::default()),
         "nixie" => Box::new(nixie::Nixie::default()),
         "waterfall" => Box::new(waterfall::Waterfall::default()),

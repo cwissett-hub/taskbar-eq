@@ -90,6 +90,7 @@ pub fn family_label(family: &str) -> String {
         "kaleido" => "Kaleidoscope".into(),
         "rave" => "Rave lasers".into(),
         "brutal" => "Brutalist".into(),
+        "vswings" => "Virtual Self: wings".into(),
         other => {
             let mut c = other.chars();
             match c.next() {

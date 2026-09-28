@@ -1,12 +1,12 @@
 # Themes
 
-**150 colourways across 22 families.** A *family* is a renderer with fixed geometry — code. A
+**155 colourways across 23 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
-## All 22 families
+## All 23 families
 
 Six are written up in full below (Segmented VFD, Oscilloscope, VU dials, Vaporwave grid, Valve
-row, Fluid). The other sixteen shipped later and their full write-ups still live in
+row, Fluid). The other seventeen shipped later and their full write-ups still live in
 [docs/status.md](status.md) rather than here — that is pre-existing organisation, not a new
 split, and worth knowing before you go looking for one and only find it in the other file.
 
@@ -34,6 +34,12 @@ split, and worth knowing before you go looking for one and only find it in the o
 | Rave lasers | A sweeping laser fan that strobes on the kick, for frenchcore |
 | Brutalist | Concrete blocks slamming between floor/ceiling on the beat — position, not glow |
 | Chroma field | Zero-sum vertical stripes in spectrum order; a swelling stripe pinches its neighbours |
+| Virtual Self: wings | 32 bands fanned into two mirrored angel wings on a Y2K chrome floor; bass beats the root feathers |
+
+The Virtual Self: wings colourways are `vswings-particle-arts` (ice panel, cobalt-to-white wings,
+cobalt floor), `vswings-eon-break` (black panel, cobalt-to-electric wings, white floor),
+`vswings-angel-voices` (pale-pink panel, violet wings tipped white), `vswings-utopia` (black panel,
+silver-to-white chrome wings) and `vswings-ghost` (black panel, pure white wings, no floor).
 
 **Five families reuse the `[tube]` table for their own hardware materials**, even though only
 one of them is the Valve row (`tube`) family itself: **Cherry blossom**, **Flame organ**,

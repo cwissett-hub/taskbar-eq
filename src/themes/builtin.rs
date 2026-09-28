@@ -393,6 +393,104 @@ pub fn brutal_cast() -> Theme {
     }
 }
 
+// ---------------------------------------------------------------------------------------------------
+// Virtual Self: wings - angel wings on Y2K chrome. See `render::vswings` for what the meter is and why
+// the panel is transparent. Restrained on purpose: chrome, ice, cobalt and one violet, no rainbow. The
+// contrast rule is on `lit` against `panel`, so where the design calls for a light panel the wing BODY is
+// the dark, contrast-carrying colour and the whiteness lives in the `hot` tips and the chrome highlights -
+// a white wing on an ice panel would be both illegible and a contrast-rule failure.
+
+fn vswings_base() -> Theme {
+    Theme {
+        family: "vswings".into(),
+        texture: Texture::None_,
+        panel_alpha: 1.0,
+        bloom: 2.0,
+        // 0.24 rather than the usual 0.35: the wing tips are white or near-white, and at 0.35 their
+        // halo swelled into a blob that swallowed the feathered edge - see the family's eyeball notes.
+        glow_strength: 0.24,
+        // Quick to rise, slow to fall - the wing beats on the transient and settles between.
+        ballistics: Ballistics { attack: 0.55, decay: 0.12, peak_fall: 0.01 },
+        ..Theme::default()
+    }
+}
+
+/// Particle Arts: the deep-blue Virtual Self on an ice panel with a cobalt floor. The wings are cobalt
+/// shading to white - the ice needs a dark wing body to read, so the "white wings" of the brief live in
+/// the chrome tips.
+pub fn vswings_particle_arts() -> Theme {
+    Theme {
+        id: "vswings-particle-arts".into(),
+        name: "Particle Arts".into(),
+        lit: "#1f5bff".into(),
+        hot: "#ffffff".into(),
+        panel: "#dff3ff".into(),
+        edge: "#1f5bff".into(),
+        edge_alpha: 0.16,
+        ..vswings_base()
+    }
+}
+
+/// Eon Break: cobalt-to-electric wings on black with a white floor grid - the coldest, brightest set.
+pub fn vswings_eon_break() -> Theme {
+    Theme {
+        id: "vswings-eon-break".into(),
+        name: "Eon Break".into(),
+        lit: "#1f5bff".into(),
+        hot: "#3ec8ff".into(),
+        panel: "#000000".into(),
+        edge: "#ffffff".into(),
+        edge_alpha: 0.14,
+        ..vswings_base()
+    }
+}
+
+/// Angel Voices: violet wings tipped white on a pale-pink panel. The violet is deepened from the palette's
+/// `#8e6bff` so the wing body clears 3:1 against the pale panel - the pale pink alone cannot carry a light
+/// wing.
+pub fn vswings_angel_voices() -> Theme {
+    Theme {
+        id: "vswings-angel-voices".into(),
+        name: "Angel Voices".into(),
+        lit: "#7b4fe6".into(),
+        hot: "#ffffff".into(),
+        panel: "#ffd6ec".into(),
+        edge: "#7b4fe6".into(),
+        edge_alpha: 0.14,
+        ..vswings_base()
+    }
+}
+
+/// Utopia: chrome-gradient wings on black - silver at the root running to white at the tip, the extruded
+/// metal look with no colour at all.
+pub fn vswings_utopia() -> Theme {
+    Theme {
+        id: "vswings-utopia".into(),
+        name: "Utopia".into(),
+        lit: "#8a94a6".into(),
+        hot: "#ffffff".into(),
+        panel: "#000000".into(),
+        edge: "#1f5bff".into(),
+        edge_alpha: 0.12,
+        ..vswings_base()
+    }
+}
+
+/// Ghost: pure white wings on black, no floor. The most stripped-back of the set - just the plumage.
+pub fn vswings_ghost() -> Theme {
+    Theme {
+        id: "vswings-ghost".into(),
+        name: "Ghost".into(),
+        lit: "#ffffff".into(),
+        hot: "#dff3ff".into(),
+        panel: "#000000".into(),
+        edge: "#ffffff".into(),
+        // No floor grid: the grid is skipped when edge_alpha is zero.
+        edge_alpha: 0.0,
+        ..vswings_base()
+    }
+}
+
 pub fn all() -> Vec<Theme> {
     vec![
         vfd_ice(),
@@ -478,6 +576,11 @@ pub fn all() -> Vec<Theme> {
         brutal_shock(),
         brutal_primary(),
         brutal_cast(),
+        vswings_particle_arts(),
+        vswings_eon_break(),
+        vswings_angel_voices(),
+        vswings_utopia(),
+        vswings_ghost(),
         nixie_orange(),
         nixie_ice(),
         nixie_neon_green(),
