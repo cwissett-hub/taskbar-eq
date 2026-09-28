@@ -94,16 +94,40 @@ pub fn start() {
 }
 
 fn poll_once() {
-    NOTIFICATION_STATE.store(super::placement::notification_state(), Ordering::Relaxed);
-    TASKBAR_VISIBLE.store(super::placement::taskbar_visible(), Ordering::Relaxed);
     // Polled here rather than on the render thread with the rest, and for the same reason the other
     // two are: these are the calls that reach outside this process. `GetForegroundWindow` and
     // `GetMonitorInfoW` are cheap by comparison with the notification state, but they belong with it -
     // one thread owns talking to the shell, and the render loop only ever reads atomics.
-    FULLSCREEN_FOREGROUND.store(
+    publish(
+        super::placement::notification_state(),
+        super::placement::taskbar_visible(),
         crate::win::visibility::covers_monitor(super::placement::foreground_window().as_ref()),
-        Ordering::Relaxed,
     );
+}
+
+/// Publishes a poll result into the atomics the render thread reads. The one gate point between
+/// "we asked the shell" and "the render thread can see it", so tests can hold it shut.
+///
+/// The background thread `start()` spawns outlives every individual test - it is never joined,
+/// because nothing in the module ever stops it - so it keeps calling this on its own 200ms tick for
+/// the rest of the process's life, including while later tests are running. In production that is
+/// exactly the point. In tests it means a defaults assertion that merely resets the atomics and reads
+/// them back can still race a real poll landing in between, and it only ever looked safe because a
+/// normal desktop's real values happen to equal the defaults - hidden taskbar, fullscreen game or a
+/// notification banner would all have flipped it. `PAUSED` (test-only) is the fix: held by the
+/// defaults test for the whole reset-then-assert window, it makes this a no-op no matter what the
+/// live poller thread is doing concurrently, without adding any check, lock or sleep to the
+/// production path this function compiles to outside `#[cfg(test)]`.
+fn publish(notification_state: i32, taskbar_visible: bool, fullscreen_foreground: bool) {
+    #[cfg(test)]
+    {
+        if PAUSED.load(Ordering::SeqCst) {
+            return;
+        }
+    }
+    NOTIFICATION_STATE.store(notification_state, Ordering::Relaxed);
+    TASKBAR_VISIBLE.store(taskbar_visible, Ordering::Relaxed);
+    FULLSCREEN_FOREGROUND.store(fullscreen_foreground, Ordering::Relaxed);
 }
 
 /// The shell's notification state as of the last poll. Free to call.
@@ -178,6 +202,32 @@ fn reset() {
     SUSPENDED.store(false, Ordering::SeqCst);
 }
 
+/// Test-only gate `publish` checks before storing anything. Lets a test hold the live poller
+/// thread's writes shut for a window, instead of relying on the poller's real values happening to
+/// equal the defaults - see `publish`.
+#[cfg(test)]
+static PAUSED: AtomicBool = AtomicBool::new(false);
+
+/// RAII guard that pauses `publish` for its lifetime and unpauses on drop - including on panic, so a
+/// failed assertion in one test cannot leave every later test's poller silently paused.
+#[cfg(test)]
+struct PausePoller;
+
+#[cfg(test)]
+impl PausePoller {
+    fn new() -> Self {
+        PAUSED.store(true, Ordering::SeqCst);
+        PausePoller
+    }
+}
+
+#[cfg(test)]
+impl Drop for PausePoller {
+    fn drop(&mut self) {
+        PAUSED.store(false, Ordering::SeqCst);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,7 +248,26 @@ mod tests {
         // Asserts the ACTUAL module statics via `reset()` and the real accessors, not fresh locals:
         // the old version loaded brand-new `AtomicI32::new(0)`/`AtomicBool::new(true)` values, which
         // could never fail however the real defaults were declared.
+        //
+        // `start()` is called by sibling tests in this same binary and spawns a poller thread that
+        // is never stopped - it keeps ticking for the rest of the process. `SERIAL` only serialises
+        // test *bodies*, not that thread, so without `PausePoller` this assertion would only pass
+        // because a normal desktop's real values happen to equal the defaults. `_pause` holds the
+        // gate shut for the whole reset-then-assert window; the `racer` below hammers that same gate
+        // with values that would fail every assertion if it ever got through, so this test would
+        // catch the regression of removing the guard, not just rely on desktop state being quiet.
+        let _pause = PausePoller::new();
         reset();
+
+        let racer = std::thread::spawn(|| {
+            let until = std::time::Instant::now() + std::time::Duration::from_millis(150);
+            while std::time::Instant::now() < until {
+                publish(super::super::visibility::QUNS_FULLSCREEN, false, true);
+            }
+        });
+        // Give the racer a real chance to land a write inside the assertion window before we read.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
         assert_eq!(
             notification_state(),
             0,
@@ -214,6 +283,8 @@ mod tests {
         // And the values the visibility policy treats as blocking must not be the default.
         assert_ne!(0, super::super::visibility::QUNS_FULLSCREEN);
         assert_ne!(0, super::super::visibility::QUNS_PRESENTATION);
+
+        racer.join().unwrap();
     }
 
     #[test]
