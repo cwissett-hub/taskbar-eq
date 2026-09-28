@@ -201,6 +201,7 @@ families** have one, and each is that instrument's characteristic fault or ritua
 | Kaleidoscope | The mirrors multiply: the fold count doubles and the pattern crowds the strip |
 | Fluid | Cavitation — the surface breaks into a patchy froth and the tank runs slack |
 | Virtual Self: wings | A lens flare bursts from the wing root — bright core, four streaks and a ring — and fades |
+| Virtual Self: ghost voices | A datamosh: horizontal slices shift and colour-invert for a few frames, with a white strobe on the first |
 
 **Every family has one.** The fluid tank was the last and the hardest, because it has the tightest
 invariants here: the liquid must stay inside the tank, the drawn surface must follow the simulated field,
@@ -351,13 +352,13 @@ colourway files, which hot-reload on save and can replace a built-in by reusing 
 
 ## More
 
-**155 colourways across 23 families**: Segmented VFD, Oscilloscope, VU dials, Vaporwave grid,
+**159 colourways across 24 families**: Segmented VFD, Oscilloscope, VU dials, Vaporwave grid,
 Valve row, Fluid, Nixie tubes, Spectrogram, Reel-to-reel, Patchbay, Radar, Pantone, Flame organ,
 Dolphin LCD, 3D spectrum, 3D Pipes, Orbit, Cherry blossom, Kaleidoscope, Rave lasers, Brutalist,
-Chroma field, Virtual Self: wings. The full catalogue, with a screenshot and one-liner per family,
-moved out of this README to keep it a reasonable length:
+Chroma field, Virtual Self: wings, Virtual Self: ghost voices. The full catalogue, with a screenshot
+and one-liner per family, moved out of this README to keep it a reasonable length:
 
-- [docs/themes.md](docs/themes.md) — the full colourway catalogue, all 23 families, and the
+- [docs/themes.md](docs/themes.md) — the full colourway catalogue, all 24 families, and the
   external-theme file format
 - [docs/theme-prompt.md](docs/theme-prompt.md) — a self-contained prompt for having a coding
   agent author new colourways

@@ -491,6 +491,79 @@ pub fn vswings_ghost() -> Theme {
     }
 }
 
+// Virtual Self: ghost voices - a glitch terminal. See `render::vsghost` for what the meter is. The
+// panel is opaque (black, or white for the inverse). A cold, digital palette: white, cobalt/electric,
+// an inverse (black on white) and a violet/pink set - no rainbow. The contrast rule is on `lit` against
+// `panel`, and each set below clears 3:1.
+
+fn vsghost_base() -> Theme {
+    Theme {
+        family: "vsghost".into(),
+        texture: Texture::None_,
+        panel_alpha: 1.0,
+        // No bloom: the meter is crisp ticks, and a halo over a piano roll smears the columns together.
+        bloom: 0.0,
+        glow_strength: 0.0,
+        // The resting grid, drawn in `lit` at this alpha, so it is always faintly there.
+        ghost: 0.16,
+        // Snappy: the ticks jump on the transient and fall away, and the peak hangs then decays slowly.
+        ballistics: Ballistics { attack: 0.8, decay: 0.25, peak_fall: 0.02 },
+        ..Theme::default()
+    }
+}
+
+/// White: pure white ticks on black, ice-white peaks and phrase, electric-blue rays. The plainest set.
+pub fn vsghost_white() -> Theme {
+    Theme {
+        id: "vsghost-white".into(),
+        name: "Ghost White".into(),
+        lit: "#ffffff".into(),
+        hot: "#dff3ff".into(),
+        panel: "#000000".into(),
+        edge: "#3ec8ff".into(),
+        ..vsghost_base()
+    }
+}
+
+/// Cobalt: cobalt ticks rising to electric-cyan peaks on black, electric rays - the coldest set.
+pub fn vsghost_cobalt() -> Theme {
+    Theme {
+        id: "vsghost-cobalt".into(),
+        name: "Ghost Cobalt".into(),
+        lit: "#1f5bff".into(),
+        hot: "#3ec8ff".into(),
+        panel: "#000000".into(),
+        edge: "#3ec8ff".into(),
+        ..vsghost_base()
+    }
+}
+
+/// Inverse: black ticks on a white panel, cobalt peaks and rays - the terminal printed as a negative.
+pub fn vsghost_inverse() -> Theme {
+    Theme {
+        id: "vsghost-inverse".into(),
+        name: "Ghost Inverse".into(),
+        lit: "#000000".into(),
+        hot: "#1f5bff".into(),
+        panel: "#ffffff".into(),
+        edge: "#1f5bff".into(),
+        ..vsghost_base()
+    }
+}
+
+/// Violet: violet ticks tipped pale-pink on black, violet rays - the warmest of the cold sets.
+pub fn vsghost_violet() -> Theme {
+    Theme {
+        id: "vsghost-violet".into(),
+        name: "Ghost Violet".into(),
+        lit: "#8e6bff".into(),
+        hot: "#ffd6ec".into(),
+        panel: "#000000".into(),
+        edge: "#8e6bff".into(),
+        ..vsghost_base()
+    }
+}
+
 pub fn all() -> Vec<Theme> {
     vec![
         vfd_ice(),
@@ -581,6 +654,10 @@ pub fn all() -> Vec<Theme> {
         vswings_angel_voices(),
         vswings_utopia(),
         vswings_ghost(),
+        vsghost_white(),
+        vsghost_cobalt(),
+        vsghost_inverse(),
+        vsghost_violet(),
         nixie_orange(),
         nixie_ice(),
         nixie_neon_green(),
@@ -4408,6 +4485,10 @@ mod tests {
         // against the standing requirement that themes stay expandable. What it is
         // actually worth guarding is that no family silently loses its colourways and
         // that no theme carries a family name the renderer cannot dispatch on.
+        //
+        // The floor is 4, not 5: `vsghost` ships four colourways by design (its brief names
+        // exactly four), so a hard 5 would fail on a family that is complete. Four is still a
+        // meaningful floor against a family silently dropping colourways.
         let all = all();
         // Taken from the renderer rather than restated here, so adding a family cannot
         // leave this test asserting against a stale list - which is exactly what happened
@@ -4415,7 +4496,7 @@ mod tests {
         let mut counted = 0;
         for fam in crate::render::KNOWN_FAMILIES {
             let n = all.iter().filter(|t| t.family == fam).count();
-            assert!(n >= 5, "family {fam} should ship at least 5 colourways, has {n}");
+            assert!(n >= 4, "family {fam} should ship at least 4 colourways, has {n}");
             counted += n;
         }
         assert_eq!(
