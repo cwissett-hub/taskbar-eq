@@ -416,14 +416,14 @@ fn vswings_base() -> Theme {
 }
 
 /// Particle Arts: the deep-blue Virtual Self on an ice panel with a cobalt floor. The wings are cobalt
-/// shading to white - the ice needs a dark wing body to read, so the "white wings" of the brief live in
-/// the chrome tips.
+/// shading to electric cyan - on an opaque ice panel a white tip would vanish, so the highlight is the
+/// palette's electric blue, which reads as a bright edge against both the cobalt body and the ice.
 pub fn vswings_particle_arts() -> Theme {
     Theme {
         id: "vswings-particle-arts".into(),
         name: "Particle Arts".into(),
         lit: "#1f5bff".into(),
-        hot: "#ffffff".into(),
+        hot: "#3ec8ff".into(),
         panel: "#dff3ff".into(),
         edge: "#1f5bff".into(),
         edge_alpha: 0.16,
@@ -445,15 +445,15 @@ pub fn vswings_eon_break() -> Theme {
     }
 }
 
-/// Angel Voices: violet wings tipped white on a pale-pink panel. The violet is deepened from the palette's
-/// `#8e6bff` so the wing body clears 3:1 against the pale panel - the pale pink alone cannot carry a light
-/// wing.
+/// Angel Voices: violet wings on a pale-pink panel, tipped with the palette's lighter violet. The body
+/// violet is deepened from `#8e6bff` so it clears 3:1 against the pale panel; the tip is that lighter
+/// `#8e6bff`, which reads as a bright edge on pink where a white tip would wash out.
 pub fn vswings_angel_voices() -> Theme {
     Theme {
         id: "vswings-angel-voices".into(),
         name: "Angel Voices".into(),
         lit: "#7b4fe6".into(),
-        hot: "#ffffff".into(),
+        hot: "#8e6bff".into(),
         panel: "#ffd6ec".into(),
         edge: "#7b4fe6".into(),
         edge_alpha: 0.14,

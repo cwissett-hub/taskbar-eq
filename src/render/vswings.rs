@@ -14,16 +14,19 @@
 //! straight bar row does. Bass at the root means the loudest, most rhythmic part of most music drives the
 //! biggest, most central feathers - the ones the eye lands on first.
 //!
-//! # The panel is TRANSPARENT, and that is not an oversight
+//! # The panel is opaque, and the bloom is confined to a light layer
 //!
-//! Every other family in this project paints an opaque panel to occlude the Windows weather widget. This
-//! one does not: the wings float on transparency with only a 2px chrome bevel framing the edge. The reason
-//! is the family's own liveness contract - `louder_bass_makes_longer_root_feathers` and the rest measure
-//! the LIT-PIXEL count (alpha), and a mark drawn over an opaque field cannot change that count because the
-//! field is already opaque. For the wings to answer the music in the one measure the tests read, the field
-//! under them has to be clear, so each feather contributes its own alpha. The cost, recorded plainly, is
-//! that this family does not hide the widget the way the bar families do - the wings are an overlay, not a
-//! lid. See the task report for the trade.
+//! Like every other family, this one paints an opaque panel (dark or ice) that covers the Windows weather
+//! widget while music plays - a see-through family would show the forecast through the wings. The wings,
+//! grid and chrome are drawn over that panel, and a 2px bevel frames its edge.
+//!
+//! What that forces is where the BLOOM goes. Bloom applied to the whole canvas spreads the wings' colour
+//! into a halo across the panel, and since the wings cover a large contiguous fan that halo tints nearly
+//! the whole surface - which flattens the one reading the meter has, the wing LENGTH (measured as
+//! how much of the panel the wings have painted over). So the bloom is confined to a light layer holding
+//! only the bright accents - the hot tips, the peak dots and the flare core - which is composited over
+//! crisp wing bodies. That is the exact idiom `Canvas::bloom`/`draw_over` document for a halo over an
+//! opaque field, and it keeps the glow without dissolving the meter.
 //!
 //! # The chrome: a bevel, a grid, a lens flare
 //!
@@ -358,6 +361,13 @@ impl Family for Vswings {
         let lit = Rgba::from_hex(&t.lit, 1.0);
         let hot = Rgba::from_hex(&t.hot, 1.0);
 
+        // ---- the opaque panel ----
+        //
+        // This family covers the widget like the others - see the module note. Filled first; a
+        // `clip_to_rounded_rect` at the very end keeps anything (bevel included) off the rounded corners.
+        let panel = Rgba::from_hex(&t.panel, t.panel_alpha);
+        c.rounded_rect(1, 2, w - 2, h - 4, 3, panel);
+
         // The grid scroll is advanced here but DRAWN after the bloom - see the ordering note below.
         let rms = if d.rms_l.is_finite() { d.rms_l.clamp(0.0, 1.0) } else { 0.0 };
         let onset = self.onset.update(&d.levels, dt, GRID_ONSET_RATIO, GRID_ONSET_REFRACTORY_MS);
@@ -460,19 +470,23 @@ impl Family for Vswings {
 
         // ---- the chrome bevel frame ----
         //
-        // This family paints NO opaque panel - see the module note - so the bevel is the whole of the
-        // panel's presence: light on the top and left, dark on the bottom and right.
+        // The extruded-panel edge: light on the top and left, dark on the bottom and right. Drawn INSIDE
+        // the panel rect (at x/y 1..) so the final clip keeps it - the panel fill starts at x=1,y=2.
         let bevel_l = Rgba::from_hex(BEVEL_LIGHT, 1.0);
         let bevel_d = Rgba::from_hex(BEVEL_DARK, 1.0);
-        c.fill_rect(0, 0, w, 2, bevel_l);
-        c.fill_rect(0, 0, 2, h, bevel_l);
-        c.fill_rect(0, h - 2, w, 2, bevel_d);
-        c.fill_rect(w - 2, 0, 2, h, bevel_d);
+        c.fill_rect(1, 2, w - 2, 2, bevel_l);
+        c.fill_rect(1, 2, 2, h - 4, bevel_l);
+        c.fill_rect(1, h - 4, w - 2, 2, bevel_d);
+        c.fill_rect(w - 3, 2, 2, h - 4, bevel_d);
 
         // ---- the title, only where it fits, on top of everything ----
         if h >= TITLE_MIN_H {
             Self::draw_title(c, &mut layer, w);
         }
+
+        // Keep nothing on the rounded corners - the panel, the bevel and the wings are all authored
+        // inside this rect, and this makes that a guarantee rather than an assumption.
+        c.clip_to_rounded_rect(1, 2, w - 2, h - 4, 3);
 
         // The light layer is kept for reuse next frame - see the allocation note above.
         self.scratch = Some(layer);
@@ -503,8 +517,25 @@ mod tests {
         }
         c
     }
-    fn lit(c: &Canvas) -> usize {
-        c.bits().iter().filter(|p| (**p >> 24) > 8).count()
+    /// Pixels the family DREW OVER the panel - opaque and differing from the panel colour by more than a
+    /// rounding margin. The panel is opaque, so "lit" is paint on top of it, not raw alpha.
+    fn drew_over_panel(px: Rgba, panel: Rgba) -> bool {
+        let d = (px.r as i32 - panel.r as i32).abs()
+            + (px.g as i32 - panel.g as i32).abs()
+            + (px.b as i32 - panel.b as i32).abs();
+        px.a > 8 && d > 24
+    }
+    fn lit(c: &Canvas, t: &Theme) -> usize {
+        let panel = Rgba::from_hex(&t.panel, 1.0);
+        let mut n = 0;
+        for y in 0..c.height() {
+            for x in 0..c.width() {
+                if drew_over_panel(c.get(x, y), panel) {
+                    n += 1;
+                }
+            }
+        }
+        n
     }
 
     #[test]
@@ -519,11 +550,13 @@ mod tests {
     fn wings_are_mirrored_about_the_centre() {
         let t = theme("vswings-particle-arts");
         let c = frames(&mut Vswings::default(), &t, 380, 48, 0.6, 30);
-        // Lit-pixel count in the left half vs the right half within 10%: the two wings are a mirror pair.
+        // Painted-over-panel count in the left half vs the right half within 10%: the two wings are a
+        // mirror pair.
+        let panel = Rgba::from_hex(&t.panel, 1.0);
         let (mut l, mut r) = (0usize, 0usize);
         for y in 0..48 {
             for x in 0..380 {
-                if c.get(x, y).a > 8 {
+                if drew_over_panel(c.get(x, y), panel) {
                     if x < 190 {
                         l += 1
                     } else {
@@ -540,14 +573,14 @@ mod tests {
         let t = theme("vswings-particle-arts");
         let quiet = frames(&mut Vswings::default(), &t, 380, 48, 0.2, 30);
         let loud = frames(&mut Vswings::default(), &t, 380, 48, 0.8, 30);
-        assert!(lit(&loud) > lit(&quiet) + 200, "quiet {} loud {}", lit(&quiet), lit(&loud));
+        assert!(lit(&loud, &t) > lit(&quiet, &t) + 200, "quiet {} loud {}", lit(&quiet, &t), lit(&loud, &t));
     }
 
     #[test]
     fn rest_frame_is_not_empty() {
         let t = theme("vswings-eon-break");
         let c = frames(&mut Vswings::default(), &t, 380, 48, 0.0, 10);
-        assert!(lit(&c) as f32 >= 0.02 * (380 * 48) as f32, "grid should still show: {}", lit(&c));
+        assert!(lit(&c, &t) as f32 >= 0.02 * (380 * 48) as f32, "grid should still show: {}", lit(&c, &t));
     }
 
     #[test]
@@ -558,7 +591,7 @@ mod tests {
             let _ = frames(&mut fam, &t, 190, 48, 0.5, 5);
             fam.flourish.force_next();
             let c = frames(&mut fam, &t, 190, 48, 0.5, 40);
-            assert!(lit(&c) > 0, "{id}");
+            assert!(lit(&c, &t) > 0, "{id}");
         }
     }
 
