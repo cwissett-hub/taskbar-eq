@@ -217,57 +217,52 @@ impl Vswings {
         }
     }
 
-    /// The GLOWING part of the lens flare: a small, softly-falling core, drawn onto the light layer so
-    /// bloom gives it a halo. Kept small on purpose - a big core is exactly the white blob a flare must
-    /// not be; the READABLE flare is the crisp streaks and ring, added after bloom by `draw_flare_lines`.
-    fn draw_flare_core(&self, layer: &mut Canvas, t: &Theme, cx: f32, cy: f32, flare: f32) {
+    /// The lens flare at the wing root, drawn CRISP on the main canvas and NEVER bloomed - a bloomed core
+    /// is precisely the soft disc that swallowed the wings in the first cut. The SHAPE carries it:
+    ///
+    /// - a small bright core (a radial gradient a few px across, scaled with height);
+    /// - four 1px streaks that fade along their length - a fixed-length cross, so the fade lives in the
+    ///   brightness, not in the reach, and the cross stays a cross as it decays;
+    /// - a 1px ring that EXPANDS from the root as the envelope decays - small and bright at the peak,
+    ///   wide and faint on the way out, the shockwave of the burst.
+    ///
+    /// Alpha is the envelope throughout.
+    fn draw_flare(&self, c: &mut Canvas, t: &Theme, center: (f32, f32), size: (i32, i32), flare: f32) {
         let a = flare.clamp(0.0, 1.0);
         if a <= 0.004 {
             return;
         }
+        let (cx, cy) = center;
+        let (w, h) = size;
         let (fx, fy) = (cx.round() as i32, cy.round() as i32);
         let core = Rgba::from_hex(&t.hot, 1.0);
-        let r_out = (3.0 + 4.0 * a).round() as i32;
-        layer.radial_gradient(
-            fx,
-            fy,
-            1,
-            r_out,
-            &[
-                (0.0, Rgba::new(core.r, core.g, core.b, (a.clamp(0.0, 1.0) * 200.0).round() as u8)),
-                (1.0, Rgba::new(core.r, core.g, core.b, 0)),
-            ],
-        );
-    }
+        let col = |k: f32| Rgba::new(core.r, core.g, core.b, (k.clamp(0.0, 1.0) * 255.0).round() as u8);
 
-    /// The CRISP part of the flare: four streaks and a ring, drawn straight onto the main canvas AFTER
-    /// bloom so they stay sharp lines rather than dissolving into the core's halo. This is what makes the
-    /// effect read as a lens flare instead of a glowing disc.
-    fn draw_flare_lines(&self, c: &mut Canvas, t: &Theme, cx: f32, cy: f32, w: i32, flare: f32) {
-        let a = flare.clamp(0.0, 1.0);
-        if a <= 0.004 {
-            return;
-        }
-        let (fx, fy) = (cx.round() as i32, cy.round() as i32);
-        let core = Rgba::from_hex(&t.hot, 1.0);
-        let alpha = |k: f32| ((k * a).clamp(0.0, 1.0) * 255.0).round() as u8;
-        // Four thin streaks carry the reach - the anamorphic flare.
-        let reach = (w as f32 * 0.26 * a).round() as i32;
-        let streak = Rgba::new(core.r, core.g, core.b, alpha(0.75));
+        // The core: a few px across, softly falling.
+        let r_core = (5.0 + h as f32 / 30.0).round() as i32;
+        c.radial_gradient(fx, fy, 1, r_core, &[(0.0, col(a)), (1.0, col(0.0))]);
+
+        // Four 1px streaks, brightest at the core, fading to nothing at the tip. Length is fixed so the
+        // cross is the dominant read at any envelope level.
+        let reach = (0.25 * w as f32).round() as i32;
         for (sx, sy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-            c.line(fx, fy, fx + sx * reach, fy + sy * reach, streak);
+            for s in 1..=reach {
+                let f = s as f32 / reach as f32;
+                c.fill_rect(fx + sx * s, fy + sy * s, 1, 1, col(a * (1.0 - f)));
+            }
         }
-        // One thin ring, out where the streaks fade.
-        let ring_r = (reach as f32 * 0.5).round() as i32;
-        if ring_r > 2 {
-            let ring = Rgba::new(core.r, core.g, core.b, alpha(0.5));
-            c.radial_gradient(
-                fx,
-                fy,
-                ring_r,
-                ring_r + 2,
-                &[(0.0, ring), (1.0, Rgba::new(core.r, core.g, core.b, 0))],
-            );
+
+        // The expanding ring: radius 4px at the peak out to ~0.3h as it fades.
+        let r_ring = (4.0 + (0.3 * h as f32 - 4.0).max(0.0) * (1.0 - a)).round() as i32;
+        if r_ring >= 3 {
+            let ring = col(a * 0.9);
+            let steps = (r_ring as f32 * 6.5).round() as i32 + 8;
+            for i in 0..steps {
+                let ang = i as f32 / steps as f32 * std::f32::consts::TAU;
+                let px = fx + (r_ring as f32 * ang.cos()).round() as i32;
+                let py = fy + (r_ring as f32 * ang.sin()).round() as i32;
+                c.fill_rect(px, py, 1, 1, ring);
+            }
         }
     }
 
@@ -448,13 +443,9 @@ impl Family for Vswings {
             }
         }
 
-        // ---- the flourish: a lens flare from the wing root ----
-        //
-        // Its glowing core goes on the light layer (bloomed); its streaks and ring are added crisp AFTER
-        // bloom, below - a flare reads as lines, not as a disc.
+        // ---- advance the flourish envelope (the flare itself is drawn crisp, below the bevel) ----
         let fired = self.flourish.update(&d.levels, dt, t.flourish);
         let flare = self.flare.update(fired, dt, FLARE_MS);
-        self.draw_flare_core(&mut layer, t, cx, root_y, flare);
 
         // ---- bloom the accents and lay the halo over the crisp wings ----
         if t.bloom > 0.0 {
@@ -462,11 +453,11 @@ impl Family for Vswings {
         }
         c.draw_over(&layer);
 
-        // The flare's crisp streaks and ring, on top of the bloomed core.
-        self.draw_flare_lines(c, t, cx, root_y, w, flare);
-
         // ---- the receding floor grid, quiet and un-bloomed, over the wings ----
         self.draw_grid(c, t, cx, (ix0, iy0, ix1, iy1));
+
+        // ---- the flourish: a lens flare from the wing root, crisp and never bloomed ----
+        self.draw_flare(c, t, (cx, root_y), (w, h), flare);
 
         // ---- the chrome bevel frame ----
         //
@@ -671,8 +662,9 @@ mod tests {
                 }
                 write(format!("vswings-{}-{tag}", &t.id["vswings-".len()..]), &c);
             }
-            // Flourish: settle, fire, then hold a couple of frames so the flare is near its peak on the
-            // single frame written.
+            // Flourish: settle, fire, then capture TWO frames - one at the envelope peak and one at
+            // ~40% decay (the ring has expanded by then). Each is a fresh frame (clear each), post-hit
+            // music level dropped to 0.3.
             let mut fam = Vswings::default();
             let mut c = Canvas::new(380, 60);
             for k in 0..90 {
@@ -680,11 +672,18 @@ mod tests {
                 fam.draw(&mut c, &t, &frame(0.6, k as f32 * 0.0167));
             }
             fam.flourish.force_next();
+            // Peak: two frames after the fire, flare ~0.94.
             for k in 90..93 {
                 c.clear();
                 fam.draw(&mut c, &t, &frame(0.45, k as f32 * 0.0167));
             }
             write(format!("vswings-{}-flourish", &t.id["vswings-".len()..]), &c);
+            // ~40% decay: 0.6 of the 600ms decay has elapsed by ~22 frames after the fire.
+            for k in 93..113 {
+                c.clear();
+                fam.draw(&mut c, &t, &frame(0.3, k as f32 * 0.0167));
+            }
+            write(format!("vswings-{}-flourish-decay", &t.id["vswings-".len()..]), &c);
         }
         // One at the awkward mid size, to prove it still reads.
         let t = theme("vswings-eon-break");

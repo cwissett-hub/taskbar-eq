@@ -394,11 +394,11 @@ pub fn brutal_cast() -> Theme {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// Virtual Self: wings - angel wings on Y2K chrome. See `render::vswings` for what the meter is and why
-// the panel is transparent. Restrained on purpose: chrome, ice, cobalt and one violet, no rainbow. The
-// contrast rule is on `lit` against `panel`, so where the design calls for a light panel the wing BODY is
-// the dark, contrast-carrying colour and the whiteness lives in the `hot` tips and the chrome highlights -
-// a white wing on an ice panel would be both illegible and a contrast-rule failure.
+// Virtual Self: wings - angel wings on Y2K chrome. See `render::vswings` for what the meter is. The
+// panel is opaque (dark or ice) and covers the widget like every other family. Restrained on purpose:
+// chrome, ice, cobalt and one violet, no rainbow. The contrast rule is on `lit` against `panel`, so where
+// the design calls for a light panel the wing BODY is the dark, contrast-carrying colour and the tip is a
+// saturated palette colour, not white - on an opaque ice or pink panel a white tip would wash out.
 
 fn vswings_base() -> Theme {
     Theme {
