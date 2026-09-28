@@ -51,4 +51,3 @@ features = [
 opt-level = 3
 lto = true
 strip = true
-panic = "abort"
