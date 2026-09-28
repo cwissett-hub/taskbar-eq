@@ -9,7 +9,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.96
       # RUSTFLAGS is set inline in THIS step's own pwsh process, not written to $env:GITHUB_ENV,
       # so it does not leak into `cargo test`/`clippy` below - only the release build that ships
       # is built with paths stripped. windows-latest's default `run:` shell is pwsh, so
