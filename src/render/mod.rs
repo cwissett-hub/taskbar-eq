@@ -347,6 +347,80 @@ mod wide_dump {
         }
         println!("wrote 5 wide dumps ({w}x{h}) to {}", dir.display());
     }
+
+    /// Renders the README hero image: one family at its real 380x60 shape, composited into a
+    /// 600x60 `#202020` strip standing in for the taskbar around it - because a bare 380x60
+    /// render, or a stacked multi-colourway comparison sheet (which is what the eyeball dumps
+    /// otherwise produce), does not read as "this is what it looks like on your taskbar" the
+    /// way a README's first image needs to.
+    ///
+    /// Writes a raw RGBA dump (this crate has no PNG encoder and none is worth adding for one
+    /// image); a one-off PowerShell step converts it to `docs/screenshot.png` - see
+    /// `.superpowers/sdd/2026-09-25-health-fixes/task-10-report.md`.
+    ///
+    /// Run: cargo test --release dump_hero -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn dump_hero() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (fw, fh) = (380, 60);
+        let (sw, sh) = (600, 60);
+        // Same shape kaleido.rs's own `frame(gain, t_s)` test helper uses at gain 0.62 - the
+        // fixture that produced docs/review/kaleido.png - rather than inventing a new one: a
+        // flat/uniform level or the wrong band shape drives this family's facet quantisation
+        // into a much harsher, over-saturated pattern than the family actually ships.
+        let gain = 0.62f32;
+        let frame = |t_s: f32| {
+            let mut d = FrameData { dt_ms: 16.7, time_s: t_s, ..FrameData::default() };
+            for (i, v) in d.levels.iter_mut().enumerate() {
+                let f = i as f32 / crate::dsp::bands::NUM_BANDS as f32;
+                let shape = (1.0 - f).powf(1.5) * 0.58 + 0.15;
+                let wob = 1.0 + 0.32 * (t_s * 2.2 + f * 7.0).sin();
+                *v = ((shape * wob) * gain).clamp(0.0, 1.0);
+            }
+            d.peaks = d.levels;
+            d
+        };
+
+        let theme = builtin::all().into_iter().find(|t| t.id == "kaleido-prism").unwrap();
+        let mut fam = family_for(&theme.family);
+        let mut c = Canvas::new(fw, fh);
+        for k in 0..300 {
+            fam.draw(&mut c, &theme, &frame(k as f32 * 0.0167));
+        }
+
+        // The strip: a flat #202020, standing in for the dark taskbar either side of the meter.
+        let bg = crate::render::canvas::Rgba::from_hex("#202020", 1.0);
+        let mut out = vec![0u8; (sw * sh * 4) as usize];
+        for y in 0..sh {
+            for x in 0..sw {
+                let o = ((y * sw + x) * 4) as usize;
+                out[o] = bg.r;
+                out[o + 1] = bg.g;
+                out[o + 2] = bg.b;
+                out[o + 3] = 255;
+            }
+        }
+        // Right-aligned with a small margin, the way the real overlay sits just left of the
+        // Widgets button rather than centred in open taskbar space.
+        let ox = sw - fw - 12;
+        let oy = (sh - fh) / 2;
+        for y in 0..fh {
+            for x in 0..fw {
+                let px = c.get(x, y);
+                let a = px.a as f32 / 255.0;
+                let o = (((y + oy) * sw + (x + ox)) * 4) as usize;
+                for (k, ch) in [px.r, px.g, px.b].iter().enumerate() {
+                    let base = out[o + k] as f32;
+                    out[o + k] = (*ch as f32 * a + base * (1.0 - a)).round() as u8;
+                }
+            }
+        }
+        let path = dir.join(format!("hero-{}-{sw}x{sh}.rgba", theme.id));
+        std::fs::write(&path, &out).unwrap();
+        println!("wrote {} ({sw}x{sh})", path.display());
+    }
 }
 
 #[cfg(test)]

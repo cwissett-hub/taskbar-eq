@@ -347,15 +347,12 @@ It runs as a GUI application, so nothing appears on screen but the meter itself.
 console-subsystem binaries and popped a black terminal that then sat there for the life of the
 process.
 
-The subsystem is fixed at link time, so there is no runtime switch — but you can ask for output:
-
-| | |
-|---|---|
-| `taskbar-eq.exe` | silent, no window |
-| `taskbar-eq.exe --console` | allocates a console so you can watch it run |
-| `taskbar-eq.exe --diagnose` | prints the whole "would the overlay draw?" decision chain and exits. See below |
-| `taskbar-eq.exe --levels` | captures 8 seconds of real audio and reports what the DSP actually produces - per-band percentiles, frame peaks, onset rates - then exits. It also writes the band frames to `tests/fixtures/`, so it is a source-checkout tool: it is how the tuning constants were calibrated against real music rather than against assumptions |
-| run from an existing terminal | inherits that terminal, so `--diagnose` prints where you ran it |
+The subsystem is fixed at link time, so there is no runtime switch — but you can ask for output.
+The full, current flag list (`--console`, `--diagnose`, `--levels`, `--stress`, `--help`,
+`--version`) is quoted verbatim from `usage()` in the README's
+[Command line](../README.md#command-line) section rather than duplicated here, since a table
+here would drift out of sync with the code exactly the way the three-flag version of this table
+already had.
 
 Diagnostics never depend on a console either way: the log at
 `%APPDATA%\taskbar-eq\taskbar-eq.log` is written and flushed per line regardless.

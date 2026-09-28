@@ -1,21 +1,27 @@
 name: ci
 on: { push: { branches: [main], tags: ["v*"] }, pull_request: {} }
+# `gh release upload` on a tag push authenticates with the default GITHUB_TOKEN (below), which
+# needs write access to the repo's releases - without this the tag-gated step 403s.
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      # windows-latest's default shell for `run:` is pwsh, so this uses $env:USERPROFILE (a
-      # real runtime PowerShell variable) rather than trying to reference it through the
-      # workflow-level env/expression context, which only sees vars set via `env:` keys and
-      # would not see USERPROFILE at all. ${{ github.workspace }} is a GitHub Actions
-      # expression, evaluated server-side before the step runs, so mixing the two here is safe.
-      - name: Set RUSTFLAGS (strip build-machine paths from the exe)
+      # RUSTFLAGS is set inline in THIS step's own pwsh process, not written to $env:GITHUB_ENV,
+      # so it does not leak into `cargo test`/`clippy` below - only the release build that ships
+      # is built with paths stripped. windows-latest's default `run:` shell is pwsh, so
+      # $env:USERPROFILE is a real runtime variable here; ${{ github.workspace }} is a GitHub
+      # Actions expression evaluated server-side before the step runs, so mixing the two is
+      # safe. (${{ env.USERPROFILE }} would NOT work - the env context only sees vars set via
+      # workflow `env:` keys, not the runner's own OS environment.)
+      - name: Build (release, build-machine paths stripped)
         shell: pwsh
         run: |
-          echo "RUSTFLAGS=--remap-path-prefix=${{ github.workspace }}=. --remap-path-prefix=$env:USERPROFILE\.cargo=~cargo" >> $env:GITHUB_ENV
-      - run: cargo build --release
+          $env:RUSTFLAGS = "--remap-path-prefix=${{ github.workspace }}=. --remap-path-prefix=$env:USERPROFILE\.cargo=~cargo"
+          cargo build --release
       - run: cargo test
       # The slow set gates the whole-registry render sweeps and the per-family real-music /
       # flourish checks behind `slow_` + `--ignored` (see README "Build from source" and
@@ -27,4 +33,4 @@ jobs:
         with: { name: taskbar-eq, path: target/release/taskbar-eq.exe }
       - if: startsWith(github.ref, 'refs/tags/v')
         run: gh release upload ${{ github.ref_name }} target/release/taskbar-eq.exe --clobber
-        env: { GH_TOKEN: ${{ github.token }} }
+        env: { GH_TOKEN: "${{ github.token }}" }

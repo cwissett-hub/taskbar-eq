@@ -274,6 +274,31 @@ remains the leading explanation, because a UIA call into an `explorer.exe` that 
 blocks for far longer than one into an idle shell. **[TODO.md](TODO.md) records what is measured and what
 is still inference.** The watchdog stays either way.
 
+### Command line
+
+It runs as a GUI application with no visible window by default, but every flag `parse_args`
+understands is quoted here verbatim from `usage()` (`src/main.rs`), so this cannot drift the way
+a hand-copied table would:
+
+```
+taskbar-eq 0.2.1
+Usage: taskbar-eq [FLAG]
+
+  --console    allocate a console window and stay attached to it, for watching the app run
+  --diagnose   print the whole "would the overlay draw?" decision chain, then exit
+  --levels     capture 8 seconds of real audio and report what the DSP actually produces, then exit
+  --stress     hunt the process handle/thread leak by hammering each suspect path, then exit
+  --help       print this usage text and exit
+  --version    print the version and exit
+```
+
+An unrecognised flag refuses to launch and prints this same text to stderr rather than being
+silently ignored. Run from an existing terminal and the app inherits it, so `--diagnose` prints
+where you ran it; run without one and `--console`/`--help`/`--version`/an unknown flag all
+allocate a fresh console so the output is never silently lost. `--diagnose`'s own walkthrough —
+what each line of its decision chain means — is in
+[docs/status.md](docs/status.md#if-it-does-not-appear).
+
 ---
 
 ## Song identification

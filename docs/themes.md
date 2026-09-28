@@ -158,8 +158,8 @@ Failure modes are all deliberately soft, because these files are hand-authored:
 - **Deleting the theme you had selected** — falls back to the first available one and remembers
   that, rather than pointing at nothing.
 
-See the schema in the prompt below for the exact format: `schema = 1` plus `[colour]`,
-`[look]`, `[ballistics]` and optional `[[zone]]` / `[dual]` tables.
+See the schema in [docs/theme-prompt.md](theme-prompt.md) for the exact format: `schema = 1`
+plus `[colour]`, `[look]`, `[ballistics]` and optional `[[zone]]` / `[dual]` tables.
 
 One thing worth knowing if you go tuning: **`bloom` is the halo radius, `glow_strength` is its
 brightness.** Raising `bloom` expecting more glow makes it *fainter*, because a wider blur
