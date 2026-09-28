@@ -15,6 +15,26 @@ use crate::{FALLBACK_GAP, FALLBACK_WIDTH, WIDEN_MARGIN};
 use anyhow::Result;
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 
+/// Walks up from the current directory looking for a `tests/fixtures` directory, so `--levels`
+/// can find where to write its captured fixture without a build-machine path compiled into the
+/// exe.
+///
+/// `tests/fixtures` is committed to the repo (it already holds the checked-in
+/// `real-music-bands.csv` and friends), so any checkout that still has that directory - whether
+/// the current directory IS the repo root (`cargo run --release -- --levels`) or somewhere
+/// inside it - finds it. Returns `None` rather than a default guess when nothing is found, so the
+/// caller can say exactly what it was looking for instead of writing to a path nobody asked for.
+fn fixtures_dir() -> Option<std::path::PathBuf> {
+    let mut dir = std::env::current_dir().ok()?;
+    loop {
+        let candidate = dir.join("tests/fixtures");
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+        dir = dir.parent()?.to_path_buf();
+    }
+}
+
 /// Gives this process somewhere to print, when there is a reason to.
 ///
 /// A GUI-subsystem binary starts with no stdout at all, so `println!` and `eprintln!` write into
@@ -328,19 +348,31 @@ pub fn measure_levels() -> Result<()> {
             );
             out.push('\n');
         }
-        let dst = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/real-music-bands.csv");
-        if let Some(d) = dst.parent() {
-            let _ = std::fs::create_dir_all(d);
-        }
-        match std::fs::write(&dst, out) {
-            Ok(()) => log::write(&format!(
-                "wrote {} raw frames x {} bands to {}",
-                raw_frames.len(),
-                dsp::bands::NUM_BANDS,
-                dst.display()
-            )),
-            Err(e) => log::write(&format!("could not write the fixture: {e}")),
+        // Found at RUNTIME, not baked in via `env!("CARGO_MANIFEST_DIR")`: that constant is the
+        // path on the machine that BUILT the exe, and this exe ships to other machines and other
+        // users - a build path is not this probe's business to carry, and for a public exe it is
+        // also someone's username. `--levels` is documented as a source-checkout tool (see the
+        // README and TODO.md), run either as `cargo run --release -- --levels` (cwd is already
+        // the checkout root) or as the built exe from an existing checkout - both leave
+        // `tests/fixtures` reachable by walking up from the current directory.
+        match fixtures_dir() {
+            Some(dir) => {
+                let dst = dir.join("real-music-bands.csv");
+                match std::fs::write(&dst, out) {
+                    Ok(()) => log::write(&format!(
+                        "wrote {} raw frames x {} bands to {}",
+                        raw_frames.len(),
+                        dsp::bands::NUM_BANDS,
+                        dst.display()
+                    )),
+                    Err(e) => log::write(&format!("could not write the fixture: {e}")),
+                }
+            }
+            None => log::write(
+                "could not find a tests/fixtures directory under the current directory or any \
+                 parent - --levels writes its fixture from a source checkout of taskbar-eq; run \
+                 it from inside (or under) the repo, e.g. `cargo run --release -- --levels`",
+            ),
         }
     }
 
