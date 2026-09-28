@@ -36,6 +36,7 @@ split, and worth knowing before you go looking for one and only find it in the o
 | Chroma field | Zero-sum vertical stripes in spectrum order; a swelling stripe pinches its neighbours |
 | Virtual Self: wings | 32 bands fanned into two mirrored angel wings on a Y2K chrome floor; bass beats the root feathers |
 | Virtual Self: ghost voices | A piano-roll glitch terminal — bands as scrolling MIDI columns, light rays, a romanised phrase, a datamosh flourish |
+| Virtual Self: orb | A wireframe chrome icosphere the bass inflates, ringed by 24 spectrum spikes; it shatters into its triangles on a flourish |
 
 The Virtual Self: wings colourways are `vswings-particle-arts` (ice panel, cobalt-to-white wings,
 cobalt floor), `vswings-eon-break` (black panel, cobalt-to-electric wings, white floor),
@@ -45,6 +46,10 @@ silver-to-white chrome wings) and `vswings-ghost` (black panel, pure white wings
 The Virtual Self: ghost voices colourways are `vsghost-white` (black panel, white ticks, ice peaks),
 `vsghost-cobalt` (black panel, cobalt ticks, electric-cyan peaks), `vsghost-inverse` (white panel,
 black ticks, cobalt peaks) and `vsghost-violet` (black panel, violet ticks, pale-pink peaks).
+
+The Virtual Self: orb colourways are `vsorb-chrome` (ice gradient, cobalt chrome orb, white spikes),
+`vsorb-eon` (black-to-cobalt, electric-cyan orb, ice spikes), `vsorb-angel` (pale-pink-to-violet
+gradient, deep-violet orb, white spikes) and `vsorb-mono` (flat black, white wireframe, white spikes).
 
 **Five families reuse the `[tube]` table for their own hardware materials**, even though only
 one of them is the Valve row (`tube`) family itself: **Cherry blossom**, **Flame organ**,

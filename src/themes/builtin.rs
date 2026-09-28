@@ -564,6 +564,86 @@ pub fn vsghost_violet() -> Theme {
     }
 }
 
+// Virtual Self: orb - a low-poly chrome sphere. See `render::vsorb` for what the meter is. The panel is
+// opaque and the background is a vertical gradient from `panel` to `edge` (an ice gradient for chrome,
+// flat black for mono) with drifting lens-flare discs. The contrast rule is on `lit` against `panel`,
+// and each set below clears 3:1 - which on the two light-ended gradients (chrome's ice, angel's pink)
+// forces `lit` to be the darker, contrast-carrying chrome colour rather than white.
+
+fn vsorb_base() -> Theme {
+    Theme {
+        family: "vsorb".into(),
+        texture: Texture::None_,
+        panel_alpha: 1.0,
+        bloom: 2.0,
+        glow_strength: 0.3,
+        // The drifting background discs, drawn in `hot` at this alpha.
+        ghost: 0.12,
+        // Quick to swell on the kick, slow to settle - the orb beats with the bass.
+        ballistics: Ballistics { attack: 0.5, decay: 0.1, peak_fall: 0.01 },
+        ..Theme::default()
+    }
+}
+
+/// Chrome: an ice gradient (ice at the top shading to silver), a chrome orb (white sky, cobalt horizon,
+/// silver ground) and white spikes. `lit` is cobalt so it clears 3:1 against the near-white ice top.
+pub fn vsorb_chrome() -> Theme {
+    Theme {
+        id: "vsorb-chrome".into(),
+        name: "Orb Chrome".into(),
+        lit: "#1f5bff".into(),
+        hot: "#ffffff".into(),
+        panel: "#dff3ff".into(),
+        edge: "#8a94a6".into(),
+        ..vsorb_base()
+    }
+}
+
+/// Eon: a black-to-cobalt vignette, an electric-cyan orb tipped ice-white, cobalt ground - the coldest,
+/// brightest set.
+pub fn vsorb_eon() -> Theme {
+    Theme {
+        id: "vsorb-eon".into(),
+        name: "Orb Eon".into(),
+        lit: "#3ec8ff".into(),
+        hot: "#dff3ff".into(),
+        panel: "#000000".into(),
+        edge: "#1f5bff".into(),
+        ghost: 0.14,
+        ..vsorb_base()
+    }
+}
+
+/// Angel: a pale-pink-to-violet gradient, a deep-violet orb with white spikes. `lit` is the deepened
+/// violet so it clears 3:1 against the pale-pink top, the tip and sky are white. The light-panel set.
+pub fn vsorb_angel() -> Theme {
+    Theme {
+        id: "vsorb-angel".into(),
+        name: "Orb Angel".into(),
+        lit: "#7b4fe6".into(),
+        hot: "#ffffff".into(),
+        panel: "#ffd6ec".into(),
+        edge: "#8e6bff".into(),
+        ..vsorb_base()
+    }
+}
+
+/// Mono: a flat black panel (no gradient - `panel` and `edge` are both black), a pure white wireframe
+/// whose ground half fades to black, white spikes. The most stripped-back of the set.
+pub fn vsorb_mono() -> Theme {
+    Theme {
+        id: "vsorb-mono".into(),
+        name: "Orb Mono".into(),
+        lit: "#ffffff".into(),
+        hot: "#ffffff".into(),
+        panel: "#000000".into(),
+        edge: "#000000".into(),
+        // Just enough for the drifting discs to read faintly on black.
+        ghost: 0.07,
+        ..vsorb_base()
+    }
+}
+
 pub fn all() -> Vec<Theme> {
     vec![
         vfd_ice(),
@@ -658,6 +738,10 @@ pub fn all() -> Vec<Theme> {
         vsghost_cobalt(),
         vsghost_inverse(),
         vsghost_violet(),
+        vsorb_chrome(),
+        vsorb_eon(),
+        vsorb_angel(),
+        vsorb_mono(),
         nixie_orange(),
         nixie_ice(),
         nixie_neon_green(),
