@@ -535,9 +535,47 @@ mod tests {
         let mut fam = Vsghost::default();
         fam.set_phrase_for_test("a very long phrase that cannot possibly fit in one hundred and ninety pixels of taskbar");
         let c = frames(&mut fam, &t, 190, 48, 0.3, 5);
-        // No pixel outside the canvas can be written (draw completed without panic); the phrase is
-        // pre-truncated by width, never wrapped past the right edge.
-        assert!(lit(&c, &t) > 0);
+        // The phrase is drawn in `hot`, opaque, over the panel - so `hot`-coloured pixels are the
+        // phrase and nothing else. At level 0.3 the meter (lit ticks, peak holds, ghost grid) all sit
+        // below row 16, so the top rows carry ONLY the phrase, which is what lets these three checks
+        // read the phrase alone. See `draw`: the interior is `x0=3`, and the phrase's usable width is
+        // `iw - 2` so its right bound is x = 3 + (186 - 2) = 187.
+        let hot = Rgba::from_hex(&t.hot, 1.0);
+        let hot_px = |x: i32, y: i32| c.get(x, y) == hot;
+        let count = |xs: std::ops::Range<i32>, ys: std::ops::Range<i32>| {
+            ys.flat_map(|y| xs.clone().map(move |x| (x, y))).filter(|&(x, y)| hot_px(x, y)).count()
+        };
+        // 1. NOT vacuous: the phrase actually draws in the first text row (glyphs are 5px tall, y 2..7).
+        assert!(count(0..190, 2..7) > 0, "the phrase did not draw at all");
+        // 2. NEVER WRAPS: nothing in the rows a wrapped second text line would occupy.
+        let wrapped = count(0..190, 8..14);
+        assert_eq!(wrapped, 0, "the phrase wrapped to a second line: {wrapped} hot px in rows 8..14");
+        // 3. NEVER PAST THE RIGHT EDGE, proven on the truncation helper directly with a controlled
+        // string of solid glyphs (so the overflow is not hidden by a gap glyph landing on the
+        // boundary, as the brief phrase's happens to): a phrase far wider than `maxw` must draw NO
+        // pixel at or beyond `x0 + maxw`, and its last glyph must be whole (drawn on the 4px cell
+        // lattice, never cut mid-column). Removing the width guard in `draw_phrase` fails this.
+        let (x0, maxw) = (3i32, 40i32);
+        let solid = Rgba::new(255, 0, 0, 255);
+        let mut u = Canvas::new(80, 20);
+        Vsghost::draw_phrase(&mut u, x0, 4, "OOOOOOOOOOOOOOOOOOOO", maxw, solid);
+        let mut rightmost = -1;
+        for y in 0..20 {
+            for x in 0..80 {
+                if u.get(x, y) == solid {
+                    rightmost = rightmost.max(x);
+                }
+            }
+        }
+        assert!(rightmost >= 0, "the truncation helper drew nothing");
+        assert!(
+            rightmost < x0 + maxw,
+            "draw_phrase drew past the right edge: rightmost px at x {rightmost}, bound {}",
+            x0 + maxw
+        );
+        // Whole last glyph: the drawn extent is an integer number of 4px cells (a partial glyph cut
+        // mid-column would leave a rightmost that is not `x0 + 4n - 2`).
+        assert_eq!((rightmost - x0 + 2) % 4, 0, "the last glyph was cut mid-column, rightmost x {rightmost}");
     }
 
     #[test]
