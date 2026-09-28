@@ -1,0 +1,30 @@
+name: ci
+on: { push: { branches: [main], tags: ["v*"] }, pull_request: {} }
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # windows-latest's default shell for `run:` is pwsh, so this uses $env:USERPROFILE (a
+      # real runtime PowerShell variable) rather than trying to reference it through the
+      # workflow-level env/expression context, which only sees vars set via `env:` keys and
+      # would not see USERPROFILE at all. ${{ github.workspace }} is a GitHub Actions
+      # expression, evaluated server-side before the step runs, so mixing the two here is safe.
+      - name: Set RUSTFLAGS (strip build-machine paths from the exe)
+        shell: pwsh
+        run: |
+          echo "RUSTFLAGS=--remap-path-prefix=${{ github.workspace }}=. --remap-path-prefix=$env:USERPROFILE\.cargo=~cargo" >> $env:GITHUB_ENV
+      - run: cargo build --release
+      - run: cargo test
+      # The slow set gates the whole-registry render sweeps and the per-family real-music /
+      # flourish checks behind `slow_` + `--ignored` (see README "Build from source" and
+      # TODO.md) - this is where that gate earns its keep, since it is too slow to run on
+      # every local commit but must still run somewhere before a release.
+      - run: cargo test --release slow_ -- --ignored
+      - run: cargo clippy --all-targets -- -D warnings
+      - uses: actions/upload-artifact@v4
+        with: { name: taskbar-eq, path: target/release/taskbar-eq.exe }
+      - if: startsWith(github.ref, 'refs/tags/v')
+        run: gh release upload ${{ github.ref_name }} target/release/taskbar-eq.exe --clobber
+        env: { GH_TOKEN: ${{ github.token }} }

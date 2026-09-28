@@ -2,5 +2,5 @@
 **/*.pdb
 .superpowers/
 
-# Left behind when the committed exe is refreshed while an instance is running.
-dist/*.old
+# Releases ship via GitHub Releases now, not a committed exe - see README Install.
+dist/

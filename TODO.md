@@ -3,136 +3,93 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** SONG IDENTIFICATION SHIPS (v0.2.0). Press a key while anything plays and the banner
+**Last updated:** v0.2.1 — HEALTH FIXES SHIP. No new families; a pass over correctness, test
+speed and release hygiene instead. Bands now go log-spaced below the crossover on a real second
+FFT (the one algorithmic change), ballistics are frame-rate independent, config saves atomically,
+and a hotkey rebind no longer clobbers its own other keys. Blending, gradients and bloom now
+happen in linear light and rainbows sweep OKLCH at a fixed lightness — see Waiting on you below,
+both rulings want a look. The default `cargo test` is now the fast suite only; the slow
+whole-registry and real-music sweeps moved behind `slow_` + `--ignored`, which is also what CI
+now runs, alongside clippy, on every push. The exe no longer carries a build-machine path
+(`--remap-path-prefix`, replacing an earlier `panic = "abort"` attempt that was tried and
+reverted — it voided the identify Drop guard and did not strip paths). Releases ship via GitHub
+Releases now; see CHANGELOG.md for the full list, one line per change.
+
+Earlier: SONG IDENTIFICATION SHIPPED (v0.2.0). Press a key while anything plays and the banner
 names the song via Shazam; every find goes to `songs.jsonl`; Songs -> Song history opens a dark
-cyberpunk page with Spotify / Apple Music / YouTube / Shazam links. Live-tested: six seconds of Spotify
-off the loopback came back as "Earth Move Edit - Daire" on the first post. 662 tests green. The repo is
-now GPL-3 because the fingerprinting is a port of SongRec.
+cyberpunk page with Spotify / Apple Music / YouTube / Shazam links. The repo is GPL-3 because the
+fingerprinting is a port of SongRec.
 
-Earlier: FOUR NEW FAMILIES and a bug that had been shipping a black screen. 150 colourways
-across 22 families, 619 tests green.
-
-KALEIDO, RAVE and BRUTAL are new, plus lightning for the blossom castle. The kaleidoscope is a FRIEZE and
-not a rosette, because a centred disc uses 16% of a 6.3:1 panel - and its radius IS frequency, so the
-symmetry is the meter rather than decoration over one. Rave is a three-head laser truss whose fan outline
-traces the spectrum. Brutal slams its blocks between floor and ceiling on the beat, which is a strobe made
-of POSITION rather than brightness.
-
-PIPES WAS DRAWING NOTHING on any panel shorter than 49 rows, and had been all along - measured 4594 lit
-pixels at 380x60 and 0 at 380x48. It works at 125% DPI and not at 100%, which is why it took a second
-machine to notice: shedding looks exactly like a crash from outside. The projection is now fitted to the
-height, trading depth planes for rows so the planes that remain stay legible.
-
-THE MENU is one Themes entry instead of 22 top-level families, sorted by label, with a recently-used list
-and the current theme named on the parent entry.
-
-A code review of the whole run found FOUR real defects, all mine and all now fixed: a width-only resize
-stranded a pipes run permanently (its cell fell outside the lattice, where nothing can ever move it
-again), two doc/prose blocks were spliced into the middle of unrelated sections by my own insertion
-scripts, and the recents list was capped on write but not on render.
-
-Earlier: THE GAME STUTTER IS CONFIRMED FIXED on the gaming machine - the borderless-fullscreen
-suspend was the cause, so the vsync/flip-loss reading was right and the resource leak was NOT to blame.
-Two new fixes from your report: the pointer no longer picks up a stray spinner over the display, and the
-context menu is no longer drawn behind it. Earlier: ALL THIRTEEN families have a flourish, the media poll
-is gated, and the review sheet covers everything. Earlier: the vaporwave roll is GONE, replaced by a
-lightning storm. Display-off suspend shipped - we were the machine's second largest energy consumer.
-
-Earlier: chroma done, inert config fields removed. FLUID cavitation ATTEMPTED AND REVERTED -
-see below. Everything in the tree is committed, green and pushed.
-
-Earlier: the FLAME ORGAN ships - a new family, 7 colourways, its own flourish. 100
-colourways across 14 families.
-
-Earlier: vapor now has a flourish (a vertical roll). Correction: the flourishes were
-NINE of THIRTEEN families, not all of them - radar, chroma and fluid still have none.
-
-Earlier: measured the leak for the first time. Two real per-call leaks found and reduced
-4.4x - and the arithmetic says neither of them is the fault you reported. Both documented open defects are now
-closed; all nine flourishes done, review sheet written, README current.
+Earlier still: 150 colourways across 22 families, every one with a flourish. See CHANGELOG.md.
 
 ---
 
 ## In progress
 
-- [ ] **One judgement call in the fullscreen fix worth a second opinion.** The shell-class exclusion
-      list decides what does NOT count as a fullscreen app, and every name on it costs coverage.
-      `Windows.UI.Core.CoreWindow` is on it, because measured here the LOCK SCREEN is a full-monitor
-      CoreWindow, and Start and Search are the same class and also full-monitor on Win11 - so without
-      it the meter would vanish whenever you opened Start. The cost: a genuinely fullscreen UWP app
-      whose own CoreWindow is foreground would not suspend us. Packaged games hosted in
-      `ApplicationFrameWindow` ARE caught - I took that name off the list for exactly that reason.
-
-- [x] **RETESTED AND FIXED on the gaming machine** - reported 2026-08-14. The borderless-fullscreen
-      suspend was the cause. That also settles the open question: the 160 -> 30fps drop was flip loss,
-      not the resource leak, so a clean halving of 60 really was the tell.
+Nothing right now.
 
 ## Waiting on you
 
-- [ ] **ALL SIX FLUIDS ARE NOW LIVELY: `docs/review/fluid-loud.png`.** The amplitude LADDER IS GONE, on
-      your ruling that colour matters more than differing liquid properties. It required every pair of
-      colourways to differ by 25% of surface relief, and six values needing 1.25x steps span 3.05x - with
-      the top end fixed by the tank ceiling, that forced the calm end down to 1.5px. It was spending four
-      colourways' motion on a distinction you did not want. Replaced by a liveliness FLOOR every
-      colourway must clear (8px median, 18px p95), so none can regress to a pond.
-      Median / p95 relief now, out of a 56px interior: oil 12.2/23.5, pantone 12.8/22.9, ink 13.2/19.7,
-      deep 13.3/29.4, mercury 15.9/22.5, coolant 19.8/33.1. Before: ink 1.5/3.1, oil 2.6/7.0.
-      They still differ by more than colour - `damping` and `wave_speed` are untouched, so wave SHAPE and
-      travel differ, and the feature sets are still asserted distinct. `fluid-ink` still throws no spray.
-
-- [ ] **FOUR CHANGES FROM YOUR REPORT: open `docs/review/changes-2026-08-17.html`.** The fluid barely
-      moving, the tape deck's colours, and the scope and reel flourishes never seeming to happen.
-      **The headline finding: neither flourish was too small.** Measured against families whose
-      flourishes read clearly, the scope's already changed 38.5% of the panel - more than the VU needle
-      slam (14%) or the spectrogram tear (3.5%), neither of which you have missed. They were the wrong
-      KIND of change, so both were reworked for character rather than amplitude.
-      Three specific questions in there: whether 13.8 droplet sheds/s is splashing or drizzle, whether
-      the five neutral reel decks should now go, and whether three overlapping scope traces is too much
-      of a mess. **Reel's tape lurch cannot be judged from a still** - that one needs the running app.
-      Also worth knowing: `fluid-ink` throws no droplets on purpose, so if that was the colourway you
-      were watching, that is why it looked dead.
-
-- [ ] **THE REVIEW SHEET IS WRITTEN: open `docs/review/index.html`.** Ten items now - the nine
-      flourishes plus the Patchbay window fix - each with the render, what it is meant to be, and what
-      specifically I want judged. One pass rather than thirteen. **Item 7, the Pantone plate slip, is
-      the one I would change first** - it is the strongest of the nine by a distance and comes down on
-      one word. **Item 10 is a trade to confirm**, not a bug: the fix costs about a quarter of the
-      separation between cables to stop the bass one pinning.
-- [ ] **The `flourish` and `flourish_toggle` hotkeys are deliberately unbound** - the keys are yours to
-      choose. Tray menu -> Flourishes -> the two "key" entries. `Ctrl+Semicolon` and `Ctrl+Quote` both
-      registered cleanly when tested; `Ctrl+Win+F` and `Ctrl+Alt+G` are already taken on this machine.
-- [ ] **`random_theme` was restored as `Ctrl+]`** after I clobbered it with a careless regex. Say if
-      that is not what you had.
-- [ ] **"Any theme" is now uniform per FAMILY, not per colourway** - my judgement call, not a bug fix.
-      A colourway in a small family is now individually likelier than one in a large family. Three-line
-      revert if you would rather have the old behaviour.
-
-## In progress
-
-- [x] **FLUID NOW HAS ONE - every family does.** Cavitation, second attempt, and the diagnosis in the
-      first attempt is what made it work. Injecting a disturbance into the wave field cannot work at any
-      amplitude, so the effect is two things that both REMOVE energy or bypass the field entirely: heavier
-      damping (the tank runs down) plus a froth on the DRAWN surface line (cannot propagate, cannot clip).
-      Measured: roughness 0.360 -> 1.427, amplitude 9.92 -> 4.46, both recovered by frame 500.
-      The instrument was the real blocker, and the fix was to STOP building one: `drawn_body` already
-      existed, classifies liquid by an exclusive marker colour with every recolouring element neutralised,
-      and is the only measurement in the family that reads drawn pixels rather than the simulated field.
-      Two mistakes worth remembering - I ignored its documented contract that cone-mouth columns must be
-      excluded, which made an amplitude probe read 37px of peak-to-peak on a 51px interior and show no
-      change at all; and the froth read as a perfect sawtooth until the sign came from a hash rather than
-      from column parity.
+- [ ] **Rainbows are now fully saturated OKLCH at a fixed lightness (Task 7, v0.2.1) — my
+      ruling, not obviously correct.** Rainbow hues used to be capped at `RAINBOW_SAT` 0.68-0.70
+      because full saturation failed the 3:1 contrast rule at some hues in gamma-space sRGB. In
+      OKLCH at a fixed `RAINBOW_L` of 0.72, the ceiling stopped binding (worst hue now measures
+      7.3:1), so saturation went to 1.0 across the board. That is a real change to how every
+      rainbow colourway looks — punchier, more saturated — and I have not seen it running. Say if
+      0.72 lightness reads as too pale or too dark; the constant is one line to move either way.
+- [ ] **"Everything faint is brighter" pass (Task 7, v0.2.1) — a global rendering change, not
+      eyeballed yet.** Blending, gradients and bloom now average light linearly instead of
+      averaging gamma-encoded sRGB codes, so every partially-transparent mark (halos, gradients,
+      soft edges) is measurably brighter than before: half-alpha white over black is code 188, not
+      128. Three goldens (p1-green, vfd-ice, vu-cream) were regenerated and read correctly by eye;
+      the other nineteen families were not individually reviewed at this resolution. If a family's
+      glow now looks blown out or a gradient looks washed, that is this change, and the fix is
+      almost certainly a `glow_strength`/`bloom` retune per colourway rather than reverting the
+      linear-light maths (which is the physically correct way to average light).
+- [ ] **One judgement call in the fullscreen fix worth a second opinion (carried over,
+      unresolved).** The shell-class exclusion list decides what does NOT count as a fullscreen
+      app, and every name on it costs coverage. `Windows.UI.Core.CoreWindow` is on it, because
+      measured here the LOCK SCREEN is a full-monitor CoreWindow, and Start and Search are the
+      same class and also full-monitor on Win11 - so without it the meter would vanish whenever
+      you opened Start. The cost: a genuinely fullscreen UWP app whose own CoreWindow is
+      foreground would not suspend us. Packaged games hosted in `ApplicationFrameWindow` ARE
+      caught - I took that name off the list for exactly that reason.
 
 ## Open, unresolved
 
-- [ ] **Song-history "hide" is per-browser.** The page stores hidden songs in `localStorage`, so the
-      tray's Songs submenu still lists them, and a different browser shows them again. A native
-      Win32 history window would own that state properly; parked until you want it.
+- [ ] **The empty taskbar to the left is still unclaimed.** Measured on the reference machine:
+      app buttons end at x≈1119 and the Widgets button starts at x≈1425, roughly 300px of dead
+      taskbar between them, most useful to a wide `scene`-style family (see
+      `docs/theme-backlog.md` item 1/2). That gap only exists while the taskbar is left-aligned
+      and not full of windows, so it would have to be computed at runtime from the actual gap,
+      not assumed — the rect-tracking machinery to do that already exists (it re-discovers every
+      second).
+- [ ] **Song-history "hide" is per-browser.** The page stores hidden songs in `localStorage`, so
+      the tray's Songs submenu still lists them, and a different browser shows them again. A
+      native Win32 history window would own that state properly; parked until you want it.
 - [ ] **Shazam's endpoint is undocumented.** When it changes, identification will say "no match"
       and the log will carry the HTTP status and the first 200 bytes; the full last reply is in
       `%APPDATA%\taskbar-eq\last_shazam.json`. Fallback would be ACRCloud or AudD behind the same
       `Find` type.
-
-- [ ] **THE LEAK IS MEASURED NOW, AND IT IS NOT THE FAULT YOU REPORTED.** `--stress` hammers each
+- [ ] **A rare test flake, understood but not fully fixed.** Five family flourish tests (VFD, VU,
+      waterfall, valve, nixie) fire via the audio path, which consults the process-global
+      `ENABLED` switch that `dsp::flourish`'s own tests toggle. No lock can protect that: a switch
+      that is false is false for every test running at that moment. Seen ONCE in 25 full-suite
+      runs, and 36 runs since have been clean. The fix is the pattern the pantone, reel and scope
+      tests now use - `Trigger::force_next()`, which is instance-local - but converting the other
+      five needs each fixture's firing frame re-derived, because forcing at the START of the
+      firing sequence measures a third of a second of decayed envelope and fails. Attempted,
+      reverted, recorded rather than left half-done.
+- [ ] **THE RESOURCE LEAK. Cause still unknown.** A days-old instance measured 18,962 threads /
+      131,454 handles / 1.47 GB / 1.46 cores against a healthy 14 / 320 / 26 MB / 4% of one core.
+      That is what took a fullscreen app from 160fps to 30 with input loss. A fresh instance is
+      flat over ten minutes in every state I can create; the bad one had lived days and survived
+      a machine sleep, which is the leading suspect.
+      `win::health` bounds the damage (warns at 3,000 handles, exits at 30,000) and logs an hourly
+      baseline, so a recurrence arrives with a growth curve. **If it happens again, please do not
+      kill the process before telling me** - I did exactly that once and destroyed the only
+      evidence.
+- [ ] **THE LEAK IS MEASURED, AND IT IS NOT THE FAULT YOU REPORTED.** `--stress` hammers each
       suspect path and counts this process's own handles and threads. Two of six leak:
 
       | suspect | handles/1k calls | threads/1k |
@@ -142,243 +99,30 @@ closed; all nine flourishes done, review sheet written, README current.
       | `CoCreateInstance(CUIAutomation)` on its own | 0.0 | 0.0 |
       | `taskbar_rect`, `notification_state`, `foreground_window` | 0.0 | 0.0 |
 
-      So it is not COM object creation and not talking to the shell - it is walking the accessibility
-      tree, and the WinRT session read. Both are real defects and both are now reduced (below).
-
-      **But the arithmetic rules them out as your fault.** At those rates, 45 minutes of running - when
-      you saw the stutter - predicts **293 handles and 23 threads**. What was measured on the bad
-      instance was **131,454 and 18,962**, about 450x and 800x more. Even three days only predicts
-      28,123 and 2,203. Whatever did that is far faster than this and conditional on something this
-      laptop never does, which keeps the borderless-fullscreen gap as the leading candidate: a UIA call
-      into an `explorer.exe` that a game is monopolising blocks for far longer, and RPC worker threads
-      pile up while it does. **Still inference. Your retest is what settles it.**
-
-- [ ] **The leak is reduced 4.4x, not eliminated.** 391 -> 90 handles an hour, which moves the
-      watchdog's fatal threshold from 3.2 days of uptime to 13.9. It still climbs, so a machine left
-      running for a fortnight will still see the watchdog restart the app. The real fixes are a
-      `SetWinEventHook` on `EVENT_OBJECT_LOCATIONCHANGE` for the taskbar's process instead of polling
-      the tree at all, and a GSMTC event subscription instead of polling the session. Both are larger
-      changes with their own risks, and I would rather do them after your retest than pile more
-      speculative work on top.
-
-- [ ] **A rare test flake, understood but not fully fixed.** Five family flourish tests (VFD, VU,
-      waterfall, valve, nixie) fire via the audio path, which consults the process-global `ENABLED`
-      switch that `dsp::flourish`'s own tests toggle. No lock can protect that: a switch that is false
-      is false for every test running at that moment. Seen ONCE in 25 full-suite runs, and 36 runs
-      since have been clean. The fix is the pattern the pantone, reel and scope tests now use -
-      `Trigger::force_next()`, which is instance-local - but converting the other five needs each
-      fixture's firing frame re-derived, because forcing at the START of the firing sequence measures a
-      third of a second of decayed envelope and fails. Attempted, reverted, recorded rather than left
-      half-done.
-
-- [ ] **THE RESOURCE LEAK. Cause still unknown.** A days-old instance measured 18,962 threads /
-      131,454 handles / 1.47 GB / 1.46 cores against a healthy 14 / 320 / 26 MB / 4% of one core. That
-      is what took a fullscreen app from 160fps to 30 with input loss. A fresh instance is flat over ten
-      minutes in every state I can create; the bad one had lived days and survived a machine sleep,
-      which is the leading suspect.
-      `win::health` bounds the damage (warns at 3,000 handles, exits at 30,000) and logs an hourly
-      baseline, so a recurrence arrives with a growth curve. **If it happens again, please do not kill
-      the process before telling me** - I did exactly that and destroyed the only evidence.
-
----
-
-## Done
-
-### Song identification (v0.2.0)
-
-- **Identify Song hotkey slot (8th), Songs tray submenu, sticky "listening..." banner.** The
-  capture thread gained an optional recorder sink; `identify` runs on its own thread and posts at
-  4 / 8 / 12 s like SongRec. Spec: `docs/superpowers/specs/2026-09-25-song-identify-design.md`.
-- **Shazam signature generator** ported from SongRec (GPL-3, hence `LICENSE`), Hann window computed
-  not tabulated; encoder round-trips through a test-only port of SongRec's decoder.
-- **`songs.jsonl` store** (append-only, bad lines skipped) with distinct-recent and grouped views,
-  and per-service links that fall back to search URLs so every button always works.
-- **HTML history page** written to `%APPDATA%\taskbar-eq\songs.html`: search, sortable columns,
-  cover art, four link buttons per row, hide. Eyeballed via headless Chrome before commit.
-- **Live test** (`cargo test live_identify -- --ignored --nocapture`) drives Spotify, records off
-  the real loopback and posts to Shazam. Its first real reply is now the parser fixture, which is
-  how the Apple Music link turned out to be an Android `intent://` URI rather than the
-  `applemusicopen` action every sample shows.
-
-### Correctness and performance
-
-- `adb5e96` **The stray spinner over the display, and the menu drawn behind it.** The class had NO
-  cursor - a null `hCursor` does not mean "arrow", it means the window never asserts a shape, so a
-  foreign one leaks in and sticks (measured: three different shapes with the pointer held still).
-  The menu was **`ShowWindow` on an already-visible window re-inserting us at the top of the z-order
-  band** every frame, which is not the no-op it looks like. Found by forcing the display below the
-  menu from another process: it was back on top in **120ms** before, and stays down past **1200ms**
-  after. **Three earlier fixes for the menu measured as no-ops and are still in the tree** - see the
-  commit; removing them is an experiment I have not run.
-
-- `a8a9f75` **Random buttons were biased, two unrelated causes.** Within-family shuffle chi2/df
-  **24.93 -> 1.19**; the clock's low bits are dead (`nanos & 3` was zero on all 2,000 samples) and one
-  xorshift round cannot reach bit 0, and `% 8` reads only those bits - invisible in the whole-list mode,
-  stark within a family. Also: "any theme" was uniform per colourway, so scope took 14.2% of presses
-  against nixie's 5.1%; now ~7.7% each.
-- `7d9758f` **Halved the taskbar rediscovery** (CPU 4.0% -> 2.7% of one core), **cached the media
-  session manager** (was 216,000 WinRT activations a day, and hammering it wedges the broker), **capture
-  failures now reach the log** instead of `eprintln!`, which goes nowhere in a windows-subsystem binary.
-  Caching the UIA client was tried and **reverted - it is 68ms/call against 52ms per-call**, a
-  pessimisation I had asserted was an optimisation.
-- `c36fcd1` **Sleeps while a fullscreen app is on top** - no UIA, no drawing, window off screen, 15x
-  fewer wakeups. Plus `win::health`. Caught a deadlock of my own before it shipped: suspending on
-  `should_show` also catches "I do not know where to draw", so the meter would never have come back.
-- `ddc627b` **Track-change freeze fixed.** `SHQueryUserNotificationState` was a cross-process shell call
-  running once per FRAME, blocking 280-380ms whenever the shell was busy - and a track change is what
-  makes it busy. Now a 200ms poller thread. Six track changes, zero stalls.
-- `aa826be` Menu/dialog no longer stalls the meter (posted `WM_TICK`; 3 gaps -> 0).
-
-### Features
-
-- `c716837` **Bindable "flourish now" and "flourishes on/off"**, in the tray menu and as hotkeys, left
-  unbound. Found three latent bugs while wiring: a slot-index catch-all that would have overwritten the
-  shuffle key, a menu array that **panics at the sixth slot**, and test interference from the
-  process-global switch.
-- **The Patchbay's bass cable was pinned at full deflection, and the documented defect was wrong.**
-  The README said its sag cue "flattens on real music" because 5 cables fold 12.8 bands each. Measured
-  over the three real-music captures, that is not true: the spread across cables is 0.70-0.80 of the
-  range and **0%** of frames are flat. The real fault was the response window. `the_response_window_...`
-  asserted that band levels of 0.15-0.65 cover most of the travel - true, and irrelevant, because
-  `response` is never handed a band level. It is handed `level_for`, a group reduction biased 0.65
-  toward the peak of ~12.8 bands, whose MEDIAN on the bass cable is 0.63-0.69 - above the 0.62 at which
-  the window already saturated. So the lowest cable was stuck at the end of its travel on **64%, 96%
-  and 100%** of frames on the three tracks, carrying no information at all.
-  `RESP_SPAN` 0.52 -> 0.70 puts the top just above the p99 of every cable at both widths. Pinning falls
-  to **0% everywhere**, at a cost of about a quarter of the separation between cables (0.206 -> 0.153).
-  An intermediate 0.62 was measured and rejected: it keeps separation at 0.173 but leaves the bass cable
-  pinned 29% of the time on dynamic music. The test now asserts on the group levels over the real
-  fixtures and fails on the old constant. **Rendered before/after - item 10 on the review sheet.**
-
-- **The Spectrogram's vacuous fold test is FIXED.** It passed with `max` replaced by `mean` - the bug
-  it existed to catch. Three attempts, and the cause was none of the things I first assumed:
-  **the pitch-track marker was the problem.** `draw` marks each column's dominant band in `t.hot` at
-  high alpha, at the row that band folds into - so for a spectrum with one loud band, that is exactly
-  the row the test sampled. It was measuring the marker, which sits at full brightness whatever the
-  fold does. Two reasonable-looking dead ends first: lowering the levels to stay inside `response`'s
-  clamp (the marker does not care about level), and comparing against separate renders predicting each
-  fold (which read 252.8 where a max fold predicts 138.8 - HIGHER than the value it was meant to
-  match, because one pixel compared across two renders carries its neighbours' bloom).
-  Now a louder decoy band parks the marker seven rows away, and the comparison is within ONE render:
-  make one of the row's bands loud, or all of them - a max reads the same either way. Verified against
-  a mean fold (51 against 135) and a min fold (13 against 135).
-
-- **README rewritten for everything added since 2026-08-05.** A full "Using it" chapter (mouse, tray
-  menu, the seven keys and the capture dialog, Spotify transport and both backends, the banner, all
-  nine flourishes, suspend and the watchdog), a configuration reference for every config field, and the
-  two missing CLI flags. Also repaired real damage found while reading it: two `%APPDATA%` paths had
-  their `	` eaten into literal TAB characters, two bullets in Known gaps were truncated mid-sentence,
-  the colourway count was stale at 87, and two source comments still said 88.
-  Honest note in the config table: **`brightness` and `saturation` are inert.** They are parsed and
-  saved and nothing reads them. Left in and documented as such rather than quietly listed as settings -
-  say the word and they come out.
-
-- **Patchbay flourish: the panel re-patches itself and comes back.** Every cable slides to the other
-  jack of its own pair, so the chevron of leans mirrors and returns - using geometry that was already
-  there, since each pair's second jack sits unpatched next to it. It ANIMATES: a hard swap reads as a
-  dropped frame, because a single-frame change of shape at 60fps is not perceived as motion at all.
-  The envelope is used as a PHASE (`sin(pi * (1 - level))`), not an amplitude, which is what brings the
-  cable back into its own socket instead of leaving it fading out stranded between two.
-  One measurement bug, found by the assertion failing on working code: the sample row sat within the
-  jack radius, so the brightest pixel in it was a static socket collar and the measurement snapped to a
-  jack column every frame - reporting that the cable teleported while it was sliding smoothly.
-  Verified against two mutants: a dead envelope, and a hard swap instead of a slide.
-
-- **Pantone flourish: a plate slips out of register.** The family ALREADY fringes horizontally and
-  widens that fringe with energy, so pushing the horizontal shift further would have read as louder
-  music. The slip is therefore mostly vertical - an axis nothing else here uses - which meant
-  generalising `Canvas::chromatic_aberration` into a 2-D `misregister(dx, dy)`; the old entry point
-  delegates and is asserted byte-identical, because five colourways' goldens encode its output.
-  Two vacuous tests found by mutation. The plate-lag assertion compared against `MISREG_Y as i32`, so
-  mutating that constant to zero moved the expectation with it - it is a literal 3 now. And the peak
-  test passed with the envelope mutated to 1ms, because `Envelope` sets its level to 1.0 on the firing
-  frame whatever its decay is, so a separate test now measures a third of a second in.
-  Also found a REAL race, not a test artefact: `flourish::request()` is one process-global atomic and
-  every family's `draw` consumes it, so in a parallel suite an unrelated drawing test eats it. The
-  symptom was pathological - the effect provably fired at the right offset when run alone and compared
-  byte-identical when the suite ran. `Trigger::force_next()` fires one instance and touches no globals.
-
-- **Tape flourish: wow and flutter.** Real rates (1.1Hz wow, 8.5Hz flutter, deliberately not
-  harmonically related) at theatrical depths, applied to the phase step rather than to the smoothed
-  `omega` - injected into `omega` the flywheel's own ballistics would filter the flutter away. The wow
-  reaches the tape slack at 0.35, because a rate wobble with a rigid tape span reads as the reels being
-  wrong rather than the transport being wrong; flutter deliberately does not, being faster than tape
-  under tension can follow. The existing spoke-aliasing guard now includes the flourish's peak speed
-  multiplier, since that is what a later "make it deeper" tweak would silently spend.
-  Two fixture problems found and recorded in the test: firing it with the audio firing sequence gave
-  the NO-flourish arm 0.29 of rate spread because the sequence is itself a loud transient, so it fires
-  by manual request against constant audio instead; and the first recovery window ended exactly with
-  the envelope, so a "recovered" tail still carried 9% of it. Also promoted `flourish::test_guard()`
-  out of its own test module - any test touching the process-global request switch needs that lock.
-  The eyeball artefact is a rate plot, not a frame: a filmstrip is weak evidence here because three
-  spokes are symmetric every 120 degrees. `target/eyeball/review-reel-warble-rate.png`.
-
-- **Scope flourish: the sweep loses trigger lock.** Not a new drawing routine - the trigger is simply
-  switched off for 1400ms, so the trace slides about one screen-width of phase and the phosphor smears
-  every phase it passes through. It is the family's own documented worst bug, re-entered on purpose.
-  Three metrics were tried before one measured the effect: whole-frame luminance difference gave 1.24x
-  (mostly phosphor decay, which the flourish does not touch), and the shared `music()` fixture turned
-  out not to lock AT ALL because its pseudo-noise manufactures extra zero crossings - 60px of slide
-  with the flourish off. On a clean phase-walking tone it is 0px locked against 4px unlocked. A second
-  test guards the drift bound and initially passed with the bound REMOVED, because persistence left
-  older traces on screen for it to measure; with `fade = 1.0` it now fails at 3px of spread.
-
-- **Nixie flourish: every cathode fires.** The unused digits all glow at once, which is what a
-  badly-driven tube does. 520ms - the shortest of any family's, because this display's whole cue is
-  WHICH digit is lit, so an effect that lights all ten has to get out of the way fast. The test took
-  three attempts to become non-vacuous: "the brightest cell is still the live one" passed a mutation
-  to full opacity (the live strike composites last and carries a glow cloud, so it wins regardless),
-  and a flat live/ghost ratio was nearly vacuous because the cloud's spill already dominates the
-  neighbouring cells. It now measures the share of the live digit's legibility HEADROOM that the
-  ghosting eats: 32% shipped, 88% at full opacity, gate at 55%. Also caught myself testing a stale
-  file - an earlier timed-out sweep had left the constant at 0.42, so three "mutations" matched
-  nothing and silently tested unchanged code. Mutants are now echoed before each run.
-
-- **Valve flourish: gas ionisation.** A cold blue haze through every envelope - the wrong colour for the
-  display, which is the entire point, so it is a fixed blue rather than a tint of the theme. Drawn
-  BENEATH the cathode glow, which is both easier and more truthful: the gas fills the tube while the
-  cathode is a bright source at the plate. Tested as a hue shift (blue/red ratio), not a brightness
-  change - a brightness test would pass on any stray glow and miss the only property that makes it read
-  as a fault. 1100ms, the longest decay of any family's.
-- `38ea1c5` **Waterfall flourish: a broadband tear** written into the history, so it scrolls away as data
-  rather than fading as a filter. Three columns wide - one read as merely a brighter column.
-- `4839f53` **VFD self-test** (every segment lights, then drains) and **VU needle slam** (needles to the
-  end stop over 900ms, OVER lamps lit).
-- `22ac2dc` **The flourish trigger.** Rarity judged against the median of recent hits, never an absolute
-  threshold. Default measured on a 119-second capture of NINE varied tracks: one flourish per ~30s.
-- `4f1f7f8` **One shared onset detector** (`dsp::onset`) with the fixture harness that measures it.
-  Vapor and fluid had independently written the same algorithm; tuning unchanged, one behaviour fix (a
-  refractory counted in frames rather than milliseconds).
-- `eda1f08` **Chroma rework:** perceptual OKLCh ramp (chosen from a six-way sheet), lightbox glow,
-  Risograph and Duotone colourways, balanced ink scrambling. **Retired the family's 2.30:1 contrast
-  opt-in** - the perceptual ramp clears the project's 3:1 rule at every hue, so no colourway lowers the
-  floor any more.
-- `1d053f7`, `ff6c11c` **RWR scope** beside the sweep field, with NATO / RU / CN threat libraries.
-  Bearing and designator are an emitter's identity, not a reading of the audio - measured, the low-band
-  centroid spans 8% of a circle, which is why everything used to land in one quadrant.
+      So it is not COM object creation and not talking to the shell - it is walking the
+      accessibility tree, and the WinRT session read. Both are real defects and both are reduced
+      4.4x, not eliminated (391 -> 90 handles an hour, moving the watchdog's fatal threshold from
+      3.2 days of uptime to 13.9). **But the arithmetic rules them out as the reported fault**: at
+      those rates, 45 minutes of running predicts 293 handles and 23 threads, against 131,454 and
+      18,962 measured on the bad instance - about 450x and 800x more. The borderless-fullscreen
+      gap remains the leading candidate: a UIA call into an `explorer.exe` that a game is
+      monopolising blocks for far longer, and RPC worker threads pile up while it does. **Still
+      inference. A retest on the gaming machine is what would settle it.** The real fixes are a
+      `SetWinEventHook` on `EVENT_OBJECT_LOCATIONCHANGE` instead of polling the tree, and a GSMTC
+      event subscription instead of polling the session - both larger changes with their own
+      risks.
 
 ---
 
 ## Notes to self
 
-- **The default `cargo test` is kept fast so it actually gets run pre-commit.** Every test over
-  ~5 s single-threaded in debug is gated behind a `slow_` prefix + `#[ignore]`: not just the
-  whole-registry render/opacity sweeps but the whole population of per-family real-music / flourish
-  checks (each drives a long audio fixture). ~56 tests in total. Run the lot in release before
-  shipping a rendering or DSP change: `cargo test --release slow_ -- --ignored`. The cheap
-  `every_colourway_is_visibly_alive_at_two_sizes` guard and all the golden tests stay in the default
-  suite. To find the population again, run the suite single-threaded and diff `finished in`:
-  `cargo test -- --test-threads=1 --nocapture` (see
-  `.superpowers/sdd/2026-09-25-health-fixes/slow_tests_over_5s.txt`).
-- **TODO: wire up CI.** `cargo test --release slow_ -- --ignored` is meant to run in CI on every
-  push (that is where the gated slow set earns its keep), but there is no `.github/workflows` yet.
-  Add one that runs the fast suite + the slow set + `cargo clippy --all-targets -- -D warnings`.
-
+- **CI is wired up as of v0.2.1** (`.github/workflows/ci.yml`) — was a note-to-self here, now
+  done: it runs the fast suite, `cargo test --release slow_ -- --ignored`, and
+  `cargo clippy --all-targets -- -D warnings` on every push and PR to `windows-latest`.
 - **Restore the file BEFORE the run, never only after.** Twice now a mutation sweep timed out
   mid-iteration and left a mutant constant in the tree, and the next thing I measured was silently
   testing changed code - once reporting three "caught" mutants that had matched nothing at all. Copy
   the good file in at the START of each iteration and echo the constant so the log proves what ran.
-
 - **Measure before claiming.** Three times this session a confident claim was wrong: the UIA cache
   (slower, not faster), the trigger key "dropping presses" (the log deduplicates), the fixture that
   "showed nothing" (its own audio saturated the display). Every one was caught by measuring.
@@ -388,3 +132,9 @@ closed; all nine flourishes done, review sheet written, README current.
   was not initialised; a UIA timing taken with a cold apartment.
 - **Fixtures must contain the hazard.** The random-bias tests seed with multiples of 100 because the real
   clock does; sweeping arbitrary seeds passes against the buggy code.
+
+---
+
+## Done
+
+See [CHANGELOG.md](CHANGELOG.md) for the full release history, one line per change, newest first.

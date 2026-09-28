@@ -5,554 +5,70 @@ conversation they came from.
 
 ---
 
-## 1. Dolphins car stereo
+## Shipped
 
-The 1990s/2000s aftermarket head unit — Sony Xplod, Pioneer, JVC — with a dolphin arcing
-across a low-res display while a spectrum analyser runs underneath.
+- **Dolphin car stereo** (item 1) — shipped as the `dolphin` family: coarse dot-matrix display,
+  single-backlight-hue colourways, an animated dolphin sprite arcing over a waterline.
+- **Vaporwave sunset** (item 2) — shipped as the `vapor` family: banded slotted sun, gradient sky,
+  a receding perspective grid displaced by the spectrum, bass-triggered lightning.
+- **Blossom needs distinct colours** (item 4, DONE 2026-09-01) — three colourways rethemed to
+  hues cherry blossom does not literally have (amber, violet, gold), two added (Jade, Riot with
+  per-petal hue variation), petal glow moved to its own bloomed layer.
+- **Lightning striking the castle on a bass hit** (item 5, DONE 2026-09-01) — shipped: a
+  bass-weighted spectral-flux detector against a running median (the obvious single-frame-rise
+  trigger provably cannot fire on real music here — see `render/fluid.rs`'s droplet-rate test),
+  measured at 2.40/4.40/2.20 strikes per minute over the three real-music fixtures. Found and
+  removed a pre-existing dead `bloom` call on the moon that changed zero visible pixels.
+- **A frenchcore family** (item 6, DONE 2026-09-01) — shipped as the `rave` family: a sweeping
+  laser fan whose outline traces the spectrum, strobing on the kick with no rate limit (waived by
+  the user — see the item's own notes if that ruling needs revisiting).
+- **A kaleidoscope family** (item 7, DONE 2026-09-01) — shipped as the `kaleido` family: frieze-
+  group (not rosette) symmetry, because a centred rosette uses only 16% of a 6:1 letterbox.
+- **A brutalist-bars family** (item 8, DONE 2026-09-01) — shipped as the `brutal` family:
+  concrete blocks slamming between floor/ceiling orientations on the beat, a strobe made of
+  position rather than brightness.
 
-What makes it read as that object rather than a generic meter:
-
-- **Coarse dot-matrix pixels.** The display is visibly made of discrete dots with dark
-  wells between them. Deliberately chunkier than the VFD family's 5px bars.
-- **A single backlight colour** — amber, ice blue or green — with everything drawn in that
-  one hue at two or three brightness levels. No gradients.
-- **The dolphin is animated and loops**, arcing up out of a waterline and back down,
-  crossing the display over several seconds.
-- **The meter sits low**, under the dolphin, often only 6–8 segments tall.
-- Frequently a **waterline** — a horizontal dotted line the dolphin breaks through.
-
-## 2. Vaporwave sunset
-
-- **Banded sun**: a circle with horizontal slots cut out of it, larger gaps toward the
-  bottom.
-- **Gradient sky**: magenta → orange → deep purple.
-- **Perspective grid** receding to the horizon in cyan or magenta, optionally scrolling
-  toward the viewer so it reads as motion.
-- Optional foreground silhouette — a low wedge car, or palm trees.
-- Optional **lightning**, which has a natural hook: trigger a flash on a bass transient,
-  so it reacts to the music rather than being decorative.
-- Pixel-art treatment throughout, which suits 190×60 well.
+With `rave`, `kaleido` and `brutal` landing together: 148 colourways across 22 families at the
+time, now 150.
 
 ---
 
-## Why these are a new *family*, not new colourways
+## Open
 
-The existing seam is **colourways are data, families are code**. These two are neither a
-recolour nor a variant of the segmented meter: they need a **pictorial backdrop plus
-animation**, which the `Family` trait has no concept of. So they are a third thing — call
-it a `scene` family — that composites:
-
-1. a backdrop (procedural gradient, or sprite art),
-2. an optional animated sprite with its own phase/position state,
-3. the meter itself, drawn over or into the scene.
-
-Animation state is fine — families already own per-frame state (the scope's persistence
-buffers, the VU's needle ballistics), so a dolphin's position fits the existing shape.
-
-## The interesting part: sprites could stay *data*
-
-Worth exploring before defaulting to hardcoded Rust drawing. A pixel-art sprite is
-expressible as palette-indexed rows directly in the theme TOML:
-
-```toml
-[sprite.dolphin]
-palette = ["", "#0a2a3a", "#4fd8ff", "#c8f4ff"]   # index 0 = transparent
-frames = 4
-rows = [
-  "....2222....",
-  "..22333322..",
-  ".2333333332.",
-  "..22333322..",
-]
-```
-
-If that works, these themes become **authorable without a rebuild**, like every other
-colourway — and the theme-authoring prompt in the README could generate them. That would
-be a genuine extension of the extensibility seam rather than an exception to it.
-
-The counter-argument: the vaporwave gradient and the perspective grid are better generated
-procedurally than stored as pixels, and the lightning needs to respond to audio, which is
-behaviour rather than data. So the honest answer is probably **both** — procedural
-backdrop parameters in TOML, plus an optional sprite table for the figurative elements.
-Decide it when specced; do not guess now.
-
-## Related: use the empty taskbar to the left
-
-The user noted the display could extend further left. Measured on the reference machine:
-app buttons end at **x≈1119** and the Widgets button starts at **x≈1425**, leaving roughly
-**300px of dead taskbar** between them.
-
-That matters most for these two themes: a dolphin arcing across 190px is cramped, and a
-perspective grid wants width. A `scene` family could claim, say, 456×60 and have room to
-breathe.
-
-Caveats to check when specced:
-- That gap only exists while the taskbar is **left-aligned** and not full of windows. It
-  shrinks as apps open, so the width has to be computed at runtime from the actual gap,
-  not assumed.
-- The overlay would then span from the last app button to the widget, so it must not cover
-  a taskbar button that appears mid-song.
-- Rect tracking already re-discovers every second, so the machinery exists; the change is
-  computing an extended rect rather than using the widget rect directly.
-
----
-
-## 3. Windows screensavers — 3D Pipes, 3D Maze, Mystify
+### Windows screensavers — 3D Pipes, 3D Maze, Mystify
 
 Asked for 2026-08-28: "replicating the old windows screensavers pipes and maze etc". Deferred, not
-rejected — 3D was set aside for now in favour of the car stereo above. Recorded with the measurements
-from the 3D feasibility investigation so this does not have to be worked out twice.
-
-### The problem all of them share, and it is not rendering
-
-**A screensaver is autonomous; a meter must be driven.** Pipes wanders, Maze walks, Mystify drifts —
-none of them displays anything. The hard part is the audio hook, not the geometry, and this project
-has a house rule that decides it: encode level as POSITION, not brightness. `tube.rs:54-60` measured a
-driven element only 1.46 dL* brighter than its idle neighbour, against a ~2.3 dL* visible threshold,
-which is why every family since uses position. "The pipes glow with the bass" is therefore not a
-design — it is the thing that has already been measured as invisible here.
-
-### What the 3D investigation established, and it applies to all three
-
-- **Compute is not the constraint.** Measured on this machine: flame 2.02ms, segmented 1.75ms, tube
-  1.09ms, waterfall 0.74ms, against a 16.7ms frame. Note segmented — the SIMPLEST family and the
-  default theme — costs 87% of flame, so the floor is ~1.75ms rather than zero. Only 4 of 14 families
-  have ever been timed. Every figure is at 190x60 while the app runs 380x60 by default, so double them.
-- **The constraint is VERTICAL ROWS.** 48 usable rows (`segmented.rs:9-10`, PAD_Y=6 on a 60px panel).
-  In 3D, depth steps and amplitude travel are drawn from the same 48-row account.
-- **Vapor already measured the depth collapse.** At the tuner's `persp=2.07`, SEVEN of sixteen depth
-  lines landed on rows 28-29 — and that silently disabled occlusion, because lines sharing an integer
-  row cannot occlude each other. Twelve depth lines measured unreadable. Any corridor or receding
-  grid must assert one distinct integer row per depth level; copy
-  `vapor.rs:1313` `the_shipped_perspective_keeps_one_pixel_row_per_grid_line`.
-- **A hang, not a slowdown, waits for naive perspective.** `canvas.rs:624-650` Bresenham breaks only
-  on reaching the endpoint — there is no off-canvas early-out. A vertex near the eye projects to
-  infinity, `as i32` saturates to 2147483647, and one such edge iterates ~2.1e9 times: **measured at
-  294.6ms**, about 18 dropped frames. A near-plane clip must come BEFORE any perspective divide.
-- **Already available:** `canvas.rs:679 fill_poly` (scanline, even-odd, concave-safe, 7 tests),
-  `canvas.rs:624 line`, `bloom`, `clip_to_rounded_rect`. Polygon fill is not a gap.
-- **Refused outright:** a starfield. 150 one-pixel stars change ~1.3% of the panel, and this family
-  set has a measured lesson that small-area changes go unnoticed unless they change KIND.
-
-### Per idea
-
-**3D Pipes.** Extruded segments on a lattice with elbow joints — geometrically the friendliest, since
-a pipe run is axis-aligned boxes and needs no general rotation. Two real problems. (1) It wanders off
-the panel by design; on a 380x60 strip a pipe that leaves does not come back, so the growth has to be
-confined, which is not what Pipes looks like. (2) What does the audio DO? Candidates worth testing:
-segment growth rate, a new branch on a flux onset, per-band pipe diameter. Note the flame family
-already occupies "pipes along the bottom" visually, so this must not converge on it.
-
-**3D Maze.** The strongest sense of depth of anything considered, and the worst fit for the
-constraints: it is a corridor with a vanishing point, so it lands squarely on both the depth-collapse
-wall and the near-clip hazard. Also the walls are texture-mapped in the original, and a 48-row
-corridor has perhaps 3-4 usable depth steps. Would need the near-clip and a tuning tool built first.
-
-**Mystify.** The most feasible of the three and the least obviously "3D": bouncing polylines trailing
-their own history. It needs no perspective, no clip, no depth buffer; the vertices can be driven by
-band levels so the shape IS the spectrum; and the trailing history reuses the scope family's phosphor
-persistence. Worth considering FIRST if the appetite is for a screensaver family rather than
-specifically for depth.
-
----
-
-## 4. Blossom needs distinct colours (DONE 2026-09-01)
-
-Reported after the family shipped: "all the colourways just degrade to pink or white blossoms. I like the
-vibe but we need more distinct colours."
-
-Correct, and the cause is a constraint I imposed without noticing. The five shipped `lit` values are
-`#ffb7d2`, `#dfe4ff`, `#ff9ec0`, `#f6f2ff`, `#ffc2d6` - three pale pinks and two near-whites. I picked
-them by asking "what colour is cherry blossom", which is a very narrow band, so the colourways differ in
-their SKY and BRANCH while the petals - the element that dominates the frame and the one the eye tracks -
-stay nearly identical. Every other family gets wide hue variety; this one was quietly denied it.
-
-Worth noting the reel family had the same fault for the same reason (five authentic hardware neutrals,
-reported as boring) and the fix there was to stop being literal. The precedent is already in the tree:
-flame ships Plasma and Rainbow alongside its real flame-test colours.
-
-### Options, roughly in order of how much they would help
-
-1. **Non-literal petal hues.** Deep magenta, amber/gold, ice cyan, jade, violet. The family's identity is
-   the BRANCH plus the falling-and-tumbling motion, not the petal colour - so a violet blossom is still
-   unmistakably this family, the same way Neon Miami is still unmistakably a tape deck.
-2. **Per-petal hue variation within one colourway**, via the existing rainbow machinery (`rainbow` +
-   `rainbow_spread` through `render::tint`, exactly as `orbit-rainbow` does). This attacks the complaint
-   most directly, because the sameness is WITHIN a frame as well as between colourways. Note `RAINBOW_SAT`
-   is a measured ceiling of 0.68 - at full saturation pure blue only reaches 2.31:1 against a near-black
-   panel and fails the 3:1 rule at every brightness.
-3. **Hue by petal age or depth**, so a petal shifts as it falls - freshly released warm, settling cool.
-   Cheap, and it makes the field read as depth as well as motion.
-4. **A much bolder sky.** Least effective on its own: the sky is already the thing that differs most, and
-   it is not what the eye is following.
-
-### Constraint that shaped the original and still applies
-
-Petals must clear 3:1 against their own panel, and every colourway here is a dusk for that reason -
-pale-pink-on-white is the one cherry blossom picture this panel cannot draw. That rules out a WHITE sky,
-not a coloured petal, so option 1 is unaffected by it.
-
-Also worth knowing before tuning: the shipped contrast test compares `lit` against the FLAT panel colour,
-not against the sky gradient drawn over it. The current five have 8.6:1 in the worst case, so they are
-fine - but the test is not what establishes that, and a bolder sky plus a darker petal could pass the
-suite while being hard to read.
-
----
-
-## 5. Lightning striking the castle on a bass hit (blossom)
-
-Asked for 2026-09-01, straight after the castle. Queued behind it because the bolt needs a TARGET - it
-terminates on the castle, so it cannot be built until the castle's anchor point exists.
-
-### The trap, and it is measured rather than theoretical
-
-The obvious trigger - a threshold on the single-frame rise in the bass mean - PROVABLY CANNOT FIRE on
-real music in this project. The vaporwave family shipped exactly that and its lightning fired ZERO times:
-the largest single-frame bass-mean rise anywhere in the 8-second fixture is 0.140 against a threshold of
-0.157. It went unnoticed because the synthetic tests passed. That measurement is recorded in
-`render/fluid.rs`'s droplet-rate test, which asserts it as a second claim precisely so the number does
-not get lost.
-
-So the trigger must be a BASS-WEIGHTED SPECTRAL FLUX detector judged against a RUNNING MEDIAN, the
-mechanism `dsp::flourish` documents: "judge a hit against the median of recent hits, not against a
-constant". Relative, so it means the same thing on a compressed pop master and on drum-and-bass.
-
-Concretely: a second `dsp::onset::Flux` over the low quarter of the bands, ratio around 3.2 and a
-refractory around 1500ms, which gives a strike every few seconds on bassy material rather than on every
-kick. NOT the family's existing `onset` (ratio 2.8, 200ms) - that fires ~3 times a second and shakes the
-branch, which is the right rate for a branch and far too often for lightning.
-
-### What it should draw
-
-- A bolt from the top of the panel to a point on the castle - jagged, 1-2px, with a brighter core.
-- A SKY FLASH: brighten the gradient for a few frames. The vaporwave family has `sky_flash` and
-  `bolt_bright` as tunable fields and its bolt drawing is worth reading before writing a new one.
-- The castle rim-lit on the struck side for the duration, which is what sells the bolt as hitting rather
-  than passing behind.
-- Optionally the petals briefly catching the light.
-
-### Two things to decide when building
-
-- Whether lightning REPLACES the gust flourish or coexists with it. Two whole-display events with
-  different triggers may read as noise; the gust is currently the family's flourish.
-- Whether the strike should be visible at all in the colourways whose sky is already bright (Lantern).
-  The vaporwave family sets `bolt_bright = 0` on two colourways deliberately, and the storm code checks
-  it - the precedent for opting a colourway out already exists.
-
-### Composition, decided 2026-09-01: the moon PEEKS OUT FROM BEHIND the castle
-
-Asked for directly, and it is the legibility choice as well as the aesthetic one - which is worth
-recording because it settles the one question the design pass was told to argue both ways.
-
-The castle is a flat silhouette drawn behind the branch and petals, so its OUTLINE is all it has; there is
-no interior detail to fall back on at 60px. The moon (radius 10) is the brightest thing on the panel. A
-dark tiered roofline crossing a bright disc is therefore the highest-contrast edge available anywhere in
-the frame, which is exactly where the castle most needs to be readable. Against bare dusk sky it is
-dark-on-dark and relies on a few tones of separation; against the moon it is unambiguous.
-
-So: draw order becomes sky -> moon -> castle -> branch -> petals, and the castle must be POSITIONED so
-its most distinctive feature - the stacked roofline, whichever design wins - crosses the disc rather than
-sitting clear of it. Roughly: castle centred near 0.78-0.85 across, base at the panel bottom, tall enough
-that its upper tiers reach the moon at 0.30 down.
-
-Corollary worth remembering when the lightning lands (item 5): the bolt should strike the part of the
-castle that is silhouetted against the MOON, because that is where a rim-lit edge will actually show.
-
----
-
-## Status update, 2026-09-01
-
-Item 4 is DONE. Options 1 and 2 both shipped: three colourways rethemed to hues cherry blossom does not
-have (amber, violet, gold), two added (Jade, and Riot where every petal carries its own stable hue), and
-petal glow on its own bloomed layer with per-colourway strength. Option 3 (hue by petal age) was not
-taken - Riot covers the same ground more directly and a petal that changes colour mid-fall reads as a
-fault. Option 4 (a bolder sky) was not taken either: I sampled the rendered sky and it is already doing
-what it was set to do.
-
-Item 5 (lightning striking the castle on a bass hit) is now UNBLOCKED - the castle exists, so the bolt has
-a target. The trap recorded in that item still stands and is the first thing to check: the obvious
-bass-rise trigger provably cannot fire on real music here.
-
-### Carried forward from the castle work
-
-The eave lesson is worth keeping for any future silhouette in this family. Architecturally correct
-upturned eaves - 2-column blocks protruding 5-7px past a narrow storey - read as a SPIDER once the shape
-had a crisp keyline. The detail was right and the proportion was wrong, and it was invisible while the
-castle was still a low-contrast smudge. Detail that survives being correct can still fail at 28 rows.
-
-The keyline itself is now load-bearing here and worth reusing: the castle has to survive a dark sky, where
-only a body LIGHTER than the sky shows, and a near-white moon, where only an edge DARKER than the moon
-shows. Body-plus-rim gives it one contrast against each.
-
-A big moon overlap and a legible moon are not both available at this size. The castle is 41px wide and the
-disc 21px across, so at MOON_Y 0.55 the tiers cut the moon into fragments and it stopped reading as a moon
-at all. 0.42 crosses only its bottom edge, which is what "peeking out from behind" actually wants.
-
----
-
-## 6. A frenchcore family: full-rate flashing at 200bpm (DONE 2026-09-01)
-
-Asked for as "full 200bpm flashing visuals, something that could work for frenchcore". Queued behind the
-lightning; raised while that was still in flight.
-
-### Why this genre is actually easy for the DSP
-
-Every other family in this project fights the same problem: real music's transients are ambiguous, so
-onset detection needs a running median, a refractory period and a fixture that proves it fires. Frenchcore
-hands us the opposite - a 200-250bpm kick that dominates the spectrum, on the grid, every single beat.
-This is the one genre where a simple trigger is the CORRECT trigger, and where the risk flips from "never
-fires" to "fires so reliably that the visual has to survive firing constantly".
-
-Check before building: the shared onset detector's refractory is documented at 200ms, which caps it at
-300bpm. 200bpm is a 300ms period, so it clears - but only by 100ms, and a kick roll or a double-kick would
-be swallowed. Measure this rather than assume it, and consider a family-local refractory.
-
-### Flash rate: NO LIMIT. The user waived this explicitly.
-
-Recorded because it is a decision, not an omission: the user was told the arithmetic and said "no concerns
-about photosensitivity". So full-rate luminance flashing is ON THE TABLE and nothing here should be built
-timid. Do not re-raise it; do not quietly cap the flash and call it taste.
-
-The arithmetic, kept only as information about what is happening on screen: 200bpm is 3.33 flashes/second,
-against a 3/second general guidance threshold that carries a size exemption a 380x60 taskbar strip
-comfortably meets. So this was defensible even before the waiver.
-
-Design consequence of the waiver: a luminance strobe on every kick is allowed as the BASE layer, not just
-as a sparse accent. The hue-strobe-at-constant-luminance idea stays in the toolbox, but as an aesthetic
-option for a calmer colourway rather than as a safety measure.
-
-### Design notes to start from
-
-  - Flash hard on every kick. The one thing to preserve is DYNAMIC RANGE: if every beat is maximum, none
-    of them is, so the every-kick flash needs a ceiling below full and a sparser accent (every 4th or 8th)
-    that goes above it. That is a loudness-design point, not a safety one.
-  - The house rule that level is POSITION and never brightness still applies to the METER. A strobe is
-    brightness-as-an-event, not brightness-as-a-level, so it does not conflict - but the thing that tells
-    you the level must still be position, or the family is an ornament.
-  - 200bpm at 60fps is 18 frames per beat, so there is room for a real envelope per kick rather than a
-    1-frame spike. Nothing steps to full value on the firing frame - that mistake has now been made twice
-    in the blossom family alone.
-  - Worth asking the user: is the kick the only thing driving it, or does it also need the mid/high
-    content? Frenchcore's identity is the distorted kick, but the screamed/synth top end is what varies.
-
-### Unanswered
-
-Whether to build this as a new family or as an aggressive colourway set plus a flash param on an existing
-one. A new family is the honest answer if the MOTION is different; a colourway is right if the geometry
-would be the same. Decide by describing the motion first.
-
----
-
-## 7. A kaleidoscope family: psychedelic symmetry (DONE 2026-09-01)
-
-Asked for as "a kaleidoscope type thing for more psychedelic visuals", after the frenchcore family.
-
-### The geometry problem, and the answer
-
-A kaleidoscope is normally ROSETTE symmetry - 6- or 8-fold rotation about a centre. That does not fit this
-panel, and the reason is the same one that has already killed two designs here. At 380x60 the aspect ratio
-is 6.3:1, so a single centred disc is 60px across and uses 16% of the width; the other 84% is empty. This
-is exactly the failure the isometric attempt hit ("the x axis feeds both width and height, so 56 rows run
-out after ~64px of width") and it is not fixable by tuning.
-
-The right answer is to change symmetry GROUP rather than shrink the design. The symmetry groups of an
-infinite strip are the seven FRIEZE groups - translation, horizontal and vertical reflection, glide
-reflection, 2-fold rotation, and their combinations. Those are the groups a 6:1 letterbox actually has, and
-a frieze pattern is still unmistakably kaleidoscopic: mirrored, repeating, hypnotic. A real kaleidoscope's
-tube view unrolled along its length IS a frieze.
-
-So: reflect a narrow source cell repeatedly across the width, mirroring alternate copies, with a vertical
-mirror through the panel's centre line. That gives the p2mm/pmm11 look - diamonds and bowties marching
-across the strip - and fills the whole panel at full height.
-
-A row of small rosettes (6 discs of 60px) is the fallback if the frieze reads as too regular. Worth
-rendering both before choosing; the source cell is the same either way.
-
-### The cost trap, which is easy to miss
-
-A per-pixel symmetry mapping is 22,800 lookups per frame at 380x60. That is affordable - the mesh family
-measured 0.671ms - but only if the mapping is a PRECOMPUTED INDEX TABLE. Computing the fold arithmetic per
-pixel per frame, especially anything with trig in it, is 22,800 sin/cos calls a frame and will show.
-
-The mapping depends only on the canvas size, so build it once and rebuild on resize. There is precedent for
-exactly this lifecycle: the scope family already clears its persistence buffers on a canvas resize, and
-main.rs has hysteresis on the width for the reason that an unrelated window opening changes the panel size
-mid-animation. Reuse that, and make sure a resize cannot leave a stale table - a table sized for the old
-width indexing a new buffer is an out-of-bounds panic or a silently wrong image.
-
-### What the music drives
-
-The house rule still applies: level must be POSITION, not brightness. In a kaleidoscope the obvious
-position mappings are the ones to use - the fold count, the source cell's width, the rotation or scroll
-rate of the source, and the radius at which the pattern's features sit. A kaleidoscope whose colours merely
-brighten with the music is an ornament.
-
-Candidate mappings, best first:
-  - Level drives the SCROLL RATE of the source cell through the mirrors. Whole-pattern motion, readable at
-    a glance, and it is the same load-bearing idea that makes the blossom family work (wind IS the level).
-  - Bass drives the fold count or the cell width, so the pattern visibly reorganises on a heavy passage.
-  - An onset rotates the source cell by a step, so the rhythm is in the pattern's changes.
-
-### Fits well with the frenchcore work
-
-Both want a strobe and both want aggressive colour, so build frenchcore first and the kaleidoscope second -
-the flash envelope, the per-kick trigger and any luminance-constant hue machinery from the first are
-directly reusable in the second. The rainbow resolver (`render::tint`, with `rainbow` and `rainbow_spread`,
-`RAINBOW_SAT` capped at a measured 0.68) is the existing route to psychedelic colour; check whether it can
-vary per-CELL before writing anything new.
-
-### Direction, added 2026-09-01: RAVE VISUALS, not brutalist bars
-
-Clarified as "for the frenchcore think rave visuals". That replaces the earlier sketch (thick blocks
-slamming between orientations), which was an industrial-brutalist read rather than a rave one.
-
-The rave visual language, and what survives a 380x60 letterbox:
-  - LASER FAN. Beams radiating from a rig point and sweeping. This is the strongest fit by far: a fan
-    from the top edge spreading downward gives long diagonal wedges, and a 6:1 strip is the one shape
-    where a wide fan looks natural rather than cramped. Hard-edged bright lines, not soft glows.
-  - STROBE on the kick, which the user has already waived any rate limit on.
-  - RADIAL BURST on accents - beams snapping outward from a point all at once.
-  - ZOOMING CHECKERBOARD / TUNNEL. Fits a letterbox badly for the same reason the rosette kaleidoscope
-    does: a vanishing point wants a squarer frame. Deprioritised, and probably better served by the
-    kaleidoscope family's frieze machinery if it is wanted at all.
-  - Acid smiley: recognisable but it is a SPRITE, and the dolphin family already established that a
-    small sprite at this size needs multiple phases and real movement to avoid reading as a lump. Not
-    worth the pixels here.
-
-Level as POSITION, as the house rule requires - and a laser rig gives several honest options:
-  - The fan's APERTURE - beams spread wide when loud, collapse to a narrow pencil when quiet. Whole-field
-    motion, readable instantly, and the same load-bearing idea as blossom's wind.
-  - Sweep RATE, so the rig moves faster on a heavy passage.
-  - Beam COUNT stepping with level.
-Aperture first, sweep rate second, count third; count is the weakest because a discrete step reads as a
-glitch unless the steps are far apart.
-
-The kick still drives the strobe and snaps the fan to a new angle, so the rhythm is in the rig's
-movement as well as in the flash.
-
----
-
-## 8. A brutalist-bars family (DONE 2026-09-01)
-
-Asked for as "also can do the brutalist bars as a separate theme after" - promoting the design that was
-cut from the frenchcore family when that turned into rave visuals. It is a genuinely different look, so it
-earns its own family rather than being a colourway of anything.
-
-The design as it stood, which is worth building as specified:
-
-  - Thick blocks, not thin bars. Half the band count at double width, with a hard dark gap between them.
-    Concrete and steel, no glow, no gradient - a candidate for `bloom = 0`, the way chroma sets it to zero
-    on the grounds that a halo softens exactly the edges the family is about.
-  - THE ORIENTATION FLIPS ON THE BEAT. In one state the blocks hang from the top, in the other they rise
-    from the floor, and an onset toggles between them. The whole panel slams between two configurations,
-    which is a strobe made of POSITION rather than brightness - so it looks violent while keeping the
-    house rule intact, and it is the idea worth keeping from the original sketch.
-  - Level stays the block length, so it is a working meter in either state.
-  - Monochrome or near it: concrete greys, one accent. This is the family where restraint is the point,
-    which also makes it the natural opposite number to the rave and kaleidoscope families.
-
-Sequencing: build it AFTER frenchcore, because frenchcore's per-kick trigger is exactly what the
-orientation flip needs, and after the kaleidoscope only because that one is already in progress.
-
-One thing to watch: flipping orientation destroys frame-to-frame comparability of the bar tops. That is
-intended - the slam is the point - but it means the peak-hold marks, if this family has any, should be
-anchored to the block's own base rather than to a fixed panel row, or they will appear to jump the full
-height of the panel on every beat.
-
----
-
-## Status, 2026-09-01: item 5 (lightning) is DONE
-
-Shipped. The trigger is the shared `flourish::Trigger` fed the LOW THREE BANDS, at a theme flourish of
-0.10, measured at 2.40 / 4.40 / 2.20 strikes per minute over the three real-music fixtures.
-
-The recorded trap held and then some. A design pass recommended eight bands on measured grounds and
-reported 1.75/6.50/1.50 for it; that did not reproduce against the real crate - eight bands measures
-0.00/2.20/0.00, so two of three fixtures never fire. The cliff is at SIX bands. Widening a bass window
-does not make a bass trigger more reliable, it dilutes the kick with everything above it until the median
-stops seeing a kick at all. The test that drives each fixture separately is what caught it.
-
-### A pre-existing bug found on the way: blossom's frame bloom did nothing
-
-`c.bloom(t.bloom as i32, FRAME_GLOW)` was documented as existing "to give the moon its halo". It was a
-measured no-op: `Canvas::bloom` composites its halo UNDERNEATH its own source and `blend_over` returns the
-source unchanged at full alpha, so with an opaque panel and an alpha-1.0 sky gradient the only pixels it
-could write were in the transparent margin that `clip_to_rounded_rect` then zeroes. Census at 380x60:
-21152 opaque, 0 semi-transparent, 1648 transparent; the call changed 1648 pixels, ZERO inside the sky,
-and after the clip exactly 0 pixels differed with it and without it. It cost ~1.03ms per frame.
-
-Removed. Which means: THE MOON HAS NO HALO, and never did.
-
-### Open, and needing eyes rather than measurement
-
-  - Whether 2.40-4.40 strikes per minute is right in peripheral vision all day. Lower `flourish` in
-    `blossom_base()` if not; do not go below 0.10, where the knob loses authority.
-  - Whether FLASH_PEAK 0.15 registers as the sky lighting up. The ceiling is measured (petal contrast,
-    castle non-inversion); the floor is not. Headroom to 0.20 exists on every colourway except plum and
-    jade.
-  - Jade's castle at the flash peak is thin - body-minus-sky falls to 1.044:1 - and its keyline is what
-    carries the shape there.
-  - GIVING THE MOON A REAL HALO. It needs the same treatment the petals and the bolt get: its own
-    transparent layer, bloomed, composited over. About 1ms, which is exactly what deleting the dead call
-    gave back.
-
----
-
-## Status, 2026-09-01: item 6 (frenchcore) is DONE, shipped as the `rave` family
-
-A sweeping laser fan that strobes on the kick. Five colourways: Frenchcore, Gabber, UV, Strobe, Hard
-dance. 1.054 ms/frame at 380x60.
-
-Kick detection MEASURED over the three real-music fixtures at 306 / 234 / 326 kicks per minute - and a
-high rate is CORRECT here, unlike everywhere else in this project. This is the one family whose trigger
-problem is the opposite one: the material hands over a dominant on-grid kick, so what had to be engineered
-is a visual that survives firing three times a second, not one that fires at all. A synthetic 200bpm grid
-is caught beat-for-beat, and so are 160, 240 and 300bpm.
-
-### Three things the render corrected, none of which reasoning would have caught
-
-1. THE STROBE SWALLOWED THE BEAMS. A near-white wash at 0.92 alpha turned the panel pastel and made the
-   beams - the element that carries the level - the lowest-contrast thing on screen. Now 0.30/0.62 of the
-   SATURATED hue rather than `hot`, which is the trick this very backlog entry proposed: flash the hue and
-   leave the luminance roughly alone, so near-white cores punch through a violent colour.
-2. THE QUIET FRAME WAS A SOLID WEDGE. Nine 5px beams from one origin separate only beyond
-   `r > 5 / (2*aperture/(BEAMS-1))`, which at the narrow aperture is r > 44px on a panel 60 tall - so at
-   nine beams they could NEVER separate, and the beam count that carries the spectrum was unreadable. The
-   count now follows the level, 3 to 9. Worth noting against my own earlier note, which ranked count as
-   the weakest of the position mappings: true in general, and beside the point here, because without it
-   the other two mappings are illegible at the quiet end.
-3. The narrow aperture went 0.20 -> 0.45 for the same reason.
-
-### Carried forward
-
-A fan of beams is the one piece of rave imagery a 6:1 letterbox flatters, and that is now demonstrated
-rather than argued. The zooming tunnel and checkerboard floor remain unbuilt and should stay that way -
-they want a vanishing point, and they fail here exactly as a rosette kaleidoscope does.
-
----
-
-## Status, 2026-09-01: items 7 and 8 are DONE
-
-Item 7 shipped as the `kaleido` family (5 colourways, 0.755 ms/frame) and item 8 as `brutal` (5
-colourways). With `rave` that is three new families in one pass, plus the lightning; 148 colourways across
-22 families.
-
-The frieze prediction held: a row of four-fold rosettes fills a 6:1 strip where a centred rosette would
-use 16% of it. The precomputed-table prediction held too - the naive per-pixel version would have wanted
-22,800 `atan2` and `sqrt` calls per frame.
-
-One correction the render forced, worth keeping: halving the fold cell's WIDTH alone stretched every
-rosette into a tall ellipse, and the doubled pattern rendered as a bright horizontal band rather than as
-more flowers. Both axes have to subdivide together for the rosettes to stay round, and the y fold has to
-be written as a general repeat that REDUCES to a single centre mirror at the coarse size.
-
-For `brutal`, the peak-cap warning in the original note was correct and load-bearing: the caps are
-anchored to each block's own base, and there is a test that checks the cap sits on the block's far side
-from its base in BOTH orientations. Anchored to a panel row they would leap the full height every beat.
-
-### What remains unbuilt from this pass
-
-  - The zooming tunnel and checkerboard floor (mentioned under item 6). They want a vanishing point and
-    fail on a letterbox exactly as a rosette kaleidoscope does. Recommend leaving them.
-  - Giving the blossom moon a real halo, now that the dead frame bloom is gone.
-  - Blossom's remaining eye judgements: strike cadence, FLASH_PEAK's floor, jade's castle at peak.
+rejected — 3D was set aside in favour of the car stereo/vaporwave work above. Recorded with the
+measurements from the 3D feasibility investigation so this does not have to be worked out twice.
+(3D Pipes and Orbit have since shipped as separate, already-specced families with real perspective
+projection — see `docs/themes.md`. This entry is about 3D **Maze** and **Mystify**, which have not.)
+
+**The problem all of them share, and it is not rendering.** A screensaver is autonomous; a meter
+must be driven. None of Pipes, Maze or Mystify displays anything on its own — the hard part is the
+audio hook, and this project's house rule (level is POSITION, not brightness) already ruled out
+"glow with the bass": `tube.rs:54-60` measured a driven element only 1.46 dL* brighter than its
+idle neighbour, against a ~2.3 dL* visible threshold.
+
+**What the investigation established, now proven twice over by 3D Pipes and Orbit shipping:**
+compute is not the constraint (4 of 22 families have been timed individually; the cheapest is
+~0.7ms/frame, the priciest ~2ms, against a 16.7ms frame budget); the real constraint is vertical
+rows (48 usable at 60px tall), so depth steps and amplitude travel compete for the same account;
+a near-plane clip must land before any perspective divide, or a vertex near the eye projects to
+infinity and one Bresenham edge iterates ~2.1 billion times (measured at 294.6ms, eighteen dropped
+frames — `canvas.rs:624`).
+
+**Per idea, still unbuilt:**
+
+- **3D Maze** — the strongest sense of depth of anything considered, and the worst fit: a
+  corridor with a vanishing point lands squarely on the depth-collapse wall (Vapor's tuned
+  `persp` already collapsed 7 of 16 depth lines onto 2 rows) and the near-clip hazard at once.
+  Texture-mapped walls in the original; a 48-row corridor has perhaps 3-4 usable depth steps.
+- **Mystify** — the most feasible of the two and the least obviously "3D": bouncing polylines
+  trailing their own history, driven by band levels so the shape IS the spectrum, reusing the
+  scope family's phosphor persistence. No perspective, no clip, no depth buffer needed. Worth
+  considering first if the appetite is for a screensaver family rather than specifically for depth.
+
+Refused outright and worth remembering why: a starfield (150 one-pixel stars change ~1.3% of the
+panel — too small an area to be noticed, per this project's own measured lesson) and, from the
+`kaleido`/`rave` work, a zooming tunnel or checkerboard floor (wants a vanishing point, fails on a
+6:1 letterbox the same way a rosette kaleidoscope did).
