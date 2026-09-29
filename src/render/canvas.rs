@@ -544,6 +544,38 @@ impl Canvas {
         }
     }
 
+    /// Raw pixel copy (overwrite, not blended) of a `w x h` block from `src` at `src_xy` into `self`
+    /// at `dst_xy`. A source pixel outside `src`'s own bounds copies as fully transparent; a
+    /// destination cell outside `self`'s bounds is skipped - the same clip-don't-panic convention
+    /// every other primitive uses.
+    ///
+    /// This is `draw_over`'s cousin for the case an expensive whole-canvas op (like `bloom`) only
+    /// needs to run on a small, known sub-rectangle: lift that box out with `copy_region(big, (x, y),
+    /// (0, 0), w, h)` into a `w x h` scratch canvas, run the op there, then paste it back with
+    /// `copy_region(small, (0, 0), (x, y), w, h)`. An overwrite rather than a blend is correct for the
+    /// paste-back precisely because the box was lifted whole - there is no separate content at that
+    /// spot in `self` to blend under, the sub-canvas already IS what belongs there.
+    pub fn copy_region(&mut self, src: &Canvas, src_xy: (i32, i32), dst_xy: (i32, i32), w: i32, h: i32) {
+        let (src_x, src_y) = src_xy;
+        let (dst_x, dst_y) = dst_xy;
+        for y in 0..h {
+            let dy = dst_y + y;
+            if dy < 0 || dy >= self.h {
+                continue;
+            }
+            let sy = src_y + y;
+            for x in 0..w {
+                let dx = dst_x + x;
+                if dx < 0 || dx >= self.w {
+                    continue;
+                }
+                let sx = src_x + x;
+                let v = src.idx(sx, sy).map(|i| src.px[i]).unwrap_or(0);
+                self.px[(dy * self.w + dx) as usize] = v;
+            }
+        }
+    }
+
     /// One 3x5 glyph, as five rows of three bits with bit 2 leftmost. `None` for anything
     /// not in the set.
     ///

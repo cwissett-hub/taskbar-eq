@@ -112,6 +112,10 @@ struct Shard {
     dir: [f32; 2],
 }
 
+/// The `(w, h, panel, edge, hot, panel_alpha, ghost, disc positions)` the cached fully-composed
+/// background (`Vsorb::bg_final`) was built for - see `draw_background`.
+type BgFinalKey = (i32, i32, String, String, String, f32, f32, [(i32, i32); 3]);
+
 pub struct Vsorb {
     /// Unit-sphere vertices, built once at construction.
     verts: Vec<[f32; 3]>,
@@ -145,6 +149,22 @@ pub struct Vsorb {
     /// The transparent layer the orb is drawn and bloomed on before compositing over the opaque panel,
     /// sized once per panel size and reused - so `draw` allocates nothing after the first frame.
     scratch: Option<Canvas>,
+    /// The cached opaque panel fill + vertical gradient - everything about the background except the
+    /// drifting discs, which move every frame and are drawn fresh. Constant for a given (size, theme),
+    /// so recomputing it every frame was pure waste: rebuilt only when `bg_key` no longer matches.
+    bg_cache: Option<Canvas>,
+    /// The `(w, h, panel, edge, panel_alpha)` the current `bg_cache` was built for.
+    bg_key: Option<(i32, i32, String, String, f32)>,
+    /// The fully composed background - `bg_cache` plus the three discs drawn at their
+    /// last-rebuilt-for integer pixel positions. The discs drift by a small fraction of a pixel per
+    /// frame (see `ensure_bg_final`), so this is a cache hit almost every frame; when it misses, it is
+    /// rebuilt from `bg_cache` rather than redrawing the gradient too.
+    bg_final: Option<Canvas>,
+    /// The `(w, h, panel, edge, hot, panel_alpha, ghost, disc positions)` `bg_final` was built for.
+    bg_final_key: Option<BgFinalKey>,
+    /// Scratch canvas sized to just the orb/spikes' bounding box, reused across frames, so `bloom` can
+    /// run its box blur over that box instead of the whole (much wider) panel.
+    bloom_scratch: Option<Canvas>,
     /// splitmix64 state, seeded constant, for the shatter's jitter.
     rng: u64,
 }
@@ -174,6 +194,11 @@ impl Default for Vsorb {
                 Flare { bx: 0.52, by: 0.24, amp: 0.05, speed: 0.7, phase: 4.2, r: 0.42 },
             ],
             scratch: None,
+            bg_cache: None,
+            bg_key: None,
+            bg_final: None,
+            bg_final_key: None,
+            bloom_scratch: None,
             rng: 0x243f_6a88_85a3_08d3,
         }
     }
@@ -310,28 +335,89 @@ impl Vsorb {
         (tx.round() as i32, ty.round() as i32)
     }
 
-    /// The background: an opaque vertical gradient from `panel` to `edge`, with three lens-flare discs
-    /// drifting across it in `hot` at `ghost` alpha. Deterministic for a given `time_s`. Drawn straight
-    /// onto the opaque panel `c` - not on the bloom layer - so the discs stay soft and un-haloed.
-    fn draw_background(&self, c: &mut Canvas, t: &Theme, time_s: f32, bbox: (i32, i32, i32, i32)) {
-        let (ix0, iy0, ix1, iy1) = bbox;
-        let (iw, ih) = (ix1 - ix0, iy1 - iy0);
+    /// Rebuilds `bg_cache` - the opaque rounded panel fill plus the vertical gradient, exactly what
+    /// `draw` used to redraw from scratch every frame - only when the size or the theme's panel/edge
+    /// colours have actually changed. Comparing against `bg_key` by reference first means a cache HIT
+    /// (the overwhelming majority of frames) touches no allocation at all; only a rebuild clones the
+    /// two colour strings into the new key.
+    fn ensure_bg_cache(&mut self, t: &Theme, w: i32, h: i32) {
+        let hit = matches!(
+            &self.bg_key,
+            Some((kw, kh, kp, ke, kpa))
+                if *kw == w && *kh == h && kp == &t.panel && ke == &t.edge && *kpa == t.panel_alpha
+        );
+        if hit {
+            return;
+        }
+        let mut bg = Canvas::new(w, h);
+        let panel = Rgba::from_hex(&t.panel, t.panel_alpha);
+        bg.rounded_rect(1, 2, w - 2, h - 4, 3, panel);
         let top = Rgba::from_hex(&t.panel, 1.0);
         let bot = Rgba::from_hex(&t.edge, 1.0);
-        c.vertical_gradient(ix0, iy0, iw, ih, &[(0.0, top), (1.0, bot)], false);
+        bg.vertical_gradient(2, 2, w - 2, h - 2, &[(0.0, top), (1.0, bot)], false);
+        self.bg_cache = Some(bg);
+        self.bg_key = Some((w, h, t.panel.clone(), t.edge.clone(), t.panel_alpha));
+    }
+
+    /// The background: the cached opaque panel + vertical gradient plus the three lens-flare discs
+    /// drifting across it in `hot` at `ghost` alpha, blitted in as one cheap opaque copy - see
+    /// `ensure_bg_cache` and the disc-position cache key below. Deterministic for a given `time_s`.
+    /// Drawn straight onto the opaque panel `c` - not on the bloom layer - so the discs stay soft and
+    /// un-haloed.
+    fn draw_background(&mut self, c: &mut Canvas, t: &Theme, time_s: f32, bbox: (i32, i32, i32, i32)) {
+        let (ix0, iy0, ix1, iy1) = bbox;
+        let (iw, ih) = (ix1 - ix0, iy1 - iy0);
+        let (w, h) = (c.width(), c.height());
+        self.ensure_bg_cache(t, w, h);
 
         let ghost = t.ghost.clamp(0.0, 1.0);
         if ghost <= 0.004 {
+            if let Some(bg) = &self.bg_cache {
+                c.draw_over(bg);
+            }
             return;
         }
+
+        // The discs' true (sub-pixel) centres, then rounded to the pixel they'd actually be drawn
+        // at. `radial_gradient` samples in units of whole pixels anyway, so nothing is lost rounding
+        // BEFORE the cache-key comparison below - it just means the rebuild only fires once the true
+        // position has drifted a full pixel from the last redraw, rather than every frame for a
+        // sub-pixel wobble nothing would render differently for anyway.
         let time = if time_s.is_finite() { time_s } else { 0.0 };
-        let disc = Rgba::from_hex(&t.hot, ghost);
-        let disc0 = Rgba::from_hex(&t.hot, 0.0);
-        for f in &self.flares {
+        let mut pos = [(0i32, 0i32); 3];
+        for (i, f) in self.flares.iter().enumerate() {
             let dx = ix0 as f32 + (f.bx + f.amp * (time * f.speed + f.phase).sin()) * iw as f32;
             let dy = iy0 as f32 + (f.by + f.amp * (time * f.speed * 0.8 + f.phase).cos()) * ih as f32;
-            let r = (f.r * ih as f32).round() as i32;
-            c.radial_gradient(dx.round() as i32, dy.round() as i32, 0, r, &[(0.0, disc), (1.0, disc0)]);
+            pos[i] = (dx.round() as i32, dy.round() as i32);
+        }
+
+        let hit = matches!(
+            &self.bg_final_key,
+            Some((kw, kh, kp, ke, khot, kpa, kg, kpos))
+                if *kw == w && *kh == h && kp == &t.panel && ke == &t.edge && khot == &t.hot
+                    && *kpa == t.panel_alpha && *kg == ghost && *kpos == pos
+        );
+        if !hit {
+            let mut bg = self
+                .bg_final
+                .take()
+                .filter(|b| b.width() == w && b.height() == h)
+                .unwrap_or_else(|| Canvas::new(w, h));
+            if let Some(base) = &self.bg_cache {
+                bg.copy_region(base, (0, 0), (0, 0), w, h);
+            }
+            let disc = Rgba::from_hex(&t.hot, ghost);
+            let disc0 = Rgba::from_hex(&t.hot, 0.0);
+            for (i, f) in self.flares.iter().enumerate() {
+                let r = (f.r * ih as f32).round() as i32;
+                bg.radial_gradient(pos[i].0, pos[i].1, 0, r, &[(0.0, disc), (1.0, disc0)]);
+            }
+            self.bg_final = Some(bg);
+            self.bg_final_key =
+                Some((w, h, t.panel.clone(), t.edge.clone(), t.hot.clone(), t.panel_alpha, ghost, pos));
+        }
+        if let Some(bg) = &self.bg_final {
+            c.draw_over(bg);
         }
     }
 }
@@ -348,9 +434,7 @@ impl Family for Vsorb {
         }
         let dt = if d.dt_ms.is_finite() { d.dt_ms.clamp(0.0, 250.0) } else { 16.7 };
 
-        // ---- the opaque panel, then the Y2K background over it ----
-        let panel = Rgba::from_hex(&t.panel, t.panel_alpha);
-        c.rounded_rect(1, 2, w - 2, h - 4, 3, panel);
+        // ---- the opaque panel and the Y2K background - the cached blit plus fresh discs ----
         let bbox = (2i32, 2i32, w - 2, h - 2);
         self.draw_background(c, t, d.time_s, bbox);
 
@@ -517,8 +601,47 @@ impl Family for Vsorb {
         }
 
         // ---- bloom the layer and lay it over the opaque panel ----
-        if t.bloom > 0.0 {
-            layer.bloom(t.bloom as i32, t.glow_strength);
+        //
+        // `bloom` box-blurs every pixel of whatever canvas it is given, but the orb/spikes/shards
+        // never fill more than a bounding box around the panel's centre - a wide taskbar panel around
+        // a squat, centred orb is mostly untouched transparent background the blur would otherwise
+        // churn through for nothing. So: bound the box analytically (radius plus the worst-case spike
+        // reach, both provable upper bounds on where anything was actually drawn - see the comment
+        // below), pad it by the bloom radius so the crop sees the same neighbourhood a full-canvas
+        // blur would have (box blur has radius-limited support, so beyond that pad the result is
+        // exactly zero either way), lift just that box into a reused scratch canvas, bloom the box,
+        // and copy it back. Shards fly out to `h * 1.4` on a shatter, well past any box worth cropping
+        // for a rare 700ms flourish, so that path keeps blooming the whole layer.
+        let radius = t.bloom as i32;
+        if radius > 0 && t.glow_strength > 0.0 {
+            if self.shards_live {
+                layer.bloom(radius, t.glow_strength);
+            } else {
+                // Upper bound on any wireframe/spike pixel's distance from centre: wireframe vertices
+                // sit at exactly `self.radius`; spike tips reach `self.radius + spike_len[k]`, and
+                // `spike_len[k]` can never exceed its own target `SPIKE_BASE + lvl * spike_span` (the
+                // exponential smoothing above is a convex combination of the current value and that
+                // target, so by induction from the `SPIKE_BASE` starting value it never overshoots).
+                let reach = self.radius + SPIKE_BASE + spike_span;
+                let bx0 = ((cx - reach).floor() as i32 - radius).max(0);
+                let bx1 = ((cx + reach).ceil() as i32 + radius + 1).min(w);
+                let by0 = ((cy - reach).floor() as i32 - radius).max(0);
+                let by1 = ((cy + reach).ceil() as i32 + radius + 1).min(h);
+                let (bw, bh) = (bx1 - bx0, by1 - by0);
+                if bw > 0 && bh > 0 && (bw < w || bh < h) {
+                    let mut sub = self
+                        .bloom_scratch
+                        .take()
+                        .filter(|s| s.width() == bw && s.height() == bh)
+                        .unwrap_or_else(|| Canvas::new(bw, bh));
+                    sub.copy_region(&layer, (bx0, by0), (0, 0), bw, bh);
+                    sub.bloom(radius, t.glow_strength);
+                    layer.copy_region(&sub, (0, 0), (bx0, by0), bw, bh);
+                    self.bloom_scratch = Some(sub);
+                } else {
+                    layer.bloom(radius, t.glow_strength);
+                }
+            }
         }
         c.draw_over(&layer);
 
@@ -552,7 +675,7 @@ mod tests {
     /// The background-only render for a colourway at a fixed `time_s` - the gradient and the drifting
     /// discs, and nothing else - so a full frame can be compared against it pixel for pixel.
     fn background(t: &Theme, w: i32, h: i32, time_s: f32) -> Canvas {
-        let fam = Vsorb::default();
+        let mut fam = Vsorb::default();
         let mut c = Canvas::new(w, h);
         let panel = Rgba::from_hex(&t.panel, t.panel_alpha);
         c.rounded_rect(1, 2, w - 2, h - 4, 3, panel);
