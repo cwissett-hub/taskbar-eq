@@ -736,6 +736,98 @@ pub fn sesh_bleached() -> Theme {
     }
 }
 
+/// The Night City: HUD family base. Opaque black panel, a 1 px accent frame, crisp cells (no bloom).
+/// Each colourway registers exactly one `Zone { upto: 1.0, lit: <scanner>, hot: <scanner> }`, which is
+/// the only scanner colour the family reads.
+fn night_base() -> Theme {
+    Theme {
+        family: "night".into(),
+        texture: Texture::None_,
+        panel_alpha: 1.0,
+        bloom: 0.0,
+        glow_strength: 0.0,
+        edge_alpha: 1.0,
+        // Snappy cells: they jump on the transient and fall away, with a slowly decaying peak-hold tick.
+        ballistics: Ballistics { attack: 0.75, decay: 0.22, peak_fall: 0.012 },
+        ..Theme::default()
+    }
+}
+
+/// The classic: yellow on black, cyan scanner, white readout values.
+pub fn night_yellow() -> Theme {
+    Theme {
+        id: "night-yellow".into(),
+        name: "Night Yellow".into(),
+        lit: "#FCEE0A".into(),
+        hot: "#FFFFFF".into(),
+        panel: "#000000".into(),
+        edge: "#8a8410".into(),
+        ghost: 0.10,
+        zones: vec![Zone { upto: 1.0, lit: "#00F0FF".into(), hot: "#00F0FF".into() }],
+        ..night_base()
+    }
+}
+
+/// Red on black, white readout values so the red is reserved for the cells; red scanner.
+pub fn night_arasaka() -> Theme {
+    Theme {
+        id: "night-arasaka".into(),
+        name: "Night Arasaka".into(),
+        lit: "#FF003C".into(),
+        hot: "#FFFFFF".into(),
+        panel: "#050505".into(),
+        edge: "#7a0a20".into(),
+        ghost: 0.10,
+        zones: vec![Zone { upto: 1.0, lit: "#FF003C".into(), hot: "#FF003C".into() }],
+        ..night_base()
+    }
+}
+
+/// Cyan primary with magenta peaks; a brighter cyan scanner.
+pub fn night_netrunner() -> Theme {
+    Theme {
+        id: "night-netrunner".into(),
+        name: "Night Netrunner".into(),
+        lit: "#00F0FF".into(),
+        hot: "#FF2BD6".into(),
+        panel: "#000408".into(),
+        edge: "#0a6a70".into(),
+        ghost: 0.12,
+        zones: vec![Zone { upto: 1.0, lit: "#37EBF3".into(), hot: "#37EBF3".into() }],
+        ..night_base()
+    }
+}
+
+/// White/grey, with yellow reserved for the peaks; a grey scanner.
+pub fn night_corpo() -> Theme {
+    Theme {
+        id: "night-corpo".into(),
+        name: "Night Corpo".into(),
+        lit: "#E6E6E6".into(),
+        hot: "#FCEE0A".into(),
+        panel: "#1a1a1a".into(),
+        edge: "#5a5a5a".into(),
+        ghost: 0.08,
+        zones: vec![Zone { upto: 1.0, lit: "#9a9a9a".into(), hot: "#9a9a9a".into() }],
+        ..night_base()
+    }
+}
+
+/// Yellow with red peaks and a red scanner.
+pub fn night_liberty() -> Theme {
+    Theme {
+        id: "night-liberty".into(),
+        name: "Night Liberty".into(),
+        lit: "#FCEE0A".into(),
+        hot: "#FF003C".into(),
+        panel: "#000000".into(),
+        edge: "#6a6410".into(),
+        ghost: 0.10,
+        zones: vec![Zone { upto: 1.0, lit: "#FF003C".into(), hot: "#FF003C".into() }],
+        ..night_base()
+    }
+}
+
 pub fn all() -> Vec<Theme> {
     vec![
         vfd_ice(),
@@ -906,6 +998,11 @@ pub fn all() -> Vec<Theme> {
         sesh_vhs(),
         sesh_red(),
         sesh_bleached(),
+        night_yellow(),
+        night_arasaka(),
+        night_netrunner(),
+        night_corpo(),
+        night_liberty(),
     ]
 }
 

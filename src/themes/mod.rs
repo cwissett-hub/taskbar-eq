@@ -94,6 +94,7 @@ pub fn family_label(family: &str) -> String {
         "vsghost" => "Virtual Self: ghost voices".into(),
         "vsorb" => "Virtual Self: orb".into(),
         "sesh" => "Bones: VHS tape".into(),
+        "night" => "Night City: HUD".into(),
         other => {
             let mut c = other.chars();
             match c.next() {

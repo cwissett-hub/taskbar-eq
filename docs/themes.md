@@ -1,9 +1,9 @@
 # Themes
 
-**168 colourways across 26 families.** A *family* is a renderer with fixed geometry — code. A
+**173 colourways across 27 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
-## All 26 families
+## All 27 families
 
 Six are written up in full below (Segmented VFD, Oscilloscope, VU dials, Vaporwave grid, Valve
 row, Fluid). The other nineteen shipped later and their full write-ups still live in
@@ -38,6 +38,7 @@ split, and worth knowing before you go looking for one and only find it in the o
 | Virtual Self: ghost voices | A piano-roll glitch terminal — bands as scrolling MIDI columns, light rays, a romanised phrase, a datamosh flourish |
 | Virtual Self: orb | A wireframe chrome icosphere the bass inflates, ringed by 24 spectrum spikes; it shatters into its triangles on a flourish |
 | Bones: VHS tape | A worn cassette dub — rolling scanlines torn per band with the bass, a blackletter word centred over them, a camcorder PLAY/REC stamp; the flourish is a tape dropout |
+| Night City: HUD | A Cyberpunk-2077 combat HUD — chamfered hatch-filled cells as a bottom-up meter, a spectrum scanner, RAM/HP/NET readouts; the flourish is a relic malfunction (RGB split, red glitch bars) |
 
 The Virtual Self: wings colourways are `vswings-particle-arts` (ice panel, cobalt-to-electric
 wings, cobalt floor), `vswings-eon-break` (black panel, cobalt-to-electric wings, white floor),
@@ -57,6 +58,11 @@ tracking, small word), `sesh-word` (near-black, a big blackletter word, a gentle
 (near-black, chroma-bleed word in red/lit/cyan), `sesh-red` (near-black, the one red `#c8102e` only
 on the word outline and REC dot) and `sesh-bleached` (a bleached off-white panel, dark picture,
 noise streaks dark on light).
+
+The Night City: HUD colourways are `night-yellow` (yellow on black, cyan scanner, white readout
+values), `night-arasaka` (red on near-black with white readouts, red scanner), `night-netrunner`
+(cyan primary, magenta peaks, bright-cyan scanner), `night-corpo` (white/grey with yellow only on
+peaks, grey scanner) and `night-liberty` (yellow with red peaks and a red scanner).
 
 **Five families reuse the `[tube]` table for their own hardware materials**, even though only
 one of them is the Valve row (`tube`) family itself: **Cherry blossom**, **Flame organ**,
