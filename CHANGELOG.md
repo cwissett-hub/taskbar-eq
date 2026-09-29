@@ -3,6 +3,24 @@
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); dates are release dates,
 not commit dates.
 
+## [0.2.2] — 2026-09-29
+
+Three Virtual Self families: vswings, vsghost, vsorb (13 colourways).
+
+- `vswings` (5 colourways: Particle Arts, Eon Break, Angel Voices, Utopia, Ghost) — 32 bands
+  fanned into two mirrored angel wings on a Y2K chrome floor; bass beats the root feathers.
+- `vsghost` (4 colourways: White, Cobalt, Inverse, Violet) — a piano-roll glitch terminal, bands
+  as scrolling MIDI columns, light rays, a romanised phrase, a datamosh flourish.
+- `vsorb` (4 colourways: Chrome, Eon, Angel, Mono) — a wireframe chrome icosphere the bass
+  inflates, ringed by 24 spectrum spikes; it shatters into its triangles on a flourish.
+- Rulings: every panel is opaque (no per-pixel holes for the weather widget to show through, per
+  `slow_no_family_leaves_a_transparent_pixel_inside_its_panel`); on the two light-panel sets
+  (`vswings-particle-arts`'s ice panel, `vswings-angel-voices`'s pink panel) the wing tip is a
+  saturated palette colour rather than white, retuned so it still reads as a bright edge without
+  washing out against the panel.
+- Timing: all three measured comfortably under the 2 ms/frame budget (`slow_vs_timing`,
+  `cargo test --release slow_vs_timing -- --ignored --nocapture`).
+
 ## [0.2.1] — 2026-09-28
 
 Health fixes: a pass over correctness, test speed, and release hygiene, with no new families.

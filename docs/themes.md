@@ -1,9 +1,9 @@
 # Themes
 
-**159 colourways across 24 families.** A *family* is a renderer with fixed geometry — code. A
+**163 colourways across 25 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
-## All 24 families
+## All 25 families
 
 Six are written up in full below (Segmented VFD, Oscilloscope, VU dials, Vaporwave grid, Valve
 row, Fluid). The other seventeen shipped later and their full write-ups still live in
@@ -38,9 +38,9 @@ split, and worth knowing before you go looking for one and only find it in the o
 | Virtual Self: ghost voices | A piano-roll glitch terminal — bands as scrolling MIDI columns, light rays, a romanised phrase, a datamosh flourish |
 | Virtual Self: orb | A wireframe chrome icosphere the bass inflates, ringed by 24 spectrum spikes; it shatters into its triangles on a flourish |
 
-The Virtual Self: wings colourways are `vswings-particle-arts` (ice panel, cobalt-to-white wings,
-cobalt floor), `vswings-eon-break` (black panel, cobalt-to-electric wings, white floor),
-`vswings-angel-voices` (pale-pink panel, violet wings tipped white), `vswings-utopia` (black panel,
+The Virtual Self: wings colourways are `vswings-particle-arts` (ice panel, cobalt-to-electric
+wings, cobalt floor), `vswings-eon-break` (black panel, cobalt-to-electric wings, white floor),
+`vswings-angel-voices` (pale-pink panel, violet wings tipped violet), `vswings-utopia` (black panel,
 silver-to-white chrome wings) and `vswings-ghost` (black panel, pure white wings, no floor).
 
 The Virtual Self: ghost voices colourways are `vsghost-white` (black panel, white ticks, ice peaks),

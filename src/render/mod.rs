@@ -498,6 +498,31 @@ mod opacity {
              shows through: {offenders:?}; worst {worst:?}"
         );
     }
+
+    /// Per-frame cost of the three Virtual Self families, whose bloom radii and poly fills
+    /// (vswings' feathers, vsorb's icosphere triangles) are the heaviest per-pixel work shipped
+    /// so far. One representative colourway per family.
+    ///
+    /// Slow timing probe: excluded from the default suite.
+    /// Run: `cargo test --release slow_vs_timing -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn slow_vs_timing() {
+        for id in ["vswings-particle-arts", "vsghost-white", "vsorb-chrome"] {
+            let t = builtin::all().into_iter().find(|t| t.id == id).unwrap();
+            let mut f = family_for(&t.family);
+            let mut c = Canvas::new(380, 60);
+            let mut d = FrameData::default();
+            for (i, v) in d.levels.iter_mut().enumerate() { *v = 0.5 + 0.4 * ((i as f32) * 0.3).sin(); }
+            d.dt_ms = 16.7;
+            for k in 0..30 { d.time_s = k as f32 * 0.0167; f.draw(&mut c, &t, &d); }
+            let t0 = std::time::Instant::now();
+            for k in 30..330 { d.time_s = k as f32 * 0.0167; f.draw(&mut c, &t, &d); }
+            let per = t0.elapsed().as_secs_f32() * 1000.0 / 300.0;
+            eprintln!("{id}: {per:.2} ms/frame");
+            assert!(per < 2.0, "{id} {per:.2} ms/frame");
+        }
+    }
 }
 
 #[cfg(test)]

@@ -3,7 +3,14 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** v0.2.1 — HEALTH FIXES SHIP. No new families; a pass over correctness, test
+**Last updated:** v0.2.2 — THREE VIRTUAL SELF FAMILIES SHIP. `vswings`, `vsghost` and `vsorb` —
+13 new colourways (163 across 25 families), each under the 2 ms/frame timing budget
+(`slow_vs_timing`). Every panel is opaque and the two light-panel colourways (`vswings-particle-
+arts`'s ice panel, `vswings-angel-voices`'s pink panel) got their wing-tip colour retuned off
+white to a saturated palette colour so it still reads against the panel. The user judges the
+three families on the review sheet — see Waiting on you below.
+
+Earlier: v0.2.1 — HEALTH FIXES SHIP. No new families; a pass over correctness, test
 speed and release hygiene instead. Bands now go log-spaced below the crossover on a real second
 FFT (the one algorithmic change), ballistics are frame-rate independent, config saves atomically,
 and a hotkey rebind no longer clobbers its own other keys. Blending, gradients and bloom now
@@ -28,16 +35,19 @@ Earlier still: 150 colourways across 22 families, every one with a flourish. See
 
 Nothing right now. Queued, in order:
 
-1. **Virtual Self families** (`vswings`, `vsghost`, `vsorb`) — plan in
-   `docs/superpowers/plans/2026-09-25-virtual-self-families.md`, ships as v0.2.2.
-2. **Two more themes requested 2026-09-28**, to brainstorm and spec before building:
+1. **Two more themes requested 2026-09-28**, to brainstorm and spec before building:
    something **Bones / TeamSESH** themed, and something **Cyberpunk 2077** themed.
-3. **The live `--levels` check** of the two-FFT bass path against real music (Task 4 deferred
+2. **The live `--levels` check** of the two-FFT bass path against real music (Task 4 deferred
    it for want of audio) — needs Spotify playing; note it overwrites
    `tests/fixtures/real-music-bands.csv`.
 
 ## Waiting on you
 
+- [ ] **Judge the three Virtual Self families in `docs/review/index.html` (sections 15-17): keep,
+      tune or drop each (v0.2.2).** Specific eye questions the implementers flagged: `vswings`'s
+      tip-vs-body contrast on the ice (`particle-arts`) and pink (`angel-voices`) panels; `vsghost`'s
+      ghost grid only showing in the lower two-thirds of the panel; `vsorb-chrome` being the
+      weakest read of the four orb colourways, its lower rim blending into the gradient.
 - [ ] **Rainbows are now fully saturated OKLCH at a fixed lightness (Task 7, v0.2.1) — my
       ruling, not obviously correct.** Rainbow hues used to be capped at `RAINBOW_SAT` 0.68-0.70
       because full saturation failed the 3:1 contrast rule at some hues in gamma-space sRGB. In
