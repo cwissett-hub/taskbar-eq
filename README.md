@@ -352,7 +352,7 @@ colourway files, which hot-reload on save and can replace a built-in by reusing 
 
 ## More
 
-**173 colourways across 27 families**: Segmented VFD, Oscilloscope, VU dials, Vaporwave grid,
+**175 colourways across 27 families**: Segmented VFD, Oscilloscope, VU dials, Vaporwave grid,
 Valve row, Fluid, Nixie tubes, Spectrogram, Reel-to-reel, Patchbay, Radar, Pantone, Flame organ,
 Dolphin LCD, 3D spectrum, 3D Pipes, Orbit, Cherry blossom, Kaleidoscope, Rave lasers, Brutalist,
 Chroma field, Virtual Self: wings, Virtual Self: ghost voices, Virtual Self: orb, Bones / TeamSESH: VHS,

@@ -701,9 +701,9 @@ pub fn sesh_vhs() -> Theme {
         name: "Sesh VHS".into(),
         lit: "#dcdcdc".into(),
         hot: "#ffffff".into(),
-        // A cold blue cast, so the VHS reads distinct from the other near-black panels even before the
-        // chroma bleed and colour-shift wobble.
-        panel: "#0d0d1f".into(),
+        // A muted-violet cast (from the Blunts From The Graveyard tapes), so the VHS reads distinct
+        // from the other near-black panels even before the chroma bleed and colour-shift wobble.
+        panel: "#120c1c".into(),
         edge: "#444444".into(),
         ghost: 0.18,
         ..sesh_base()
@@ -734,6 +734,38 @@ pub fn sesh_bleached() -> Theme {
         panel: "#e8e6e0".into(),
         edge: "#b8b4ac".into(),
         ghost: 0.25,
+        ..sesh_base()
+    }
+}
+
+/// Violet graveyard fog, from Bones' Blunts From The Graveyard compilations: a deep violet-black
+/// panel, a dim-violet picture, a moon-white word outlined in graveyard green, and sickly-green
+/// night-vision tears. `lit` (the word, ~14:1 on the panel) is the moon-white; the violet scanlines
+/// and green tears are painted through `render::sesh`'s per-colourway `scan_hex`/`tear_hex`.
+pub fn sesh_graveyard() -> Theme {
+    Theme {
+        id: "sesh-graveyard".into(),
+        name: "Sesh Graveyard".into(),
+        lit: "#e6e2f0".into(),
+        hot: "#b8a8d0".into(),
+        panel: "#140a1e".into(),
+        edge: "#7fbf5a".into(),
+        ghost: 0.30,
+        ..sesh_base()
+    }
+}
+
+/// Phosphor-green night vision, from the same tapes: everything green (word, scanlines and tears all
+/// `lit`), a black word outline, a heavier sensor-noise grain, and a red REC dot / stamp from `hot`.
+pub fn sesh_nightvision() -> Theme {
+    Theme {
+        id: "sesh-nightvision".into(),
+        name: "Sesh Night Vision".into(),
+        lit: "#9cff6a".into(),
+        hot: "#ff3b3b".into(),
+        panel: "#0a140a".into(),
+        edge: "#000000".into(),
+        ghost: 0.18,
         ..sesh_base()
     }
 }
@@ -1000,6 +1032,8 @@ pub fn all() -> Vec<Theme> {
         sesh_vhs(),
         sesh_red(),
         sesh_bleached(),
+        sesh_graveyard(),
+        sesh_nightvision(),
         night_yellow(),
         night_arasaka(),
         night_netrunner(),

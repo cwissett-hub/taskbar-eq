@@ -16,6 +16,16 @@ not commit dates.
   wobble; `sesh-red` reddens the loud bands' tears; `sesh-bleached` bakes in faint paper grain. New
   guard `the_five_colourways_are_visibly_different` requires every pair to differ in ≥15% of interior
   pixels.
+- `sesh`: the flourish is now a bass-hit **slam** rather than the word sliding in. It fires only when
+  the trigger fires AND the low bands' mean clears 0.6, and the dropout is redesigned so nothing
+  travels laterally — a blank frame, then a ~250ms slam of the word held in place (jittering ±1px,
+  thicker outline) on a density-decaying static field with two or three tear rows that snap sideways
+  and back per frame, no wrap-around.
+- `sesh`: two colourways added and one recoloured, from Bones' *Blunts From The Graveyard* tapes —
+  `sesh-graveyard` (violet-black panel, dim-violet picture, moon-white word with a green outline,
+  sickly-green night-vision tears) and `sesh-nightvision` (phosphor green on near-black, black word
+  outline, heavy sensor-noise grain, red REC dot); `sesh-vhs` recast to muted violet `#120c1c` with a
+  pink-red/cyan bleed pair. 175 colourways; the visible-difference guard now covers all seven.
 
 ## [0.3.0] — 2026-09-29
 

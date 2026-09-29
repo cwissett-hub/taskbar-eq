@@ -53,11 +53,15 @@ The Virtual Self: orb colourways are `vsorb-chrome` (ice gradient, cobalt chrome
 `vsorb-eon` (black-to-cobalt, electric-cyan orb, ice spikes), `vsorb-angel` (pale-pink-to-violet
 gradient, deep-violet orb, white spikes) and `vsorb-mono` (flat black, white wireframe, white spikes).
 
-The Bones / TeamSESH: VHS colourways are `sesh-tape` (near-black panel, off-white picture, heavy
-tracking, small word), `sesh-word` (near-black, a big blackletter word, a gentle tape), `sesh-vhs`
-(near-black, chroma-bleed word in red/lit/cyan), `sesh-red` (near-black, the one red `#c8102e` only
-on the word outline and REC dot) and `sesh-bleached` (a bleached off-white panel, dark picture,
-noise streaks dark on light).
+The Bones / TeamSESH: VHS colourways are `sesh-tape` (near-black panel, heavy 8-band tracking with a
+rolling head-switch bar, the word a bottom-right caption), `sesh-word` (near-black, tears off, a big
+centred word that pulses on the bass), `sesh-vhs` (muted-violet cast, doubled pink-red/cyan chroma
+bleed on the word and stamp, a colour-shift wobble), `sesh-red` (near-black, the one red `#c8102e` on
+the word outline/REC dot and the loud bands' tears), `sesh-bleached` (a bleached off-white panel,
+dark picture, paper grain), `sesh-graveyard` (deep violet-black, dim-violet picture, moon-white word
+with a green outline, sickly-green night-vision tears — from Bones' Blunts From The Graveyard tapes)
+and `sesh-nightvision` (phosphor green on near-black, black word outline, heavy sensor-noise grain,
+red REC dot). The flourish is a bass-hit tape dropout: a blank frame then a short in-place slam.
 
 The Cyberpunk 2077: HUD colourways are `night-yellow` (yellow on black, cyan scanner, white readout
 values), `night-arasaka` (red on near-black with white readouts, red scanner), `night-netrunner`

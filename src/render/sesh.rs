@@ -77,8 +77,20 @@ const DRIP_PX_PER_S: f32 = 18.0;
 const DRIP_ACCEL: f32 = 40.0;
 /// The word swaps on every sixth strong (bass) onset.
 const WORD_SWAP_EVERY: u32 = 6;
-/// How long the dropout envelope runs, in milliseconds.
-const DROPOUT_MS: f32 = 550.0;
+/// How long the dropout SLAM runs, in milliseconds. Short and violent - a bass-hit slam, not a slow
+/// wipe.
+const DROPOUT_MS: f32 = 250.0;
+/// The flourish only fires on a BASS hit: the trigger must fire AND the low bands' mean clear this.
+/// The user asked for the dropout to be felt as a bass hit, not "the logo coming in every time".
+const FLOURISH_BASS_MIN: f32 = 0.6;
+/// The dropout slam's tear rows: this many horizontal slices across the word snap sideways by
+/// `SLAM_TEAR_MIN..SLAM_TEAR_MAX` px each frame and snap straight back (no drift, no wrap).
+const SLAM_TEAR_ROWS: usize = 3;
+const SLAM_TEAR_MIN: i32 = 2;
+const SLAM_TEAR_MAX: i32 = 6;
+/// Peak static density of the slam, in percent of interior pixels. Below 100 so the word (drawn over
+/// it, on a knocked-back band) stays legible instead of dissolving into same-colour noise.
+const SLAM_STATIC_MAX_PCT: u64 = 62;
 /// The stamp only draws when the panel is at least this tall.
 const STAMP_MIN_H: i32 = 48;
 /// A strong onset needs the low bands over this - also the bass level at which `sesh-word` pulses.
@@ -116,9 +128,18 @@ const RED_HOT_TEAR_LEVEL: f32 = 0.6;
 const GRAIN_FRAC: u64 = 6; // percent
 const GRAIN_DARKEN: f32 = 0.12;
 
-/// The chroma-bleed / wobble plate colours for `sesh-vhs`.
-const BLEED_RED: &str = "#ff2a2a";
+/// The chroma-bleed / wobble plate colours for `sesh-vhs`. The red plate is a pink-red to match the
+/// muted-violet cast the VHS colourway took from the Blunts From The Graveyard tapes.
+const BLEED_RED: &str = "#ff2a6a";
 const BLEED_CYAN: &str = "#2ad2ff";
+
+/// `sesh-graveyard` (violet night-vision fog): the sickly-green tears under a moon-white word, and the
+/// dim-violet picture. From the Blunts From The Graveyard compilations.
+const GRAVEYARD_SCAN: &str = "#5a3a7a";
+const GRAVEYARD_TEAR: &str = "#9cff6a";
+/// `sesh-nightvision`: a heavier grain than the bleached tape's paper, for the phosphor-green sensor
+/// noise look.
+const NIGHTVISION_GRAIN_FRAC: u64 = 11;
 
 /// Per-colourway character. Replaces the single `mix` knob that made every colourway the same black
 /// panel with the same centred word: each field below turns one look into a different thing. The base
@@ -155,8 +176,16 @@ struct Style {
     wobble: bool,
     /// Torn-edge streaks go `hot` on loud bands (`sesh-red`).
     hot_tears: bool,
-    /// Deterministic paper grain baked into the background (`sesh-bleached`).
+    /// Deterministic paper grain baked into the background (`sesh-bleached`, the night-vision green).
     grain: bool,
+    /// Grain density in percent of interior pixels (heavier on `sesh-nightvision`).
+    grain_frac: u64,
+    /// Override for the scanline/picture colour (default = `t.lit`). Lets a colourway paint the
+    /// picture a different colour from the word (`sesh-graveyard`: violet scanlines, white word).
+    scan_hex: Option<&'static str>,
+    /// Override for the torn-edge streak (tear) colour (default = `t.lit`), e.g. graveyard's sickly
+    /// green tears under a moon-white word.
+    tear_hex: Option<&'static str>,
 }
 
 impl Style {
@@ -181,6 +210,9 @@ impl Style {
             wobble: false,
             hot_tears: false,
             grain: false,
+            grain_frac: GRAIN_FRAC,
+            scan_hex: None,
+            tear_hex: None,
         }
     }
 }
@@ -224,6 +256,16 @@ fn style(t: &Theme) -> Style {
         "sesh-red" => Style { tear_scale: 0.7, streak_scale: 0.6, hot_tears: true, ..base },
         // The inverted tape, plus faint baked-in paper grain.
         "sesh-bleached" => Style { grain: true, ..base },
+        // Violet graveyard fog: a dim-violet picture, a moon-white word (green outline), sickly-green
+        // tears. The tears carry the night-vision colour without recolouring the word or scanlines.
+        "sesh-graveyard" => Style {
+            scan_hex: Some(GRAVEYARD_SCAN),
+            tear_hex: Some(GRAVEYARD_TEAR),
+            ..base
+        },
+        // Phosphor-green night vision: everything green (word, scanlines, tears all `lit`), a heavier
+        // grain for sensor noise, and the red REC/stamp from `hot`.
+        "sesh-nightvision" => Style { grain: true, grain_frac: NIGHTVISION_GRAIN_FRAC, ..base },
         _ => base,
     }
 }
@@ -392,7 +434,7 @@ impl Family for Sesh {
                 self.grain.clear();
                 for y in iy0..iy1 {
                     for x in ix0..ix1 {
-                        if hash2(x, y) % 100 < GRAIN_FRAC {
+                        if hash2(x, y) % 100 < st.grain_frac {
                             self.grain.push((x, y));
                         }
                     }
@@ -453,8 +495,16 @@ impl Family for Sesh {
             self.peak[b] = pk;
         }
 
-        // ---- flourish: a dropout ----
-        let fired = self.flourish.update(&d.levels, dt, t.flourish);
+        // ---- flourish: a bass-hit dropout ----
+        // The trigger finds the exceptional hit; sesh only DROPS OUT when that hit is also a bass hit,
+        // so the slam is felt on the low end rather than firing on any transient. A forced test fire
+        // bypasses the gate (see `Trigger::was_forced`).
+        let triggered = self.flourish.update(&d.levels, dt, t.flourish);
+        let bass_gate = triggered && bass >= FLOURISH_BASS_MIN;
+        #[cfg(test)]
+        let fired = bass_gate || (triggered && self.flourish.was_forced());
+        #[cfg(not(test))]
+        let fired = bass_gate;
         let env = self.dropout.update(fired, dt, DROPOUT_MS);
         if fired {
             // Frame 1 of the dropout: a true blank.
@@ -501,7 +551,9 @@ impl Sesh {
         let centre = (ix0 + ix1) / 2;
         let roll = self.roll_px as i32;
         let ghost = t.ghost.clamp(0.0, 1.0);
-        let scan = Rgba::from_hex(&t.lit, ghost);
+        let scan_hex = st.scan_hex.unwrap_or(t.lit.as_str());
+        let scan = Rgba::from_hex(scan_hex, ghost);
+        let tear_hex = st.tear_hex.unwrap_or(t.lit.as_str());
         // The dark dropout streak along each band's foot; on the bleached tape it is a dark streak on
         // a light panel, elsewhere a barely-there darkening of the near-black panel.
         let panel = Rgba::from_hex(&t.panel, 1.0);
@@ -572,7 +624,7 @@ impl Sesh {
                 let mut noise = if st.hot_tears && level > RED_HOT_TEAR_LEVEL {
                     Rgba::from_hex(&t.hot, a)
                 } else {
-                    Rgba::from_hex(&t.lit, a)
+                    Rgba::from_hex(tear_hex, a)
                 };
                 if st.wobble {
                     let tint = if ((y_top as f32 + wobble_phase) as i32).rem_euclid(2) == 0 {
@@ -769,8 +821,11 @@ impl Sesh {
         }
     }
 
-    /// The dropout glitch, drawn over an opaque base in a reused scratch canvas and copied back: a
-    /// per-pixel static field, the word torn into three shifted slices, then pasted over the panel.
+    /// The dropout SLAM: the word sits centred (jittering ±1px in place, outline thickened) on a
+    /// static field whose density decays with the envelope, and two-or-three horizontal tear rows
+    /// across the word snap sideways by a few px per frame and snap straight back. Nothing travels
+    /// laterally and nothing wraps - the word never slides in from a side. Built in a reused scratch
+    /// canvas over an opaque base, then copied back in strips (in place except the tear rows).
     fn draw_dropout(&mut self, c: &mut Canvas, t: &Theme, st: &Style, bbox: (i32, i32, i32, i32), env: f32) {
         let (ix0, iy0, ix1, iy1) = bbox;
         let (w, h, iw, ih) = (c.width(), c.height(), ix1 - ix0, iy1 - iy0);
@@ -786,40 +841,61 @@ impl Sesh {
         // An opaque base, so every pixel copied back keeps the panel opaque.
         scr.fill_rect(ix0, iy0, iw, ih, panel);
 
-        // Per-pixel static: `lit`/`edge` roughly half and half, at alpha env*0.8.
-        let a = (env * 0.8).clamp(0.0, 1.0);
-        let noise_a = Rgba::from_hex(&t.lit, a);
-        let noise_b = Rgba::from_hex(&t.edge, a);
+        // Static field whose DENSITY decays with the envelope: at the peak the field is dense, and as
+        // the slam decays it thins out rather than merely dimming. Capped below full so the word,
+        // painted over it and on a knocked-back band, stays legible through the slam.
+        let density = (env * SLAM_STATIC_MAX_PCT as f32).clamp(0.0, SLAM_STATIC_MAX_PCT as f32) as u64;
+        let noise_a = Rgba::from_hex(&t.lit, 0.9);
+        let noise_b = Rgba::from_hex(&t.edge, 0.9);
         for y in iy0..iy1 {
             for x in ix0..ix1 {
-                let col = if self.next_rng() & 1 == 0 { noise_a } else { noise_b };
-                scr.fill_rect(x, y, 1, 1, col);
+                let r = self.next_rng();
+                if r % 100 < density {
+                    let col = if r & 0x100 == 0 { noise_a } else { noise_b };
+                    scr.fill_rect(x, y, 1, 1, col);
+                }
             }
         }
 
-        // The word, torn: draw it centred into the scratch, then copy three horizontal slices back
-        // shifted (wrapping) so it reads as a mistracked frame.
+        // The word, centred, jittering ±1px IN PLACE, with a thickened (2px) outline.
         let large = !st.corner_caption && h >= st.word_large_at;
         let size = if large { GothicSize::Large } else { GothicSize::Small };
         let gh = if large { 13 } else { 9 };
+        let (jx, jy) = ((self.next_rng() % 3) as i32 - 1, (self.next_rng() % 3) as i32 - 1);
         let word = gothic::truncate_to_width(self.current_word(), size, iw - 8);
+        let word_y = iy0 + (ih - gh) / 2;
         if !word.is_empty() {
             let tw = gothic::text_width(word, size);
-            let x = ix0 + (iw - tw) / 2;
-            let y = iy0 + (ih - gh) / 2;
-            gothic::draw(&mut scr, x, y, word, size, lit, None);
+            let x = ix0 + (iw - tw) / 2 + jx;
+            let y = word_y + jy;
+            // Knock the static back to half behind the word so it punches through the field rather
+            // than dissolving into same-colour noise.
+            let kb = Rgba::from_hex(&t.panel, 0.6);
+            scr.fill_rect((x - 3).max(ix0), (y - 2).max(iy0), (tw + 6).min(iw), (gh + 4).min(ih), kb);
+            let outline = Rgba::from_hex(&t.edge, t.edge_alpha);
+            for (dx, dy) in [(-2, 0), (2, 0), (0, -2), (0, 2)] {
+                gothic::draw(&mut scr, x + dx, y + dy, word, size, outline, None);
+            }
+            gothic::draw(&mut scr, x, y, word, size, lit, Some(outline));
         }
 
-        let shift = (0.3 * iw as f32 * env).round() as i32;
-        for k in 0..3 {
-            let sy = iy0 + k * ih / 3;
-            let rows = if k == 2 { iy1 - sy } else { ih / 3 };
-            let sh = if k == 1 { -shift } else { shift };
-            let s = sh.rem_euclid(iw.max(1));
-            // dest [ix0+s, ix1) <- src [ix0, ix1-s), then the wrapped remainder.
-            c.copy_region(&scr, (ix0, sy), (ix0 + s, sy), iw - s, rows);
-            if s > 0 {
-                c.copy_region(&scr, (ix1 - s, sy), (ix0, sy), s, rows);
+        // Copy the whole interior back in place - no shift, so the picture stays put.
+        c.copy_region(&scr, (ix0, iy0), (ix0, iy0), iw, ih);
+        // Then re-copy a few tear rows across the word, each offset a few px THIS frame only (fresh
+        // random each frame => it snaps back rather than drifting), no wrap: the shifted-out edge keeps
+        // the in-place copy underneath, which reads as a torn seam.
+        let span = SLAM_TEAR_MAX - SLAM_TEAR_MIN + 1;
+        for k in 0..SLAM_TEAR_ROWS {
+            let sy = (word_y + jy + (k as i32) * gh / SLAM_TEAR_ROWS as i32).clamp(iy0, iy1 - 1);
+            let rows = (gh / SLAM_TEAR_ROWS as i32).max(2).min(iy1 - sy);
+            let r = self.next_rng();
+            let mag = SLAM_TEAR_MIN + (r % span as u64) as i32;
+            let off = if r & 0x100 == 0 { mag } else { -mag };
+            if off > 0 {
+                c.copy_region(&scr, (ix0, sy), (ix0 + off, sy), iw - off, rows);
+            } else if off < 0 {
+                let a = -off;
+                c.copy_region(&scr, (ix0 + a, sy), (ix0, sy), iw - a, rows);
             }
         }
         self.scratch = Some(scr);
@@ -874,7 +950,7 @@ mod tests {
         assert!(crate::render::KNOWN_FAMILIES.contains(&"sesh"));
         assert_eq!(crate::render::family_for("sesh").id(), "sesh");
         assert_ne!(crate::themes::family_label("sesh"), "sesh");
-        assert_eq!(crate::themes::builtin::all().iter().filter(|t| t.family == "sesh").count(), 5);
+        assert_eq!(crate::themes::builtin::all().iter().filter(|t| t.family == "sesh").count(), 7);
     }
 
     /// The lit streak of each tracking band sits at the band's horizontal shift, so a louder band's
@@ -1044,7 +1120,16 @@ mod tests {
             d
         };
         let sizes: [(&str, i32, i32); 3] = [("380x60", 380, 60), ("190x48", 190, 48), ("128x44", 128, 44)];
-        for id in ["sesh-tape", "sesh-word", "sesh-vhs", "sesh-red", "sesh-bleached"] {
+        let ids = [
+            "sesh-tape",
+            "sesh-word",
+            "sesh-vhs",
+            "sesh-red",
+            "sesh-bleached",
+            "sesh-graveyard",
+            "sesh-nightvision",
+        ];
+        for id in ids {
             let t = theme(id);
             let short = &id["sesh-".len()..];
             for (tag, level) in [("calm", 0.28f32), ("loud", 0.85)] {
@@ -1056,7 +1141,8 @@ mod tests {
                 }
                 write(format!("sesh-{short}-{tag}"), &c);
             }
-            // Flourish: settle, fire, capture the blank, then a mid-decay frame.
+            // Flourish sequence: settle, fire, capture the blank (frame 1), the slam peak (frame 2),
+            // then a mid-decay frame - so the eye can confirm the word STAYS PUT and never slides in.
             let mut fam = Sesh::default();
             let mut c = Canvas::new(380, 60);
             for k in 0..120 {
@@ -1067,7 +1153,10 @@ mod tests {
             c.clear();
             fam.draw(&mut c, &t, &frame(0.45, 120.0 * 0.0167, false));
             write(format!("sesh-{short}-flourish"), &c);
-            for k in 121..126 {
+            c.clear();
+            fam.draw(&mut c, &t, &frame(0.3, 121.0 * 0.0167, false));
+            write(format!("sesh-{short}-slam"), &c);
+            for k in 122..127 {
                 c.clear();
                 fam.draw(&mut c, &t, &frame(0.3, k as f32 * 0.0167, false));
             }
@@ -1089,14 +1178,22 @@ mod tests {
         println!("wrote sesh dumps to {}", dir.display());
     }
 
-    /// The five colourways must read as five DIFFERENT things, not one look tinted five ways. Renders
-    /// each loud at 380x60 for 30 frames off identical input and asserts every PAIR differs in at
-    /// least 15% of interior pixels by a `drew_over_panel`-style channel delta between the two frames.
-    /// This is the guard that would have caught the v0.3.0 complaint that "all the sesh themes look
-    /// the same except the red one".
+    /// The colourways must read as DIFFERENT things, not one look tinted several ways. Renders each
+    /// loud at 380x60 for 30 frames off identical input and asserts every PAIR differs in at least
+    /// 15% of interior pixels by a `drew_over_panel`-style channel delta between the two frames. This
+    /// is the guard that would have caught the v0.3.0 complaint that "all the sesh themes look the
+    /// same except the red one".
     #[test]
     fn the_five_colourways_are_visibly_different() {
-        let ids = ["sesh-tape", "sesh-word", "sesh-vhs", "sesh-red", "sesh-bleached"];
+        let ids = [
+            "sesh-tape",
+            "sesh-word",
+            "sesh-vhs",
+            "sesh-red",
+            "sesh-bleached",
+            "sesh-graveyard",
+            "sesh-nightvision",
+        ];
         let (w, h) = (380i32, 60i32);
         let canvases: Vec<Canvas> = ids
             .iter()

@@ -104,6 +104,10 @@ pub struct Trigger {
     /// Set by `force_next`, cleared by the next `update`. Test-only - see there.
     #[cfg(test)]
     forced: bool,
+    /// Whether the most recent `update` fired because it was FORCED, so a family gating its flourish
+    /// on its own condition (e.g. sesh needs a bass hit) can let a forced test fire through the gate.
+    #[cfg(test)]
+    was_forced: bool,
     onset: Flux,
     recent: [f32; WINDOW],
     n: usize,
@@ -126,8 +130,19 @@ impl Trigger {
         self.forced = true;
     }
 
+    /// Whether the last `update` fired because it was forced (rather than by audio). A family gating
+    /// its flourish on its own condition uses this to let a forced test fire regardless.
+    #[cfg(test)]
+    pub fn was_forced(&self) -> bool {
+        self.was_forced
+    }
+
     pub fn update(&mut self, levels: &[f32], dt_ms: f32, strength: f32) -> bool {
         let dt = if dt_ms.is_finite() { dt_ms.clamp(0.0, 200.0) } else { 16.7 };
+        #[cfg(test)]
+        {
+            self.was_forced = false;
+        }
         // A test firing THIS trigger, ahead of everything including the manual request.
         //
         // Tests must use this and not `request()`. `REQUEST` is one process-global atomic and every
@@ -140,6 +155,7 @@ impl Trigger {
         #[cfg(test)]
         if std::mem::take(&mut self.forced) {
             self.since_ms = 0.0;
+            self.was_forced = true;
             return true;
         }
         self.since_ms += dt;
