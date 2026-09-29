@@ -59,7 +59,10 @@ Nothing right now. Queued, in order:
    more"; `rave` — "very bland, literally just lasers, needs something else"; `vswings` — "lots
    of space on the sides that goes unused"; `vsghost` — a RETHINK of the execution keeping the
    vibe: "just looks like bars over a mostly invisible graphic; I like the vibe but the
-   execution needs work".
+   execution needs work". ALL THREE Virtual Self families: "not really responsive enough to
+   high-BPM music such as VS" — retune `ballistics` (attack/decay/peak_fall) and the onset
+   refractory against a REAL 150-170 BPM loopback capture (Virtual Self through Spotify), not the
+   synthetic fixture; the kick lands every ~350-400 ms and the current settings smear it.
 3. **The live `--levels` check** of the two-FFT bass path against real music — needs Spotify
    playing; note it overwrites `tests/fixtures/real-music-bands.csv`.
 
