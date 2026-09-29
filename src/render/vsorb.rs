@@ -290,6 +290,14 @@ impl Vsorb {
         self.radius
     }
 
+    /// The smoothed length of spike `k` in pixels. For the spectrum test, so it can assert the spike
+    /// carrying a lit band is far longer than one carrying a silent band - which is what makes the test
+    /// discriminate a wrong band mapping rather than merely that SOME spike was drawn.
+    #[cfg(test)]
+    pub fn spike_len_for_test(&self, k: usize) -> f32 {
+        self.spike_len[k.min(SPIKES - 1)]
+    }
+
     /// The clamped screen tip of spike `k`, computed from the same state `draw` drew it with, so the two
     /// agree. For the spectrum test.
     #[cfg(test)]
@@ -598,8 +606,10 @@ mod tests {
 
     #[test]
     fn spikes_follow_the_spectrum() {
-        // With only band 63 lit, lit pixels appear near the rim on the side the last spike points to and
-        // nowhere near the opposite side (spikes are placed around the rim by band index).
+        // With only band 63 lit, the spike carrying that band (k=23, bands 61..64) must be far longer
+        // than the one carrying band 0 (k=0, bands 0..3), and only ITS tip lit - nowhere near where the
+        // short spike 0 would reach. This discriminates a WRONG band mapping: if every spike read band 0
+        // the two lengths would be equal and the ratio assertion below would fail.
         let t = theme("vsorb-mono");
         let mut fam = Vsorb::default();
         let mut c = Canvas::new(380, 48);
@@ -612,9 +622,27 @@ mod tests {
             fam.draw(&mut c, &t, &d);
         }
         let bg = background(&t, 380, 48, 29.0 * 0.0167);
+
+        // 1. The lit-band spike is much longer than the silent-band spike. (Bounded by the 3px floor:
+        // spike 0 rests at 3.0, spike 23 reaches ~8.8, so the ratio is ~2.9 - assert 2.5x, which a
+        // mapping that fed every spike band 0 could not reach, since then both would be 3.0.)
+        let l23 = fam.spike_len_for_test(23);
+        let l0 = fam.spike_len_for_test(0);
+        assert!(l23 >= 2.5 * l0, "spike 23 (band 63) len {l23} not >= 2.5x spike 0 (band 0) len {l0}");
+
+        // 2. Its tip IS painted.
         let (sx, sy) = fam.spike_tip_for_test(23);
         let (sx, sy) = (sx.clamp(0, 379), sy.clamp(0, 47));
-        assert!(painted(c.get(sx, sy), bg.get(sx, sy)), "spike tip not lit at {sx},{sy}");
+        assert!(painted(c.get(sx, sy), bg.get(sx, sy)), "spike 23 tip not lit at {sx},{sy}");
+
+        // 3. The pixel spike 0 WOULD light if it were as long as spike 23 is NOT painted - the short
+        // spike does not reach out there, and nothing else does either.
+        let (si0, co0) = (0.0f32).sin_cos();
+        let reach = fam.radius_px() + l23;
+        let px = (190.0 + reach * co0).round() as i32;
+        let py = (24.0 + reach * si0).round() as i32;
+        let (px, py) = (px.clamp(0, 379), py.clamp(0, 47));
+        assert!(!painted(c.get(px, py), bg.get(px, py)), "spike 0 reached as far as spike 23 at {px},{py}");
     }
 
     #[test]
@@ -683,7 +711,21 @@ mod tests {
             d.time_s = k as f32 * 0.0167;
             fam.draw(&mut c, &t, &d);
         }
-        println!("vsorb: {:.3} ms/frame at 380x60", t0.elapsed().as_secs_f64() * 1000.0 / n as f64);
+        let steady = t0.elapsed().as_secs_f64() * 1000.0 / n as f64;
+        println!("vsorb steady: {steady:.3} ms/frame at 380x60");
+
+        // The shatter path draws up to `tris.len()` (80) fill_poly triangles - measure it separately,
+        // since it never runs on a steady frame. Fire, then time the whole 700ms envelope's worth of
+        // frames (~42 at 16.7ms) plus a margin.
+        fam.flourish.force_next();
+        let m = 40;
+        let t1 = std::time::Instant::now();
+        for k in n..(n + m) {
+            d.time_s = k as f32 * 0.0167;
+            fam.draw(&mut c, &t, &d);
+        }
+        let shatter = t1.elapsed().as_secs_f64() * 1000.0 / m as f64;
+        println!("vsorb shatter: {shatter:.3} ms/frame at 380x60");
     }
 
     /// Dumps for the eye test - composited over `#202020` like every other family's dump.
