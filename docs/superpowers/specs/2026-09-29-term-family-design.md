@@ -61,8 +61,22 @@ The loudest row gets a **line highlight** (`#1c1347` full-width behind it); a ro
 **selection** (`#310072`) instead.
 
 **Prompt line.** The bottom-most row is the prompt: `❯` (drawn as `>` in `#ee0077`) then a
-**typed command** in `t.lit` that types out at 1 char per onset from a fixed list
-`CMDS = ["cargo run --release", "git push", "ls -la", "npm run dev", "python analyse.py", "ssh fab-01", "cat /dev/audio", "vim main.rs", "clear", "htop"]`;
+**typed command** in `t.lit` that types out at 1 char per onset from the colourway's own list
+(user's request: "have different operations visible" — each colourway is a different kind of
+session):
+
+| colourway | session | `CMDS` |
+|---|---|---|
+| `term-2077` | mixed dev shell | `cargo run --release`, `git push`, `ls -la`, `npm run dev`, `python analyse.py`, `vim main.rs`, `clear` |
+| `term-2077-cyan` | network ops | `ssh fab-01`, `ping 10.0.0.1`, `curl -I api.local`, `netstat -an`, `nslookup snap`, `traceroute`, `exit` |
+| `term-2077-hot` | git | `git status`, `git add -A`, `git commit -m fix`, `git rebase -i main`, `git log --oneline`, `git push --tags` |
+| `term-2077-matrix` | sysadmin | `htop`, `tail -f app.log`, `journalctl -f`, `df -h`, `free -m`, `uptime`, `kill -9 1337` |
+| `term-2077-editor` | build & test | `cargo test`, `cargo clippy`, `pytest -q`, `npm run build`, `make -j8`, `cargo build --release` |
+
+After a command "executes", one **fake output line** matching the session type replaces the
+newest meter row for two scroll steps (e.g. `64 bytes from 10.0.0.1`, `[main 49afe39] fix`,
+`test result: ok. 672 passed`, `Mem: 15872 used`) before the meter reclaims it — kept in a
+per-style fixed list, `font3x5`, truncated to whole glyphs.
 on a strong onset (mean bass > 0.55) with the command complete, the line "executes": the
 output rows shift up one (a scroll: line-number base += 1) and the next command begins. A **block
 cursor** (3x5 solid in `#ee0077`) follows the typed text and blinks at 1 Hz (visible 60 %).
