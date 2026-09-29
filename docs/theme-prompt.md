@@ -39,7 +39,7 @@ PICK A FAMILY - a renderer with fixed geometry. You cannot invent one in data.
 
 FILE FORMAT - one `.toml` file per theme, saved under `%APPDATA%\taskbar-eq\themes\`
 (filename does not matter; `id` inside is the identity, and the override key - a file
-whose `id` matches one of the 150 built-ins REPLACES it, any other `id` is added):
+whose `id` matches one of the 163 built-ins REPLACES it, any other `id` is added):
 
   schema = 1
   id     = "my-theme"

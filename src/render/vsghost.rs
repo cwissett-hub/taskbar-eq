@@ -358,9 +358,6 @@ impl Vsghost {
         let (ix0, iy0, ix1, iy1) = bbox;
         let rms = if d.rms_l.is_finite() { d.rms_l.clamp(0.0, 1.0) } else { 0.0 };
         let a = rms * 0.35;
-        if a <= 0.01 {
-            // Still advance the smoothed angle so it does not jump when the music returns.
-        }
         // Spectral centroid, 0..1 across the bands.
         let (mut num, mut den) = (0.0f32, 0.0f32);
         for (i, &v) in d.levels.iter().enumerate() {
@@ -385,6 +382,7 @@ impl Vsghost {
             }
             self.ray_angles[j] = ang;
             if a <= 0.01 {
+                // Still advance the smoothed angle so it does not jump when the music returns.
                 continue; // angle kept fresh, but nothing drawn when silent
             }
             let bx = ix0 as f32 + iw * (0.5 + 0.18 * (j as f32 - 1.0));

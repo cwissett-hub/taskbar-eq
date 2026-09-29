@@ -98,7 +98,7 @@ pub struct Config {
     pub flourishes: bool,
     /// The most recently selected themes, newest first, including the current one.
     ///
-    /// Exists because the menu is 150 colourways across 22 families, and getting BACK to one you liked is
+    /// Exists because the menu is 163 colourways across 25 families, and getting BACK to one you liked is
     /// the common case rather than discovering a new one. The tray menu lists these above the families.
     ///
     /// An array of strings rather than a table, so it can sit here among the scalars without disturbing

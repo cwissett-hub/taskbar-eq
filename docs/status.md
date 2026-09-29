@@ -3,7 +3,7 @@
 **Last updated: 2026-08-10.** Full test suite green (520 at the time of writing), release build
 warning-free. The colourway and family counts below are asserted by a test; the test count itself is
 a snapshot and can drift.
-**150 colourways across 22 families.**
+**163 colourways across 25 families.**
 
 | | Feature | State |
 |---|---|---|
