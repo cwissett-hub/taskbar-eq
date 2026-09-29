@@ -360,7 +360,7 @@ Night City: HUD.
 The full catalogue, with a screenshot and one-liner per family, moved out of this README to keep it
 a reasonable length:
 
-- [docs/themes.md](docs/themes.md) — the full colourway catalogue, all 26 families, and the
+- [docs/themes.md](docs/themes.md) — the full colourway catalogue, all 27 families, and the
   external-theme file format
 - [docs/theme-prompt.md](docs/theme-prompt.md) — a self-contained prompt for having a coding
   agent author new colourways
