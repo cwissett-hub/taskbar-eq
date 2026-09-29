@@ -91,6 +91,9 @@ const SLAM_TEAR_MAX: i32 = 6;
 /// Peak static density of the slam, in percent of interior pixels. Below 100 so the word (drawn over
 /// it, on a knocked-back band) stays legible instead of dissolving into same-colour noise.
 const SLAM_STATIC_MAX_PCT: u64 = 62;
+/// Static alpha across the word's own rows during the slam - low, so the word reads on every frame
+/// while the field stays dense elsewhere.
+const SLAM_WORD_ROW_ALPHA: f32 = 0.45;
 /// The stamp only draws when the panel is at least this tall.
 const STAMP_MIN_H: i32 = 48;
 /// A strong onset needs the low bands over this - also the bass level at which `sesh-word` pulses.
@@ -841,37 +844,49 @@ impl Sesh {
         // An opaque base, so every pixel copied back keeps the panel opaque.
         scr.fill_rect(ix0, iy0, iw, ih, panel);
 
+        // Word metrics first (no RNG), so the static can be dimmed across the word's rows.
+        let large = !st.corner_caption && h >= st.word_large_at;
+        let size = if large { GothicSize::Large } else { GothicSize::Small };
+        let gh = if large { 13 } else { 9 };
+        let word_y = iy0 + (ih - gh) / 2;
+        let (band_lo, band_hi) = ((word_y - 2).max(iy0), (word_y + gh + 2).min(iy1));
+
         // Static field whose DENSITY decays with the envelope: at the peak the field is dense, and as
-        // the slam decays it thins out rather than merely dimming. Capped below full so the word,
-        // painted over it and on a knocked-back band, stays legible through the slam.
+        // the slam decays it thins out rather than merely dimming. Capped below full everywhere, and
+        // dropped to a low alpha across the WORD'S ROWS so the word reads at every slam frame.
         let density = (env * SLAM_STATIC_MAX_PCT as f32).clamp(0.0, SLAM_STATIC_MAX_PCT as f32) as u64;
-        let noise_a = Rgba::from_hex(&t.lit, 0.9);
-        let noise_b = Rgba::from_hex(&t.edge, 0.9);
+        let full_a = Rgba::from_hex(&t.lit, 0.9);
+        let full_b = Rgba::from_hex(&t.edge, 0.9);
+        let dim_a = Rgba::from_hex(&t.lit, SLAM_WORD_ROW_ALPHA);
+        let dim_b = Rgba::from_hex(&t.edge, SLAM_WORD_ROW_ALPHA);
         for y in iy0..iy1 {
+            let dim = y >= band_lo && y < band_hi;
             for x in ix0..ix1 {
                 let r = self.next_rng();
                 if r % 100 < density {
-                    let col = if r & 0x100 == 0 { noise_a } else { noise_b };
+                    let hi = r & 0x100 == 0;
+                    let col = match (dim, hi) {
+                        (true, true) => dim_a,
+                        (true, false) => dim_b,
+                        (false, true) => full_a,
+                        (false, false) => full_b,
+                    };
                     scr.fill_rect(x, y, 1, 1, col);
                 }
             }
         }
 
-        // The word, centred, jittering ±1px IN PLACE, with a thickened (2px) outline.
-        let large = !st.corner_caption && h >= st.word_large_at;
-        let size = if large { GothicSize::Large } else { GothicSize::Small };
-        let gh = if large { 13 } else { 9 };
+        // The word, centred, jittering ±1px IN PLACE, with a thickened (2px) outline, on a WIDE fully
+        // opaque panel plate so it punches cleanly through the static on every frame (the plate is
+        // panel-coloured, so on a dark colourway it just reads as static parting around the word).
         let (jx, jy) = ((self.next_rng() % 3) as i32 - 1, (self.next_rng() % 3) as i32 - 1);
         let word = gothic::truncate_to_width(self.current_word(), size, iw - 8);
-        let word_y = iy0 + (ih - gh) / 2;
         if !word.is_empty() {
             let tw = gothic::text_width(word, size);
             let x = ix0 + (iw - tw) / 2 + jx;
             let y = word_y + jy;
-            // Knock the static back to half behind the word so it punches through the field rather
-            // than dissolving into same-colour noise.
-            let kb = Rgba::from_hex(&t.panel, 0.6);
-            scr.fill_rect((x - 3).max(ix0), (y - 2).max(iy0), (tw + 6).min(iw), (gh + 4).min(ih), kb);
+            let kb = Rgba::from_hex(&t.panel, 1.0);
+            scr.fill_rect((x - 7).max(ix0), (y - 4).max(iy0), (tw + 14).min(iw), (gh + 8).min(ih), kb);
             let outline = Rgba::from_hex(&t.edge, t.edge_alpha);
             for (dx, dy) in [(-2, 0), (2, 0), (0, -2), (0, 2)] {
                 gothic::draw(&mut scr, x + dx, y + dy, word, size, outline, None);
@@ -1071,7 +1086,15 @@ mod tests {
 
     #[test]
     fn fits_the_narrow_panel_and_flourish_does_not_panic() {
-        for id in ["sesh-tape", "sesh-word", "sesh-vhs", "sesh-red", "sesh-bleached"] {
+        for id in [
+            "sesh-tape",
+            "sesh-word",
+            "sesh-vhs",
+            "sesh-red",
+            "sesh-bleached",
+            "sesh-graveyard",
+            "sesh-nightvision",
+        ] {
             let t = theme(id);
             let mut fam = Sesh::default();
             let _ = frames(&mut fam, &t, 190, 48, 0.5, 5);
@@ -1184,7 +1207,7 @@ mod tests {
     /// is the guard that would have caught the v0.3.0 complaint that "all the sesh themes look the
     /// same except the red one".
     #[test]
-    fn the_five_colourways_are_visibly_different() {
+    fn the_seven_colourways_are_visibly_different() {
         let ids = [
             "sesh-tape",
             "sesh-word",
@@ -1229,6 +1252,69 @@ mod tests {
         assert!(
             too_similar.is_empty(),
             "these colourway pairs differ in <15% of interior pixels: {too_similar:?}"
+        );
+    }
+
+    /// The slam keeps the word legible on EVERY frame. At a mid-decay dropout frame the word's fill
+    /// pixels in its central band are still overwhelmingly `lit`-coloured, rather than buried by
+    /// static - measured against a tape-suppressed render of the word alone. This is the guard for the
+    /// reviewer's "a stranger reads SESH on every slam frame".
+    #[test]
+    fn the_slam_keeps_the_word_legible() {
+        let t = theme("sesh-word");
+        let (w, h) = (380i32, 60i32);
+        let lit = Rgba::from_hex(&t.lit, 1.0);
+        let near_lit = |p: Rgba| {
+            let d = (p.r as i32 - lit.r as i32).abs()
+                + (p.g as i32 - lit.g as i32).abs()
+                + (p.b as i32 - lit.b as i32).abs();
+            p.a > 8 && d < 40
+        };
+        // sesh-word centres a Large (gh=13) word at h=60.
+        let (gh, iy0, iy1) = (13, 4, h - 4);
+        let word_y = iy0 + ((iy1 - iy0) - gh) / 2;
+        let (blo, bhi) = ((word_y - 3).max(iy0), (word_y + gh + 3).min(iy1));
+        let count_band = |c: &Canvas| {
+            let mut n = 0;
+            for y in blo..bhi {
+                for x in 3..w - 3 {
+                    if near_lit(c.get(x, y)) {
+                        n += 1;
+                    }
+                }
+            }
+            n
+        };
+        // Reference: the word alone (tape suppressed, no dropout), centred and clean.
+        let refc = {
+            let mut fam = Sesh::default();
+            fam.suppress_tape_for_test();
+            frames(&mut fam, &t, w, h, 0.3, 3)
+        };
+        let ref_lit = count_band(&refc);
+        assert!(ref_lit > 20, "reference word drew too little to test: {ref_lit}");
+
+        // A mid-decay slam frame: settle, force, take the blank, then advance into the decay.
+        let mut fam = Sesh::default();
+        let _ = frames(&mut fam, &t, w, h, 0.5, 5);
+        fam.flourish.force_next();
+        let mut c = Canvas::new(w, h);
+        let mut d = FrameData::default();
+        for (i, v) in d.levels.iter_mut().enumerate() {
+            *v = 0.3 * (1.0 - i as f32 / 96.0);
+        }
+        d.peaks = d.levels;
+        d.rms_l = 0.3;
+        d.rms_r = 0.3;
+        d.dt_ms = 16.7;
+        fam.draw(&mut c, &t, &d); // the forced blank frame
+        for _ in 0..7 {
+            fam.draw(&mut c, &t, &d); // into the mid-decay of the ~250ms slam
+        }
+        let slam_lit = count_band(&c);
+        assert!(
+            slam_lit as f32 >= 0.70 * ref_lit as f32,
+            "the slam kept only {slam_lit}/{ref_lit} of the word's lit pixels (<70%) - static buried it"
         );
     }
 

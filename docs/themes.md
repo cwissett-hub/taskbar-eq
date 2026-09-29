@@ -1,6 +1,6 @@
 # Themes
 
-**173 colourways across 27 families.** A *family* is a renderer with fixed geometry — code. A
+**175 colourways across 27 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
 ## All 27 families
@@ -180,7 +180,7 @@ Drop a `.toml` file (any filename — the `id` inside is what matters) into
 watched, so saving the file updates the live overlay without a restart — edit a colour, hit
 save, and watch the taskbar change.
 
-A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 173
+A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 175
 built-ins, which are always embedded in the exe regardless of whether that folder exists.
 
 Failure modes are all deliberately soft, because these files are hand-authored:
