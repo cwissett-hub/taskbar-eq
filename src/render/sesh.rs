@@ -303,6 +303,12 @@ pub struct Sesh {
     word_override: Option<String>,
     /// Test hook: draw the word layer only, for the centring test.
     tape_suppressed: bool,
+    /// Test hook: pin the slam's jitter and tear offsets to zero, so the word sits at a deterministic
+    /// position for a pixel-for-pixel comparison of the knock-back plate.
+    slam_pinned: bool,
+    /// Test hook: suppress the slam's static field, so a slam frame renders as the clean plate + word
+    /// alone - the reference the legibility test compares a real (static-on) slam frame against.
+    slam_no_static: bool,
     /// Smoothed tear level per tracking band.
     tear: [f32; TRACKING_BANDS],
     /// Peak-hold tear per band, decaying at `peak_fall`.
@@ -333,6 +339,8 @@ impl Default for Sesh {
             word_idx: 0,
             word_override: None,
             tape_suppressed: false,
+            slam_pinned: false,
+            slam_no_static: false,
             tear: [0.0; TRACKING_BANDS],
             peak: [0.0; TRACKING_BANDS],
             drips: [Drip::default(); DRIPS],
@@ -355,6 +363,19 @@ impl Sesh {
     #[cfg(test)]
     pub fn suppress_tape_for_test(&mut self) {
         self.tape_suppressed = true;
+    }
+
+    /// Pins the slam's word jitter and tear offsets to zero, so the plate can be compared
+    /// pixel-for-pixel against a static-suppressed reference at the same geometry.
+    #[cfg(test)]
+    pub fn pin_slam_jitter_for_test(&mut self) {
+        self.slam_pinned = true;
+    }
+
+    /// Suppresses the slam's static field, so a slam frame renders as the clean plate + word alone.
+    #[cfg(test)]
+    pub fn suppress_slam_static_for_test(&mut self) {
+        self.slam_no_static = true;
     }
 
     /// One draw of splitmix64.
@@ -854,7 +875,11 @@ impl Sesh {
         // Static field whose DENSITY decays with the envelope: at the peak the field is dense, and as
         // the slam decays it thins out rather than merely dimming. Capped below full everywhere, and
         // dropped to a low alpha across the WORD'S ROWS so the word reads at every slam frame.
-        let density = (env * SLAM_STATIC_MAX_PCT as f32).clamp(0.0, SLAM_STATIC_MAX_PCT as f32) as u64;
+        let density = if self.slam_no_static {
+            0
+        } else {
+            (env * SLAM_STATIC_MAX_PCT as f32).clamp(0.0, SLAM_STATIC_MAX_PCT as f32) as u64
+        };
         let full_a = Rgba::from_hex(&t.lit, 0.9);
         let full_b = Rgba::from_hex(&t.edge, 0.9);
         let dim_a = Rgba::from_hex(&t.lit, SLAM_WORD_ROW_ALPHA);
@@ -879,7 +904,11 @@ impl Sesh {
         // The word, centred, jittering ±1px IN PLACE, with a thickened (2px) outline, on a WIDE fully
         // opaque panel plate so it punches cleanly through the static on every frame (the plate is
         // panel-coloured, so on a dark colourway it just reads as static parting around the word).
-        let (jx, jy) = ((self.next_rng() % 3) as i32 - 1, (self.next_rng() % 3) as i32 - 1);
+        let (jx, jy) = if self.slam_pinned {
+            (0, 0)
+        } else {
+            ((self.next_rng() % 3) as i32 - 1, (self.next_rng() % 3) as i32 - 1)
+        };
         let word = gothic::truncate_to_width(self.current_word(), size, iw - 8);
         if !word.is_empty() {
             let tw = gothic::text_width(word, size);
@@ -905,7 +934,13 @@ impl Sesh {
             let rows = (gh / SLAM_TEAR_ROWS as i32).max(2).min(iy1 - sy);
             let r = self.next_rng();
             let mag = SLAM_TEAR_MIN + (r % span as u64) as i32;
-            let off = if r & 0x100 == 0 { mag } else { -mag };
+            let off = if self.slam_pinned {
+                0
+            } else if r & 0x100 == 0 {
+                mag
+            } else {
+                -mag
+            };
             if off > 0 {
                 c.copy_region(&scr, (ix0, sy), (ix0 + off, sy), iw - off, rows);
             } else if off < 0 {
@@ -1255,66 +1290,77 @@ mod tests {
         );
     }
 
-    /// The slam keeps the word legible on EVERY frame. At a mid-decay dropout frame the word's fill
-    /// pixels in its central band are still overwhelmingly `lit`-coloured, rather than buried by
-    /// static - measured against a tape-suppressed render of the word alone. This is the guard for the
-    /// reviewer's "a stranger reads SESH on every slam frame".
+    /// The slam keeps the word legible on EVERY frame, and this is SHAPE-AWARE, not a pixel count.
+    ///
+    /// Inside the knock-back plate rectangle only, it compares a real (static-on) mid-decay slam frame
+    /// against a static-SUPPRESSED reference at the same pinned geometry: if the plate is genuinely
+    /// clean panel + word, the two are pixel-identical there; if static leaks into the plate (a too-
+    /// small or too-transparent plate) the leaked noise diverges from the clean reference. Both frames
+    /// pin jitter and tear offsets so the word sits at the same place. Asserts >=90% of plate pixels
+    /// match. A plain "count near-lit pixels in the band" test is vacuous here - the static is `lit`
+    /// at 0.9 over near-black, so noise reads as word; this compares SHAPE instead.
     #[test]
     fn the_slam_keeps_the_word_legible() {
         let t = theme("sesh-word");
         let (w, h) = (380i32, 60i32);
-        let lit = Rgba::from_hex(&t.lit, 1.0);
-        let near_lit = |p: Rgba| {
-            let d = (p.r as i32 - lit.r as i32).abs()
-                + (p.g as i32 - lit.g as i32).abs()
-                + (p.b as i32 - lit.b as i32).abs();
-            p.a > 8 && d < 40
+
+        // A mid-decay slam frame, `pin`ned, optionally with the static suppressed (the reference).
+        let slam_frame = |no_static: bool| -> Canvas {
+            let mut fam = Sesh::default();
+            fam.pin_slam_jitter_for_test();
+            if no_static {
+                fam.suppress_slam_static_for_test();
+            }
+            let _ = frames(&mut fam, &t, w, h, 0.5, 5);
+            fam.flourish.force_next();
+            let mut c = Canvas::new(w, h);
+            let mut d = FrameData::default();
+            for (i, v) in d.levels.iter_mut().enumerate() {
+                *v = 0.3 * (1.0 - i as f32 / 96.0);
+            }
+            d.peaks = d.levels;
+            d.rms_l = 0.3;
+            d.rms_r = 0.3;
+            d.dt_ms = 16.7;
+            fam.draw(&mut c, &t, &d); // the forced blank frame
+            for _ in 0..7 {
+                fam.draw(&mut c, &t, &d); // into the mid-decay of the ~250ms slam
+            }
+            c
         };
-        // sesh-word centres a Large (gh=13) word at h=60.
-        let (gh, iy0, iy1) = (13, 4, h - 4);
-        let word_y = iy0 + ((iy1 - iy0) - gh) / 2;
-        let (blo, bhi) = ((word_y - 3).max(iy0), (word_y + gh + 3).min(iy1));
-        let count_band = |c: &Canvas| {
-            let mut n = 0;
-            for y in blo..bhi {
-                for x in 3..w - 3 {
-                    if near_lit(c.get(x, y)) {
-                        n += 1;
-                    }
+        let reference = slam_frame(true); // clean plate + word
+        let slam = slam_frame(false); // plate + word + a dense static field around it
+
+        // The knock-back plate rectangle, computed exactly as `draw_dropout` does (jitter pinned to 0).
+        let (gh, iy0, iy1) = (13, 4, h - 4); // sesh-word is Large (gh=13) at h=60
+        let (iw, ih) = (w - 6, iy1 - iy0);
+        let word_y = iy0 + (ih - gh) / 2;
+        let tw = gothic::text_width("SESH", GothicSize::Large);
+        let x = 3 + (iw - tw) / 2;
+        let (px0, py0) = ((x - 7).max(3), (word_y - 4).max(iy0));
+        let (pw, ph) = ((tw + 14).min(iw), (gh + 8).min(ih));
+
+        let close = |a: Rgba, b: Rgba| {
+            (a.r as i32 - b.r as i32).abs()
+                + (a.g as i32 - b.g as i32).abs()
+                + (a.b as i32 - b.b as i32).abs()
+                <= 24
+        };
+        let (mut match_n, mut total) = (0i32, 0i32);
+        for y in py0..(py0 + ph).min(iy1) {
+            for x in px0..(px0 + pw).min(w - 3) {
+                total += 1;
+                if close(slam.get(x, y), reference.get(x, y)) {
+                    match_n += 1;
                 }
             }
-            n
-        };
-        // Reference: the word alone (tape suppressed, no dropout), centred and clean.
-        let refc = {
-            let mut fam = Sesh::default();
-            fam.suppress_tape_for_test();
-            frames(&mut fam, &t, w, h, 0.3, 3)
-        };
-        let ref_lit = count_band(&refc);
-        assert!(ref_lit > 20, "reference word drew too little to test: {ref_lit}");
-
-        // A mid-decay slam frame: settle, force, take the blank, then advance into the decay.
-        let mut fam = Sesh::default();
-        let _ = frames(&mut fam, &t, w, h, 0.5, 5);
-        fam.flourish.force_next();
-        let mut c = Canvas::new(w, h);
-        let mut d = FrameData::default();
-        for (i, v) in d.levels.iter_mut().enumerate() {
-            *v = 0.3 * (1.0 - i as f32 / 96.0);
         }
-        d.peaks = d.levels;
-        d.rms_l = 0.3;
-        d.rms_r = 0.3;
-        d.dt_ms = 16.7;
-        fam.draw(&mut c, &t, &d); // the forced blank frame
-        for _ in 0..7 {
-            fam.draw(&mut c, &t, &d); // into the mid-decay of the ~250ms slam
-        }
-        let slam_lit = count_band(&c);
+        assert!(total > 200, "plate rectangle too small to be a real test: {total} px");
+        let frac = match_n as f32 / total as f32;
         assert!(
-            slam_lit as f32 >= 0.70 * ref_lit as f32,
-            "the slam kept only {slam_lit}/{ref_lit} of the word's lit pixels (<70%) - static buried it"
+            frac >= 0.90,
+            "only {:.1}% of plate pixels match the clean word-alone reference - static is leaking into the plate",
+            frac * 100.0
         );
     }
 
