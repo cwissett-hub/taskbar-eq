@@ -37,8 +37,8 @@ split, and worth knowing before you go looking for one and only find it in the o
 | Virtual Self: wings | 32 bands fanned into two mirrored angel wings on a Y2K chrome floor; bass beats the root feathers |
 | Virtual Self: ghost voices | A piano-roll glitch terminal — bands as scrolling MIDI columns, light rays, a romanised phrase, a datamosh flourish |
 | Virtual Self: orb | A wireframe chrome icosphere the bass inflates, ringed by 24 spectrum spikes; it shatters into its triangles on a flourish |
-| Bones: VHS tape | A worn cassette dub — rolling scanlines torn per band with the bass, a blackletter word centred over them (the word font is `gothic`), a camcorder PLAY/REC stamp; the flourish is a tape dropout |
-| Night City: HUD | A Cyberpunk-2077 combat HUD — chamfered hatch-filled cells as a bottom-up meter, a spectrum scanner, RAM/HP/NET readouts (labels use `font3x5`); the flourish is a relic malfunction (RGB split, red glitch bars) |
+| Bones / TeamSESH: VHS | A worn cassette dub — rolling scanlines torn per band with the bass, a blackletter word centred over them (the word font is `gothic`), a camcorder PLAY/REC stamp; the flourish is a tape dropout |
+| Cyberpunk 2077: HUD | A Cyberpunk-2077 combat HUD — chamfered hatch-filled cells as a bottom-up meter, a spectrum scanner, RAM/HP/NET readouts (labels use `font3x5`); the flourish is a relic malfunction (RGB split, red glitch bars) |
 
 The Virtual Self: wings colourways are `vswings-particle-arts` (ice panel, cobalt-to-electric
 wings, cobalt floor), `vswings-eon-break` (black panel, cobalt-to-electric wings, white floor),
@@ -53,13 +53,13 @@ The Virtual Self: orb colourways are `vsorb-chrome` (ice gradient, cobalt chrome
 `vsorb-eon` (black-to-cobalt, electric-cyan orb, ice spikes), `vsorb-angel` (pale-pink-to-violet
 gradient, deep-violet orb, white spikes) and `vsorb-mono` (flat black, white wireframe, white spikes).
 
-The Bones: VHS tape colourways are `sesh-tape` (near-black panel, off-white picture, heavy
+The Bones / TeamSESH: VHS colourways are `sesh-tape` (near-black panel, off-white picture, heavy
 tracking, small word), `sesh-word` (near-black, a big blackletter word, a gentle tape), `sesh-vhs`
 (near-black, chroma-bleed word in red/lit/cyan), `sesh-red` (near-black, the one red `#c8102e` only
 on the word outline and REC dot) and `sesh-bleached` (a bleached off-white panel, dark picture,
 noise streaks dark on light).
 
-The Night City: HUD colourways are `night-yellow` (yellow on black, cyan scanner, white readout
+The Cyberpunk 2077: HUD colourways are `night-yellow` (yellow on black, cyan scanner, white readout
 values), `night-arasaka` (red on near-black with white readouts, red scanner), `night-netrunner`
 (cyan primary, magenta peaks, bright-cyan scanner), `night-corpo` (white/grey with yellow only on
 peaks, grey scanner) and `night-liberty` (yellow with red peaks and a red scanner).

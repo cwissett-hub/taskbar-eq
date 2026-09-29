@@ -355,8 +355,8 @@ colourway files, which hot-reload on save and can replace a built-in by reusing 
 **173 colourways across 27 families**: Segmented VFD, Oscilloscope, VU dials, Vaporwave grid,
 Valve row, Fluid, Nixie tubes, Spectrogram, Reel-to-reel, Patchbay, Radar, Pantone, Flame organ,
 Dolphin LCD, 3D spectrum, 3D Pipes, Orbit, Cherry blossom, Kaleidoscope, Rave lasers, Brutalist,
-Chroma field, Virtual Self: wings, Virtual Self: ghost voices, Virtual Self: orb, Bones: VHS tape,
-Night City: HUD.
+Chroma field, Virtual Self: wings, Virtual Self: ghost voices, Virtual Self: orb, Bones / TeamSESH: VHS,
+Cyberpunk 2077: HUD.
 The full catalogue, with a screenshot and one-liner per family, moved out of this README to keep it
 a reasonable length:
 
