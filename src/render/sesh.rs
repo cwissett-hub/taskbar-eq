@@ -34,9 +34,14 @@
 //!
 //! # Colourways
 //!
-//! `Theme` carries no per-family knob and this family adds none, so the tape-vs-word balance is a
-//! per-colourway constant [`mix`] matched on the theme id. Colour is mixed through the shared
-//! linear-light blend (`Rgba::lerp_linear` / the canvas alpha blend), never by averaging sRGB bytes.
+//! `Theme` carries no per-family knob, so each colourway's character is a per-id [`Style`] matched on
+//! the theme id (default = the shared tearing tape). The five are deliberately five DIFFERENT things,
+//! not one look tinted five ways: `sesh-tape` is a heavy 8-band tear with a rolling head-switch band
+//! and the word demoted to a bottom-right caption; `sesh-word` turns the tears off and makes a big
+//! centred word that pulses on the bass THE meter; `sesh-vhs` gets a cold-cast panel, doubled chroma
+//! bleed and a red/cyan colour-shift wobble; `sesh-red` reddens loud bands' tears; `sesh-bleached`
+//! bakes in paper grain. Colour is mixed through the shared linear-light blend (`Rgba::lerp_linear`
+//! / the canvas alpha blend), never by averaging sRGB bytes.
 
 use crate::dsp::bands::NUM_BANDS;
 use crate::dsp::flourish::{Envelope, Trigger};
@@ -51,14 +56,22 @@ use crate::themes::Theme;
 /// `every_word_char_has_a_gothic_glyph` is the guard.
 pub const WORDS: [&str; 5] = ["SESH", "BONES", "TEAMSESH", "SESHOLLOWATERBOYZ", "TEAM SESH"];
 
-/// The 64 bands fold into this many stacked tracking bands, bass at the bottom.
+/// The MAXIMUM tracking bands the smoothing arrays are sized to; a colourway draws `Style::bands` of
+/// them (bass at the bottom). Sized to the largest so `sesh-tape`'s fatter 8-band picture and the
+/// others' 12 share one allocation-free `[f32; TRACKING_BANDS]`.
 const TRACKING_BANDS: usize = 12;
+/// `sesh-tape`'s band count: fewer, fatter tracking bands so the tears themselves ARE the picture.
+const TAPE_BANDS: usize = 8;
 /// Scanline vertical roll, pixels per second (wraps at the 2px scanline pitch).
 const ROLL_PX_PER_S: f32 = 6.0;
-/// Tear displacement as a fraction of width at full level (before the colourway `mix` scales it).
+/// Tear displacement as a fraction of width at full level (before the colourway scale).
 const TEAR_FRAC: f32 = 0.18;
-/// Drips preallocated; never grows, so `draw` allocates nothing after the first frame.
-const DRIPS: usize = 8;
+/// Drips preallocated to the largest cap (`sesh-word`); never grows, so `draw` allocates nothing.
+const DRIPS: usize = 16;
+/// Live-drip cap for every colourway except `sesh-word`, whose word IS the meter so it drips twice
+/// as hard.
+const DRIP_CAP_DEFAULT: usize = 8;
+const DRIP_CAP_WORD: usize = 16;
 /// Drip fall speed and gravity.
 const DRIP_PX_PER_S: f32 = 18.0;
 const DRIP_ACCEL: f32 = 40.0;
@@ -68,28 +81,150 @@ const WORD_SWAP_EVERY: u32 = 6;
 const DROPOUT_MS: f32 = 550.0;
 /// The stamp only draws when the panel is at least this tall.
 const STAMP_MIN_H: i32 = 48;
-/// A strong onset needs the low bands over this - the bass-onset threshold that drives word swaps,
-/// drips and the REC blink.
+/// A strong onset needs the low bands over this - also the bass level at which `sesh-word` pulses.
 const BASS_ONSET: f32 = 0.55;
 /// The onset net that swaps the word and blinks REC - the same permissive flux net `vsghost` uses.
 const ONSET_RATIO: f32 = 2.8;
 const ONSET_REFRACTORY_MS: f32 = 200.0;
 
-/// The chroma-bleed plates for `sesh-vhs`: the word drawn once in each, offset a pixel, at half
-/// alpha, before the main pass.
+/// `sesh-tape` head-switching noise: multiply the torn-edge streak alpha by this so the noise, not
+/// the word, carries the frame.
+const TAPE_STREAK_ALPHA_MUL: f32 = 1.5;
+/// `sesh-tape`: two rows of that noise instead of one, for a heavier tear.
+const TAPE_STREAK_ROWS: i32 = 2;
+/// `sesh-tape`'s head-switching band: a bright bar this many px tall, rolling slowly up the interior
+/// at `HEAD_SWITCH_PX_PER_S` - the bottom-of-frame tear a mistracked VHS shows.
+const HEAD_SWITCH_H: i32 = 3;
+const HEAD_SWITCH_PX_PER_S: f32 = 5.0;
+/// `sesh-tape`'s corner caption: the small word inset this many px from the bottom-right, like a tape
+/// label rather than a centred title.
+const CAPTION_MARGIN: i32 = 3;
+/// `sesh-word` pulse: the word drops this many px on a bass onset and its outline thickens to 2px.
+const WORD_PULSE_DROP: i32 = 2;
+/// `sesh-vhs` chroma bleed: the word and stamp drawn in each plate, offset this many px, at this
+/// alpha - doubled from the old ±1px/0.5 so the bleed reads as the colourway's identity.
+const VHS_BLEED_PX: i32 = 2;
+const VHS_BLEED_ALPHA: f32 = 0.8;
+/// `sesh-vhs` colour-shift wobble: the streak rows alternate red/cyan tint with a phase drifting at
+/// this rate, in Hz.
+const WOBBLE_HZ: f32 = 0.3;
+/// `sesh-red`: a band's torn-edge streak turns `hot` (red) once its level clears this, so the red is
+/// carried by the picture and not only the word outline.
+const RED_HOT_TEAR_LEVEL: f32 = 0.6;
+/// `sesh-bleached` paper grain: this fraction of interior pixels get a deterministic dot one shade
+/// darker than the panel, computed ONCE (no per-frame RNG) - the tell of a bleached print.
+const GRAIN_FRAC: u64 = 6; // percent
+const GRAIN_DARKEN: f32 = 0.12;
+
+/// The chroma-bleed / wobble plate colours for `sesh-vhs`.
 const BLEED_RED: &str = "#ff2a2a";
 const BLEED_CYAN: &str = "#2ad2ff";
 
-/// The tape-vs-word balance, per colourway. 0 = all tape, 1 = all word. Scales the tear shift, the
-/// bright-streak alpha and the word-size threshold - see the module note.
-fn mix(t: &Theme) -> f32 {
+/// Per-colourway character. Replaces the single `mix` knob that made every colourway the same black
+/// panel with the same centred word: each field below turns one look into a different thing. The base
+/// (`Style::base`) is the shared tearing tape; `style(t)` overrides per id.
+#[derive(Clone, Copy)]
+struct Style {
+    /// Tracking bands actually drawn.
+    bands: usize,
+    /// Whether the picture tears at all (`sesh-word` turns it off - the word is the meter).
+    tears: bool,
+    /// Tear-shift and streak-alpha scales (were `1.3 - mix` and `1.2 - mix`).
+    tear_scale: f32,
+    streak_scale: f32,
+    /// Extra streak-alpha multiplier and row count (`sesh-tape`'s heavier noise).
+    streak_alpha_mul: f32,
+    streak_rows: i32,
+    /// The rolling head-switching band (`sesh-tape`).
+    head_switch: bool,
+    /// The word is a small bottom-right caption, never centred (`sesh-tape`).
+    corner_caption: bool,
+    /// Panel height at or above which the centred word goes Large.
+    word_large_at: i32,
+    /// The word pulses (drops + thickens) on a bass onset (`sesh-word`).
+    word_pulse: bool,
+    /// The word outline alpha scales with rms (`sesh-word`).
+    outline_rms: bool,
+    /// Live-drip cap.
+    drip_cap: usize,
+    /// Chroma bleed on the word and stamp: offset px (0 = none) and alpha (`sesh-vhs`).
+    bleed_px: i32,
+    bleed_alpha: f32,
+    bleed_stamp: bool,
+    /// The red/cyan colour-shift wobble on the streaks (`sesh-vhs`).
+    wobble: bool,
+    /// Torn-edge streaks go `hot` on loud bands (`sesh-red`).
+    hot_tears: bool,
+    /// Deterministic paper grain baked into the background (`sesh-bleached`).
+    grain: bool,
+}
+
+impl Style {
+    /// The shared tearing tape - a centred word over per-band tears. Every colourway starts here.
+    const fn base() -> Style {
+        Style {
+            bands: TRACKING_BANDS,
+            tears: true,
+            tear_scale: 0.8,
+            streak_scale: 0.7,
+            streak_alpha_mul: 1.0,
+            streak_rows: 1,
+            head_switch: false,
+            corner_caption: false,
+            word_large_at: 52,
+            word_pulse: false,
+            outline_rms: false,
+            drip_cap: DRIP_CAP_DEFAULT,
+            bleed_px: 0,
+            bleed_alpha: 0.0,
+            bleed_stamp: false,
+            wobble: false,
+            hot_tears: false,
+            grain: false,
+        }
+    }
+}
+
+/// The per-colourway style, matched on the theme id. Default (an unknown id) is the shared base.
+fn style(t: &Theme) -> Style {
+    let base = Style::base();
     match t.id.as_str() {
-        "sesh-tape" => 0.25,
-        "sesh-word" => 0.85,
-        "sesh-vhs" => 0.5,
-        "sesh-red" => 0.6,
-        "sesh-bleached" => 0.5,
-        _ => 0.5,
+        // The tape: fewer fatter bands, heavier two-row noise, a rolling head-switch band, and the
+        // word demoted to a bottom-right caption - the tears are the picture.
+        "sesh-tape" => Style {
+            bands: TAPE_BANDS,
+            tear_scale: 1.05,
+            streak_scale: 0.95,
+            streak_alpha_mul: TAPE_STREAK_ALPHA_MUL,
+            streak_rows: TAPE_STREAK_ROWS,
+            head_switch: true,
+            corner_caption: true,
+            ..base
+        },
+        // The word: no tears, a big centred word that pulses on the bass and drips hard, over clean
+        // rolling scanlines. The word is the meter.
+        "sesh-word" => Style {
+            tears: false,
+            word_large_at: 44,
+            word_pulse: true,
+            outline_rms: true,
+            drip_cap: DRIP_CAP_WORD,
+            ..base
+        },
+        // The VHS: a cold-cast panel (in builtin), doubled chroma bleed on word AND stamp, and a slow
+        // red/cyan colour-shift wobble on the streaks.
+        "sesh-vhs" => Style {
+            bleed_px: VHS_BLEED_PX,
+            bleed_alpha: VHS_BLEED_ALPHA,
+            bleed_stamp: true,
+            wobble: true,
+            ..base
+        },
+        // The one red, plus the loud bands' tears go hot so the red is in the picture too.
+        "sesh-red" => Style { tear_scale: 0.7, streak_scale: 0.6, hot_tears: true, ..base },
+        // The inverted tape, plus faint baked-in paper grain.
+        "sesh-bleached" => Style { grain: true, ..base },
+        _ => base,
     }
 }
 
@@ -131,6 +266,10 @@ pub struct Sesh {
     drips: [Drip; DRIPS],
     /// The dropout's static/torn-word buffer, sized once per panel size and reused.
     scratch: Option<Canvas>,
+    /// `sesh-bleached`'s paper-grain dot positions, computed ONCE for the current interior size and
+    /// reused every frame - deterministic, so there is no per-frame RNG.
+    grain: Vec<(i32, i32)>,
+    grain_dim: (i32, i32),
     /// splitmix64 state, for the jitter, drips and static.
     rng: u64,
 }
@@ -153,6 +292,8 @@ impl Default for Sesh {
             peak: [0.0; TRACKING_BANDS],
             drips: [Drip::default(); DRIPS],
             scratch: None,
+            grain: Vec::new(),
+            grain_dim: (0, 0),
             rng: 0x2545_f491_4f6c_dd1d,
         }
     }
@@ -186,6 +327,17 @@ impl Sesh {
             None => WORDS[self.word_idx],
         }
     }
+}
+
+/// A deterministic 2D hash, for the baked paper grain. Pure - no state, so the pattern is identical
+/// every run and needs no per-frame RNG.
+fn hash2(x: i32, y: i32) -> u64 {
+    let mut z = (x as u64)
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        ^ (y as u64).wrapping_mul(0xD1B5_4A32_D192_ED03);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }
 
 /// A finite level from `d.levels`, clamped 0..1.
@@ -231,7 +383,27 @@ impl Family for Sesh {
 
         let lit = Rgba::from_hex(&t.lit, 1.0);
         let hot = Rgba::from_hex(&t.hot, 1.0);
-        let mixv = mix(t);
+        let st = style(t);
+
+        // Paper grain, baked once and laid under everything. Painted BEFORE the flourish's blank
+        // frame overwrites the interior, so the dropout stays truly blank.
+        if st.grain {
+            if self.grain_dim != (iw, ih) {
+                self.grain.clear();
+                for y in iy0..iy1 {
+                    for x in ix0..ix1 {
+                        if hash2(x, y) % 100 < GRAIN_FRAC {
+                            self.grain.push((x, y));
+                        }
+                    }
+                }
+                self.grain_dim = (iw, ih);
+            }
+            let grain_col = Rgba::lerp_linear(panel, Rgba::new(0, 0, 0, 255), GRAIN_DARKEN);
+            for &(x, y) in &self.grain {
+                c.fill_rect(x, y, 1, 1, grain_col);
+            }
+        }
 
         // ---- onsets: swap the word, blink REC ----
         let onset = self.onset.update(&d.levels, dt, ONSET_RATIO, ONSET_REFRACTORY_MS);
@@ -259,9 +431,9 @@ impl Family for Sesh {
         let attack = t.ballistics.attack.clamp(0.0, 1.0);
         let decay = t.ballistics.decay.clamp(0.0, 1.0);
         let peak_fall = t.ballistics.peak_fall.max(0.0);
-        for b in 0..TRACKING_BANDS {
-            let lo = b * NUM_BANDS / TRACKING_BANDS;
-            let hi = (b + 1) * NUM_BANDS / TRACKING_BANDS;
+        for b in 0..st.bands {
+            let lo = b * NUM_BANDS / st.bands;
+            let hi = (b + 1) * NUM_BANDS / st.bands;
             let mut sum = 0.0f32;
             for &v in &d.levels[lo..hi] {
                 sum += lvl(v);
@@ -291,23 +463,26 @@ impl Family for Sesh {
             return;
         }
 
+        let rms = (((d.rms_l + d.rms_r) * 0.5).max(0.0)).min(1.0);
+        let rms = if rms.is_finite() { rms } else { 0.0 };
+
         let bbox = (ix0, iy0, ix1, iy1);
         if env > 0.15 {
             // ---- the dropout glitch: static, torn word, TRACKING ----
-            self.draw_dropout(c, t, bbox, env, panel, lit);
+            self.draw_dropout(c, t, &st, bbox, env);
             if h >= STAMP_MIN_H {
-                self.draw_stamp(c, bbox, hot, true);
+                self.draw_stamp_all(c, &st, bbox, hot, true);
             }
         } else {
             // ---- the tape ----
             if !self.tape_suppressed {
-                self.draw_tape(c, t, bbox, mixv, lit, hot);
+                self.draw_tape(c, t, &st, bbox, lit, hot);
                 if h >= STAMP_MIN_H {
-                    self.draw_stamp(c, bbox, hot, false);
+                    self.draw_stamp_all(c, &st, bbox, hot, false);
                 }
             }
             // ---- the word (and its drips) ----
-            self.draw_word(c, t, bbox, mixv, onset, strong, dt, lit);
+            self.draw_word(c, t, &st, bbox, onset, bass, rms, dt, lit);
         }
 
         c.clip_to_rounded_rect(1, 2, w - 2, h - 4, 3);
@@ -316,10 +491,13 @@ impl Family for Sesh {
 
 impl Sesh {
     /// The tape layer: rolling scanlines torn open per tracking band, bright head-switching noise at
-    /// the torn edges, a `hot` peak mark hanging at each band's largest recent tear.
-    fn draw_tape(&self, c: &mut Canvas, t: &Theme, bbox: (i32, i32, i32, i32), mixv: f32, lit: Rgba, hot: Rgba) {
+    /// the torn edges, a `hot` peak mark hanging at each band's largest recent tear. `sesh-word` turns
+    /// the tears off (clean scanlines only); `sesh-tape` adds a rolling head-switching band; `sesh-vhs`
+    /// wobbles the streak colours red/cyan; `sesh-red` reddens the streaks of loud bands.
+    fn draw_tape(&self, c: &mut Canvas, t: &Theme, st: &Style, bbox: (i32, i32, i32, i32), lit: Rgba, hot: Rgba) {
         let (ix0, iy0, ix1, iy1) = bbox;
         let (w, iw, ih) = (c.width(), ix1 - ix0, iy1 - iy0);
+        let bands = st.bands;
         let centre = (ix0 + ix1) / 2;
         let roll = self.roll_px as i32;
         let ghost = t.ghost.clamp(0.0, 1.0);
@@ -333,19 +511,26 @@ impl Sesh {
             Rgba::lerp_linear(panel, Rgba::new(0, 0, 0, 255), 0.5)
         };
 
-        // Per-band tear and streak, computed once.
+        // Per-band tear and streak, computed once. With tears off the seam collapses to the centre so
+        // the scanlines run clean and unbroken.
         let mut band_s = [0i32; TRACKING_BANDS];
         let mut band_sign = [1i32; TRACKING_BANDS];
         let mut band_streak = [0.0f32; TRACKING_BANDS];
         let mut band_peak = [0i32; TRACKING_BANDS];
-        for b in 0..TRACKING_BANDS {
+        for b in 0..bands {
             let level = self.tear[b].clamp(0.0, 1.0);
-            band_s[b] = (level * TEAR_FRAC * w as f32 * (1.3 - mixv)).round().max(0.0) as i32;
+            band_s[b] = if st.tears {
+                (level * TEAR_FRAC * w as f32 * st.tear_scale).round().max(0.0) as i32
+            } else {
+                0
+            };
             band_sign[b] = if b % 2 == 0 { 1 } else { -1 };
-            band_streak[b] = (level * (1.2 - mixv)).clamp(0.0, 1.0);
-            band_peak[b] = (self.peak[b].clamp(0.0, 1.0) * TEAR_FRAC * w as f32 * (1.3 - mixv))
-                .round()
-                .max(0.0) as i32;
+            band_streak[b] = if st.tears { (level * st.streak_scale).clamp(0.0, 1.0) } else { 0.0 };
+            band_peak[b] = if st.tears {
+                (self.peak[b].clamp(0.0, 1.0) * TEAR_FRAC * w as f32 * st.tear_scale).round().max(0.0) as i32
+            } else {
+                0
+            };
         }
 
         // Scanlines, torn open about a per-band seam.
@@ -353,7 +538,7 @@ impl Sesh {
             if (y + roll) % 2 != 0 {
                 continue;
             }
-            let b = (((iy1 - 1 - y) * TRACKING_BANDS as i32) / ih).clamp(0, TRACKING_BANDS as i32 - 1) as usize;
+            let b = (((iy1 - 1 - y) * bands as i32) / ih).clamp(0, bands as i32 - 1) as usize;
             let s = band_s[b];
             let gc = centre + band_sign[b] * (s / 2);
             let left_end = (gc - s).clamp(ix0, ix1);
@@ -366,23 +551,44 @@ impl Sesh {
             }
         }
 
+        // The colour-shift wobble phase (sesh-vhs), drifting slowly so the tint banding rolls upward.
+        let wobble_phase = self.elapsed_s * WOBBLE_HZ * ih as f32;
+
         // Per-band ornament: the dropout foot, the bright torn-edge noise, the peak mark.
-        for b in 0..TRACKING_BANDS {
-            let d_lo = b as i32 * ih / TRACKING_BANDS as i32;
-            let d_hi = (b as i32 + 1) * ih / TRACKING_BANDS as i32;
+        for b in 0..bands {
+            let d_lo = b as i32 * ih / bands as i32;
+            let d_hi = (b as i32 + 1) * ih / bands as i32;
             let y_bot = iy1 - 1 - d_lo;
             let y_top = iy1 - 1 - (d_hi - 1).max(d_lo);
             let s = band_s[b];
             let gc = centre + band_sign[b] * (s / 2);
             // Dark dropout streak along the band foot.
             c.fill_rect(ix0, y_bot, iw, 1, dropout);
-            // Bright head-switching noise at the two torn edges, on the band's top row.
+            // Bright head-switching noise at the two torn edges. `sesh-tape` draws it heavier (x1.5)
+            // and over two rows; `sesh-red` reddens it on loud bands; `sesh-vhs` tints it red/cyan.
             if band_streak[b] > 0.01 {
-                let noise = Rgba::from_hex(&t.lit, band_streak[b]);
+                let a = (band_streak[b] * st.streak_alpha_mul).clamp(0.0, 1.0);
+                let level = self.tear[b].clamp(0.0, 1.0);
+                let mut noise = if st.hot_tears && level > RED_HOT_TEAR_LEVEL {
+                    Rgba::from_hex(&t.hot, a)
+                } else {
+                    Rgba::from_hex(&t.lit, a)
+                };
+                if st.wobble {
+                    let tint = if ((y_top as f32 + wobble_phase) as i32).rem_euclid(2) == 0 {
+                        Rgba::from_hex(BLEED_RED, a)
+                    } else {
+                        Rgba::from_hex(BLEED_CYAN, a)
+                    };
+                    noise = Rgba::lerp_linear(noise, tint, 0.6);
+                }
                 let lx = (gc - s).clamp(ix0, ix1 - 1);
                 let rx = (gc + s).clamp(ix0, ix1 - 1);
-                c.fill_rect((lx - 2).max(ix0), y_top, 3, 1, noise);
-                c.fill_rect(rx, y_top, (ix1 - rx).min(3), 1, noise);
+                for r in 0..st.streak_rows {
+                    let ry = (y_top + r).min(iy1 - 1);
+                    c.fill_rect((lx - 2).max(ix0), ry, 3, 1, noise);
+                    c.fill_rect(rx, ry, (ix1 - rx).min(3), 1, noise);
+                }
             }
             // Peak mark: a 1px hot line hanging at the largest recent tear.
             if band_peak[b] > s {
@@ -391,12 +597,40 @@ impl Sesh {
                 c.fill_rect(px, py, 1, 1, hot);
             }
         }
+
+        // The rolling head-switching band (sesh-tape): a bright bar rolling slowly up the interior,
+        // the bottom-of-frame tear of a mistracked VHS. Drawn last so it reads over the scanlines.
+        if st.head_switch && ih > HEAD_SWITCH_H {
+            let travel = (ih - HEAD_SWITCH_H).max(1) as f32;
+            // Phase-offset half a span so the bar starts mid-interior rather than pinned to the foot,
+            // then rolls up and wraps.
+            let up = (self.elapsed_s * HEAD_SWITCH_PX_PER_S + travel * 0.5).rem_euclid(travel);
+            let hy = iy1 - HEAD_SWITCH_H - up.round() as i32;
+            let bar = Rgba::from_hex(&t.lit, (ghost + 0.5).min(1.0));
+            for r in 0..HEAD_SWITCH_H {
+                let ry = (hy + r).clamp(iy0, iy1 - 1);
+                c.fill_rect(ix0, ry, iw, 1, bar);
+            }
+        }
+    }
+
+    /// The camcorder stamp, with any chroma bleed (sesh-vhs): the red and cyan plates offset, then the
+    /// `hot` plate on top.
+    fn draw_stamp_all(&self, c: &mut Canvas, st: &Style, bbox: (i32, i32, i32, i32), hot: Rgba, tracking: bool) {
+        if st.bleed_px > 0 && st.bleed_stamp {
+            self.draw_stamp(c, bbox, Rgba::from_hex(BLEED_RED, st.bleed_alpha), -st.bleed_px, tracking);
+            self.draw_stamp(c, bbox, Rgba::from_hex(BLEED_CYAN, st.bleed_alpha), st.bleed_px, tracking);
+        }
+        self.draw_stamp(c, bbox, hot, 0, tracking);
     }
 
     /// The camcorder stamp: `PLAY` + a play triangle + the elapsed clock (or `TRACKING` during the
-    /// dropout), with a `REC` dot top-right that blinks on strong onsets. All in `hot`.
-    fn draw_stamp(&self, c: &mut Canvas, bbox: (i32, i32, i32, i32), hot: Rgba, tracking: bool) {
+    /// dropout), with a `REC` dot top-right that blinks on strong onsets. `dx` offsets the whole stamp
+    /// for the chroma-bleed plates.
+    fn draw_stamp(&self, c: &mut Canvas, bbox: (i32, i32, i32, i32), col: Rgba, dx: i32, tracking: bool) {
         let (ix0, iy0, ix1, _iy1) = bbox;
+        let (ix0, ix1) = (ix0 + dx, ix1 + dx);
+        let hot = col;
         let y = iy0 + 1;
         if tracking {
             font3x5::draw(c, ix0 + 2, y, "TRACKING", hot);
@@ -435,57 +669,80 @@ impl Sesh {
         }
     }
 
-    /// The word layer: one word centred in pixel blackletter, jittering on onsets, with `lit` drips
-    /// shed from its feet on bass hits.
+    /// The word layer: one word in pixel blackletter. `sesh-tape` shrinks it to a small bottom-right
+    /// CAPTION (the tears are the picture); every other colourway centres it. `sesh-word` forces it
+    /// Large, PULSES it on a bass onset (drops + a 2px outline) and scales the outline alpha with rms;
+    /// `sesh-vhs` bleeds it in red/cyan; `sesh-red` outlines it in `hot`.
     #[allow(clippy::too_many_arguments)]
     fn draw_word(
         &mut self,
         c: &mut Canvas,
         t: &Theme,
+        st: &Style,
         bbox: (i32, i32, i32, i32),
-        mixv: f32,
         onset: bool,
-        strong: bool,
+        bass: f32,
+        rms: f32,
         dt: f32,
         lit: Rgba,
     ) {
         let (ix0, iy0, ix1, iy1) = bbox;
         let (iw, ih, h) = (ix1 - ix0, iy1 - iy0, c.height());
 
-        let large = h >= 58 - (12.0 * mixv).round() as i32;
+        // The caption is always Small; a centred word goes Large above the colourway's threshold.
+        let large = !st.corner_caption && h >= st.word_large_at;
         let size = if large { GothicSize::Large } else { GothicSize::Small };
         let gh = if large { 13 } else { 9 };
+        let pulse = st.word_pulse && bass > BASS_ONSET;
         // Draw the randoms up front, so `next_rng` (which needs `&mut self`) does not overlap the
         // immutable borrow of `self` that the word string holds.
         let (r_jit, r_d0, r_d1) = (self.next_rng(), self.next_rng(), self.next_rng());
         let word = gothic::truncate_to_width(self.current_word(), size, iw - 8);
         if !word.is_empty() {
             let tw = gothic::text_width(word, size);
-            let mut x = ix0 + (iw - tw) / 2;
-            let y = iy0 + (ih - gh) / 2;
+            let (mut x, y) = if st.corner_caption {
+                // Bottom-right, like a tape label.
+                (ix1 - tw - CAPTION_MARGIN, iy1 - gh - CAPTION_MARGIN)
+            } else {
+                let mut y = iy0 + (ih - gh) / 2;
+                if pulse {
+                    y += WORD_PULSE_DROP; // the word drops on the bass
+                }
+                (ix0 + (iw - tw) / 2, y)
+            };
             if onset {
                 x += if r_jit & 1 == 0 { 1 } else { -1 };
             }
-            // The one red: sesh-red outlines the word in `hot`; every other colourway in `edge`.
+            // The one red: sesh-red outlines the word in `hot`; every other colourway in `edge`. The
+            // word colourway scales the outline alpha with rms so the outline itself is a meter.
+            let out_a = if st.outline_rms { (t.edge_alpha * (0.4 + rms)).clamp(0.0, 1.0) } else { t.edge_alpha };
             let outline = if t.id == "sesh-red" {
-                Rgba::from_hex(&t.hot, t.edge_alpha)
+                Rgba::from_hex(&t.hot, out_a)
             } else {
-                Rgba::from_hex(&t.edge, t.edge_alpha)
+                Rgba::from_hex(&t.edge, out_a)
             };
-            // sesh-vhs chroma bleed: the word twice more, offset a pixel, half-alpha, BEFORE the main.
-            if t.id == "sesh-vhs" {
-                gothic::draw(c, x - 1, y, word, size, Rgba::from_hex(BLEED_RED, 0.5), None);
-                gothic::draw(c, x + 1, y, word, size, Rgba::from_hex(BLEED_CYAN, 0.5), None);
+            // sesh-vhs chroma bleed: the word in each plate, offset, BEFORE the main pass.
+            if st.bleed_px > 0 {
+                gothic::draw(c, x - st.bleed_px, y, word, size, Rgba::from_hex(BLEED_RED, st.bleed_alpha), None);
+                gothic::draw(c, x + st.bleed_px, y, word, size, Rgba::from_hex(BLEED_CYAN, st.bleed_alpha), None);
+            }
+            // A pulsing word thickens its outline to 2px: an extra outline ring at radius 2.
+            if pulse {
+                for (dx, dy) in [(-2, 0), (2, 0), (0, -2), (0, 2)] {
+                    gothic::draw(c, x + dx, y + dy, word, size, outline, None);
+                }
             }
             gothic::draw(c, x, y, word, size, lit, Some(outline));
 
-            // Drips from the word's feet on a bass hit.
+            // Drips from the word's feet on a bass hit (an onset over the bass threshold), capped per
+            // colourway - `sesh-word` drips twice as hard.
             let (wx0, wx1, wy) = (x, x + tw, y + gh);
+            let strong = onset && bass > BASS_ONSET;
             if strong {
                 let span = (wx1 - wx0).max(1) as u64;
                 let spots = [wx0 + (r_d0 % span) as i32, wx0 + (r_d1 % span) as i32];
                 let mut k = 0usize;
-                for dr in self.drips.iter_mut() {
+                for dr in self.drips.iter_mut().take(st.drip_cap) {
                     if k >= 2 {
                         break;
                     }
@@ -514,9 +771,11 @@ impl Sesh {
 
     /// The dropout glitch, drawn over an opaque base in a reused scratch canvas and copied back: a
     /// per-pixel static field, the word torn into three shifted slices, then pasted over the panel.
-    fn draw_dropout(&mut self, c: &mut Canvas, t: &Theme, bbox: (i32, i32, i32, i32), env: f32, panel: Rgba, lit: Rgba) {
+    fn draw_dropout(&mut self, c: &mut Canvas, t: &Theme, st: &Style, bbox: (i32, i32, i32, i32), env: f32) {
         let (ix0, iy0, ix1, iy1) = bbox;
         let (w, h, iw, ih) = (c.width(), c.height(), ix1 - ix0, iy1 - iy0);
+        let panel = Rgba::from_hex(&t.panel, 1.0);
+        let lit = Rgba::from_hex(&t.lit, 1.0);
 
         let mut scr = self
             .scratch
@@ -540,7 +799,7 @@ impl Sesh {
 
         // The word, torn: draw it centred into the scratch, then copy three horizontal slices back
         // shifted (wrapping) so it reads as a mistracked frame.
-        let large = h >= 58 - (12.0 * mix(t)).round() as i32;
+        let large = !st.corner_caption && h >= st.word_large_at;
         let size = if large { GothicSize::Large } else { GothicSize::Small };
         let gh = if large { 13 } else { 9 };
         let word = gothic::truncate_to_width(self.current_word(), size, iw - 8);
@@ -814,8 +1073,10 @@ mod tests {
             }
             write(format!("sesh-{short}-flourish-decay"), &c);
         }
-        // The two narrow shapes, on the two colourways whose identity is the word / the tape.
-        for (id, (tag, w, h)) in [("sesh-tape", sizes[1]), ("sesh-word", sizes[2])] {
+        // The tape/word pair at the narrow 190x48, to judge both at a small size side by side.
+        let _ = sizes[2];
+        for id in ["sesh-tape", "sesh-word"] {
+            let (tag, w, h) = sizes[1];
             let t = theme(id);
             let mut fam = Sesh::default();
             let mut c = Canvas::new(w, h);
@@ -826,6 +1087,52 @@ mod tests {
             write(format!("sesh-{}-{tag}", &id["sesh-".len()..]), &c);
         }
         println!("wrote sesh dumps to {}", dir.display());
+    }
+
+    /// The five colourways must read as five DIFFERENT things, not one look tinted five ways. Renders
+    /// each loud at 380x60 for 30 frames off identical input and asserts every PAIR differs in at
+    /// least 15% of interior pixels by a `drew_over_panel`-style channel delta between the two frames.
+    /// This is the guard that would have caught the v0.3.0 complaint that "all the sesh themes look
+    /// the same except the red one".
+    #[test]
+    fn the_five_colourways_are_visibly_different() {
+        let ids = ["sesh-tape", "sesh-word", "sesh-vhs", "sesh-red", "sesh-bleached"];
+        let (w, h) = (380i32, 60i32);
+        let canvases: Vec<Canvas> = ids
+            .iter()
+            .map(|id| {
+                let t = theme(id);
+                frames(&mut Sesh::default(), &t, w, h, 0.85, 30)
+            })
+            .collect();
+        let (ix0, iy0, ix1, iy1) = (3, 4, w - 3, h - 4);
+        let interior = ((ix1 - ix0) * (iy1 - iy0)) as f32;
+        let mut too_similar = Vec::new();
+        for a in 0..ids.len() {
+            for b in (a + 1)..ids.len() {
+                let (ca, cb) = (&canvases[a], &canvases[b]);
+                let mut diff = 0usize;
+                for y in iy0..iy1 {
+                    for x in ix0..ix1 {
+                        let (pa, pb) = (ca.get(x, y), cb.get(x, y));
+                        let d = (pa.r as i32 - pb.r as i32).abs()
+                            + (pa.g as i32 - pb.g as i32).abs()
+                            + (pa.b as i32 - pb.b as i32).abs();
+                        if d > 24 {
+                            diff += 1;
+                        }
+                    }
+                }
+                let frac = diff as f32 / interior;
+                if frac < 0.15 {
+                    too_similar.push(format!("{} vs {}: {:.1}%", ids[a], ids[b], frac * 100.0));
+                }
+            }
+        }
+        assert!(
+            too_similar.is_empty(),
+            "these colourway pairs differ in <15% of interior pixels: {too_similar:?}"
+        );
     }
 
     /// The per-frame cost, steady and during the dropout, well under the 2ms budget at 380x60.

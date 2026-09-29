@@ -701,7 +701,9 @@ pub fn sesh_vhs() -> Theme {
         name: "Sesh VHS".into(),
         lit: "#dcdcdc".into(),
         hot: "#ffffff".into(),
-        panel: "#0d0d0f".into(),
+        // A cold blue cast, so the VHS reads distinct from the other near-black panels even before the
+        // chroma bleed and colour-shift wobble.
+        panel: "#0d0d1f".into(),
         edge: "#444444".into(),
         ghost: 0.18,
         ..sesh_base()

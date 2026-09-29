@@ -3,6 +3,20 @@
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); dates are release dates,
 not commit dates.
 
+## [Unreleased]
+
+- `themes`: the tray menu labels now name the artists/game a user would look for — the `sesh` family
+  reads "Bones / TeamSESH: VHS" and `night` reads "Cyberpunk 2077: HUD" (was "Bones: VHS tape" /
+  "Night City: HUD", which made `night` look absent and `sesh` hard to find in the label-sorted menu).
+- `sesh`: the five colourways now read as five different things rather than one look nudged by a
+  single `mix` constant. A per-colourway `Style` drives each: `sesh-tape` is a heavy 8-band tear with
+  a rolling head-switching bar and the word shrunk to a bottom-right caption; `sesh-word` turns the
+  tears off, pulses a big centred word on the bass and drips twice as hard; `sesh-vhs` gets a
+  cold-cast panel, doubled ±2px red/cyan chroma bleed on the word and stamp, and a slow colour-shift
+  wobble; `sesh-red` reddens the loud bands' tears; `sesh-bleached` bakes in faint paper grain. New
+  guard `the_five_colourways_are_visibly_different` requires every pair to differ in ≥15% of interior
+  pixels.
+
 ## [0.3.0] — 2026-09-29
 
 Two families: `sesh` — Bones/TeamSESH VHS tape (12 tracking bands that tear with the music, a
