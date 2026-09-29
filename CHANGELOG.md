@@ -3,6 +3,20 @@
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); dates are release dates,
 not commit dates.
 
+## [0.3.0] — 2026-09-29
+
+Two families: `sesh` — Bones/TeamSESH VHS tape (12 tracking bands that tear with the music, a
+blackletter word with drips, camcorder stamp, dropout flourish; 5 colourways) and `night` —
+Cyberpunk 2077 HUD strip (16 hatch-filled chamfered cells, cyan scanner, RAM/HP/NET readouts,
+relic-malfunction RGB-split flourish; 5 colourways).
+
+- `gothic`: a pixel-blackletter font module (13 letters + R, two sizes).
+- `font3x5`: one shared full-alphabet 3x5 label font (sesh uses it; vsghost/vswings still carry
+  private copies).
+- `vsorb`: ~2x cheaper per frame (cached backdrop, orb-bounded bloom; was failing the 2 ms gate
+  on the CI runner).
+- CI: toolchain pinned to 1.96 with the clippy component.
+
 ## [0.2.2] — 2026-09-29
 
 Three Virtual Self families: vswings, vsghost, vsorb (13 colourways).

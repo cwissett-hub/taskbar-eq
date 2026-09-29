@@ -3,7 +3,19 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** v0.2.2 — THREE VIRTUAL SELF FAMILIES SHIP. `vswings`, `vsghost` and `vsorb` —
+**Last updated:** v0.3.0 — TWO FAMILIES SHIP: `sesh` AND `night`. `sesh` (Bones/TeamSESH VHS
+tape — 12 tracking bands that tear with the music, a blackletter word with drips, a camcorder
+stamp, a dropout flourish) and `night` (Cyberpunk 2077 HUD strip — 16 hatch-filled chamfered
+cells, a cyan scanner, RAM/HP/NET readouts, a relic-malfunction RGB-split flourish), 10 new
+colourways (173 across 27 families). Two new shared font modules: `gothic` (pixel-blackletter,
+13 letters + R, two sizes) and `font3x5` (one shared full-alphabet 3x5 label font — sesh uses
+it; vsghost/vswings still carry private copies). `vsorb` came along for the ride at ~2x cheaper
+per frame (cached backdrop, orb-bounded bloom — it was failing the 2 ms gate on the CI runner).
+All five timed families measure comfortably under budget (`slow_vs_timing`): vswings 0.85 ms,
+vsghost 0.06 ms, vsorb 0.78 ms, sesh 0.29 ms, night 0.20 ms. The user judges the two new
+families on the review sheet — see Waiting on you below.
+
+Earlier: v0.2.2 — THREE VIRTUAL SELF FAMILIES SHIP. `vswings`, `vsghost` and `vsorb` —
 13 new colourways (163 across 25 families), each under the 2 ms/frame timing budget
 (`slow_vs_timing`). Every panel is opaque and the two light-panel colourways (`vswings-particle-
 arts`'s ice panel, `vswings-angel-voices`'s pink panel) got their wing-tip colour retuned off
@@ -35,14 +47,30 @@ Earlier still: 150 colourways across 22 families, every one with a flourish. See
 
 Nothing right now. Queued, in order:
 
-1. **Two more themes requested 2026-09-28**, to brainstorm and spec before building:
-   something **Bones / TeamSESH** themed, and something **Cyberpunk 2077** themed.
-2. **The live `--levels` check** of the two-FFT bass path against real music (Task 4 deferred
-   it for want of audio) — needs Spotify playing; note it overwrites
-   `tests/fixtures/real-music-bands.csv`.
+1. **A terminal family in the user's VSCode "2077" theme palette** — brainstorm + spec first.
+   Palette from the installed theme (endormi.2077-theme): editor `#030d22`, terminal bg
+   `#0d0936`, fg `#e4eeff`, cursor/line-numbers `#ee0077`, ANSI cyan `#0ab2fa` / bright `#4bc5fa`,
+   string cyan `#0ef3ff`, magenta `#EA00D9`, red `#ee1682` / bright `#ff2e97`, yellow `#ffd400`,
+   green `#06ad00` / bright `#3dd69c`, blue `#3787d6`, comment blue `#0098df`, selection
+   `#310072`, line highlight `#1c1347`.
+2. **A fidelity pass over eight families**, brainstormed from their current dumps side by side:
+   `brutal`, `pipes`, `mesh` (3D spectrum), `orbit`, `dolphin` — "really lacking in visual
+   fidelity and flair, very basic, not cohesive with blossom or vaporwave, I want them to pop
+   more"; `rave` — "very bland, literally just lasers, needs something else"; `vswings` — "lots
+   of space on the sides that goes unused"; `vsghost` — a RETHINK of the execution keeping the
+   vibe: "just looks like bars over a mostly invisible graphic; I like the vibe but the
+   execution needs work".
+3. **The live `--levels` check** of the two-FFT bass path against real music — needs Spotify
+   playing; note it overwrites `tests/fixtures/real-music-bands.csv`.
 
 ## Waiting on you
 
+- [ ] **Judge the two new families on `docs/review/index.html` sections 18-19: keep, tune or
+      drop each colourway (v0.3.0).** Specific eye questions: `sesh` — does the blackletter read
+      as gothic at 9 px or as a bold pixel font (Task 1 reviewer's honest take: gothic-leaning
+      bold pixel, softer than true blackletter); is the one red enough on `sesh-red`; is
+      `sesh-bleached` a keep; `night` — is `night-corpo` a keep; is the scanner line distinct
+      enough on loud frames; do the readouts earn their 34 px.
 - [ ] **Judge the three Virtual Self families in `docs/review/index.html` (sections 15-17): keep,
       tune or drop each (v0.2.2).** Specific eye questions the implementers flagged: `vswings`'s
       tip-vs-body contrast on the ice (`particle-arts`) and pink (`angel-voices`) panels; `vsghost`'s
@@ -134,6 +162,8 @@ Nothing right now. Queued, in order:
 
 ## Notes to self
 
+- **Standing rule (user, 29 Sep 2026): after each job — merge, push, release build, relaunch the
+  running exe — BEFORE starting the next job.**
 - **CI is wired up as of v0.2.1** (`.github/workflows/ci.yml`) — was a note-to-self here, now
   done: it runs the fast suite, `cargo test --release slow_ -- --ignored`, and
   `cargo clippy --all-targets -- -D warnings` on every push and PR to `windows-latest`.

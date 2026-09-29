@@ -37,8 +37,8 @@ split, and worth knowing before you go looking for one and only find it in the o
 | Virtual Self: wings | 32 bands fanned into two mirrored angel wings on a Y2K chrome floor; bass beats the root feathers |
 | Virtual Self: ghost voices | A piano-roll glitch terminal — bands as scrolling MIDI columns, light rays, a romanised phrase, a datamosh flourish |
 | Virtual Self: orb | A wireframe chrome icosphere the bass inflates, ringed by 24 spectrum spikes; it shatters into its triangles on a flourish |
-| Bones: VHS tape | A worn cassette dub — rolling scanlines torn per band with the bass, a blackletter word centred over them, a camcorder PLAY/REC stamp; the flourish is a tape dropout |
-| Night City: HUD | A Cyberpunk-2077 combat HUD — chamfered hatch-filled cells as a bottom-up meter, a spectrum scanner, RAM/HP/NET readouts; the flourish is a relic malfunction (RGB split, red glitch bars) |
+| Bones: VHS tape | A worn cassette dub — rolling scanlines torn per band with the bass, a blackletter word centred over them (the word font is `gothic`), a camcorder PLAY/REC stamp; the flourish is a tape dropout |
+| Night City: HUD | A Cyberpunk-2077 combat HUD — chamfered hatch-filled cells as a bottom-up meter, a spectrum scanner, RAM/HP/NET readouts (labels use `font3x5`); the flourish is a relic malfunction (RGB split, red glitch bars) |
 
 The Virtual Self: wings colourways are `vswings-particle-arts` (ice panel, cobalt-to-electric
 wings, cobalt floor), `vswings-eon-break` (black panel, cobalt-to-electric wings, white floor),
@@ -176,7 +176,7 @@ Drop a `.toml` file (any filename — the `id` inside is what matters) into
 watched, so saving the file updates the live overlay without a restart — edit a colour, hit
 save, and watch the taskbar change.
 
-A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 150
+A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 173
 built-ins, which are always embedded in the exe regardless of whether that folder exists.
 
 Failure modes are all deliberately soft, because these files are hand-authored:
