@@ -13,6 +13,7 @@ pub fn flourish_enabled(on: bool) {
     crate::dsp::flourish::set_enabled(on);
 }
 pub mod golden;
+pub mod font3x5;
 pub mod gothic;
 pub mod scope;
 pub mod nixie;

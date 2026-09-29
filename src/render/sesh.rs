@@ -42,6 +42,7 @@ use crate::dsp::bands::NUM_BANDS;
 use crate::dsp::flourish::{Envelope, Trigger};
 use crate::dsp::onset::Flux;
 use crate::render::canvas::{Canvas, Rgba};
+use crate::render::font3x5;
 use crate::render::gothic::{self, GothicSize};
 use crate::render::{Family, FrameData};
 use crate::themes::Theme;
@@ -185,63 +186,6 @@ impl Sesh {
             None => WORDS[self.word_idx],
         }
     }
-}
-
-/// One glyph of the private camcorder-stamp font, five rows of three bits, bit 2 leftmost. `None` for
-/// anything the stamp never draws.
-///
-/// Private because the shared `Canvas::text_3x5` deliberately omits half the alphabet as ambiguous at
-/// 3x5 - and in particular it has no `Y`, `E`, `C`, `T`, `K`, `N` or `G`, so `PLAY`, `REC` and
-/// `TRACKING` render as `PLA`, `R` and a mostly-blank word through it. The stamp's vocabulary is tiny
-/// and fixed, so its letters can be drawn unambiguously here, the same way `vsghost` carries a private
-/// phrase font for exactly this reason.
-fn stamp_glyph(ch: char) -> Option<[u8; 5]> {
-    Some(match ch {
-        'P' => [0b111, 0b101, 0b111, 0b100, 0b100],
-        'L' => [0b100, 0b100, 0b100, 0b100, 0b111],
-        'A' => [0b010, 0b101, 0b111, 0b101, 0b101],
-        'Y' => [0b101, 0b101, 0b010, 0b010, 0b010],
-        'R' => [0b110, 0b101, 0b110, 0b101, 0b101],
-        'E' => [0b111, 0b100, 0b110, 0b100, 0b111],
-        'C' => [0b011, 0b100, 0b100, 0b100, 0b011],
-        'T' => [0b111, 0b010, 0b010, 0b010, 0b010],
-        'K' => [0b101, 0b110, 0b100, 0b110, 0b101],
-        'I' => [0b111, 0b010, 0b010, 0b010, 0b111],
-        'N' => [0b101, 0b111, 0b111, 0b111, 0b101],
-        'G' => [0b011, 0b100, 0b101, 0b101, 0b011],
-        '0' => [0b111, 0b101, 0b101, 0b101, 0b111],
-        '1' => [0b010, 0b110, 0b010, 0b010, 0b111],
-        '2' => [0b111, 0b001, 0b111, 0b100, 0b111],
-        '3' => [0b111, 0b001, 0b111, 0b001, 0b111],
-        '4' => [0b101, 0b101, 0b111, 0b001, 0b001],
-        '5' => [0b111, 0b100, 0b111, 0b001, 0b111],
-        '6' => [0b111, 0b100, 0b111, 0b101, 0b111],
-        '7' => [0b111, 0b001, 0b010, 0b010, 0b010],
-        '8' => [0b111, 0b101, 0b111, 0b101, 0b111],
-        '9' => [0b111, 0b101, 0b111, 0b001, 0b111],
-        ':' => [0b000, 0b010, 0b000, 0b010, 0b000],
-        ' ' => [0, 0, 0, 0, 0],
-        _ => return None,
-    })
-}
-
-/// Draws `text` in the private stamp font with its top-left at `(x, y)`, 4px cell pitch; returns the
-/// width drawn. An unsupported character advances the cursor and draws nothing.
-fn stamp_text(c: &mut Canvas, x: i32, y: i32, text: &str, col: Rgba) -> i32 {
-    let mut cx = x;
-    for ch in text.chars() {
-        if let Some(rows) = stamp_glyph(ch) {
-            for (dy, row) in rows.iter().enumerate() {
-                for dx in 0..3 {
-                    if row & (0b100 >> dx) != 0 {
-                        c.fill_rect(cx + dx, y + dy as i32, 1, 1, col);
-                    }
-                }
-            }
-        }
-        cx += 4;
-    }
-    (cx - x - 1).max(0)
 }
 
 /// A finite level from `d.levels`, clamped 0..1.
@@ -455,10 +399,10 @@ impl Sesh {
         let (ix0, iy0, ix1, _iy1) = bbox;
         let y = iy0 + 1;
         if tracking {
-            stamp_text(c, ix0 + 2, y, "TRACKING", hot);
+            font3x5::draw(c, ix0 + 2, y, "TRACKING", hot);
         } else {
             let mut cx = ix0 + 2;
-            cx += stamp_text(c, cx, y, "PLAY", hot) + 2;
+            cx += font3x5::draw(c, cx, y, "PLAY", hot) + 2;
             // A right-pointing play triangle, three rows.
             c.fill_rect(cx, y, 1, 1, hot);
             c.fill_rect(cx, y + 1, 2, 1, hot);
@@ -479,14 +423,13 @@ impl Sesh {
             buf[6] = b'0' + (ss / 10) as u8;
             buf[7] = b'0' + (ss % 10) as u8;
             if let Ok(s) = std::str::from_utf8(&buf) {
-                stamp_text(c, cx, y, s, hot);
+                font3x5::draw(c, cx, y, s, hot);
             }
         }
         // REC top-right, with a blinking dot.
-        let rec_w = "REC".chars().count() as i32 * 4 - 1;
         let dot_x = ix1 - 2 - 3;
-        let rec_x = dot_x - 2 - rec_w;
-        stamp_text(c, rec_x, y, "REC", hot);
+        let rec_x = dot_x - 2 - font3x5::width("REC");
+        font3x5::draw(c, rec_x, y, "REC", hot);
         if self.rec_blink_ms > 0.0 {
             c.fill_rect(dot_x, y + 1, 3, 3, hot);
         }
