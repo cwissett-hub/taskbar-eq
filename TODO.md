@@ -3,7 +3,20 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** v0.3.0 — TWO FAMILIES SHIP: `sesh` AND `night`. `sesh` (Bones/TeamSESH VHS
+**Last updated:** v0.3.1 — TERM FAMILY SHIPS, PLUS A SESH REWORK. `term` (the user's own VSCode
+2077 theme as a live terminal — output lines are the meter, a prompt types session-specific
+commands on onsets across dev / network / git / sysadmin / build, a red `panic!` stack-trace
+flourish; 5 colourways) joins two reworks landed alongside it: `sesh` now ships seven
+colourways (two added from Bones' *Blunts From The Graveyard* tapes, one recoloured) with a
+bass-hit **slam** flourish replacing the old sliding word, and the tray menu labels for `sesh`
+and `night` are rewritten to name the artist/game a user would actually search for, so neither
+gets lost in the label-sorted menu. New shared font work: `font3x5` gained block, outline,
+tilde and punctuation glyphs plus lowercase input. All six timed families measure comfortably
+under budget (`slow_vs_timing`): vswings 0.72 ms, vsghost 0.06 ms, vsorb 0.75 ms, sesh 0.26 ms,
+night 0.20 ms, term 0.03 ms. The user judges `term`, the `sesh` rework and `night` on the
+review sheet — see Waiting on you below.
+
+Earlier: v0.3.0 — TWO FAMILIES SHIP: `sesh` AND `night`. `sesh` (Bones/TeamSESH VHS
 tape — 12 tracking bands that tear with the music, a blackletter word with drips, a camcorder
 stamp, a dropout flourish) and `night` (Cyberpunk 2077 HUD strip — 16 hatch-filled chamfered
 cells, a cyan scanner, RAM/HP/NET readouts, a relic-malfunction RGB-split flourish), 10 new
@@ -47,13 +60,7 @@ Earlier still: 150 colourways across 22 families, every one with a flourish. See
 
 Nothing right now. Queued, in order:
 
-1. **A terminal family in the user's VSCode "2077" theme palette** — brainstorm + spec first.
-   Palette from the installed theme (endormi.2077-theme): editor `#030d22`, terminal bg
-   `#0d0936`, fg `#e4eeff`, cursor/line-numbers `#ee0077`, ANSI cyan `#0ab2fa` / bright `#4bc5fa`,
-   string cyan `#0ef3ff`, magenta `#EA00D9`, red `#ee1682` / bright `#ff2e97`, yellow `#ffd400`,
-   green `#06ad00` / bright `#3dd69c`, blue `#3787d6`, comment blue `#0098df`, selection
-   `#310072`, line highlight `#1c1347`.
-2. **A fidelity pass over eight families**, brainstormed from their current dumps side by side:
+1. **A fidelity pass over eight families**, brainstormed from their current dumps side by side:
    `brutal`, `pipes`, `mesh` (3D spectrum), `orbit`, `dolphin` — "really lacking in visual
    fidelity and flair, very basic, not cohesive with blossom or vaporwave, I want them to pop
    more"; `rave` — "very bland, literally just lasers, needs something else"; `vswings` — "lots
@@ -63,17 +70,21 @@ Nothing right now. Queued, in order:
    high-BPM music such as VS" — retune `ballistics` (attack/decay/peak_fall) and the onset
    refractory against a REAL 150-170 BPM loopback capture (Virtual Self through Spotify), not the
    synthetic fixture; the kick lands every ~350-400 ms and the current settings smear it.
-3. **The live `--levels` check** of the two-FFT bass path against real music — needs Spotify
+2. **The live `--levels` check** of the two-FFT bass path against real music — needs Spotify
    playing; note it overwrites `tests/fixtures/real-music-bands.csv`.
 
 ## Waiting on you
 
-- [ ] **Judge the two new families on `docs/review/index.html` sections 18-19: keep, tune or
-      drop each colourway (v0.3.0).** Specific eye questions: `sesh` — does the blackletter read
-      as gothic at 9 px or as a bold pixel font (Task 1 reviewer's honest take: gothic-leaning
-      bold pixel, softer than true blackletter); is the one red enough on `sesh-red`; is
-      `sesh-bleached` a keep; `night` — is `night-corpo` a keep; is the scanner line distinct
-      enough on loud frames; do the readouts earn their 34 px.
+- [ ] **Judge sections 18-20 on `docs/review/index.html`: keep, tune or drop each colourway
+      (v0.3.0/v0.3.1).** `sesh` — now seven colourways (the two *Blunts From The Graveyard*
+      additions `sesh-graveyard`/`sesh-nightvision` plus the recoloured `sesh-vhs`) and the new
+      bass-hit slam flourish: does the blackletter read as gothic at 9 px or as a bold pixel font
+      (Task 1 reviewer's honest take: gothic-leaning bold pixel, softer than true blackletter); is
+      the one red enough on `sesh-red`; is `sesh-bleached` a keep; does the slam read as a
+      deliberate hit rather than a glitch. `night` — is `night-corpo` a keep; is the scanner line
+      distinct enough on loud frames; do the readouts earn their 34 px. `term` — does it read as
+      YOUR terminal; are the bars a meter at a glance; is the `panic!` funny or annoying; which
+      sessions (`term-2077`, `-cyan`, `-hot`, `-matrix`, `-editor`) to keep.
 - [ ] **Judge the three Virtual Self families in `docs/review/index.html` (sections 15-17): keep,
       tune or drop each (v0.2.2).** Specific eye questions the implementers flagged: `vswings`'s
       tip-vs-body contrast on the ice (`particle-arts`) and pink (`angel-voices`) panels; `vsghost`'s

@@ -517,7 +517,7 @@ mod opacity {
     #[test]
     #[ignore]
     fn slow_vs_timing() {
-        for id in ["vswings-particle-arts", "vsghost-white", "vsorb-chrome", "sesh-vhs", "night-yellow"] {
+        for id in ["vswings-particle-arts", "vsghost-white", "vsorb-chrome", "sesh-vhs", "night-yellow", "term-2077"] {
             let t = builtin::all().into_iter().find(|t| t.id == id).unwrap();
             let mut f = family_for(&t.family);
             let mut c = Canvas::new(380, 60);
@@ -530,7 +530,7 @@ mod opacity {
             let per = t0.elapsed().as_secs_f32() * 1000.0 / 300.0;
             eprintln!("{id}: {per:.2} ms/frame");
             assert!(per < 2.0, "{id} {per:.2} ms/frame");
-            if id == "sesh-vhs" || id == "night-yellow" {
+            if id == "sesh-vhs" || id == "night-yellow" || id == "term-2077" {
                 assert!(per < 1.0, "{id} {per:.2} ms/frame (expected < 1.0 ms)");
             }
         }

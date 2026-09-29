@@ -3,8 +3,12 @@
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); dates are release dates,
 not commit dates.
 
-## [Unreleased]
+## [0.3.1] — 2026-09-29
 
+- `term` — the user's VSCode 2077 theme as a live terminal: output lines are the meter, a prompt
+  types session-specific commands on onsets (dev / network / git / sysadmin / build), `panic!`
+  flourish; 5 colourways.
+- `font3x5`: block, outline, tilde and punctuation glyphs; lowercase input accepted.
 - `themes`: the tray menu labels now name the artists/game a user would look for — the `sesh` family
   reads "Bones / TeamSESH: VHS" and `night` reads "Cyberpunk 2077: HUD" (was "Bones: VHS tape" /
   "Night City: HUD", which made `night` look absent and `sesh` hard to find in the label-sorted menu).
