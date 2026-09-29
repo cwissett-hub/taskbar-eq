@@ -15,8 +15,9 @@
 //!
 //! # What the meter is
 //!
-//! The interior above the status bar is divided into `L = min(12, (interior_h - 5) / 4)` rows of 4 px
-//! pitch. The bottom-most row is the PROMPT; the row above it (when `L >= 8`) is a `# bpm ~ NNN`
+//! The interior above the status bar is divided into rows of 6 px pitch (a 5 px `font3x5` glyph plus a
+//! 1 px gap, so text rows never overlap). The bottom-most row is the PROMPT; the row above it (when
+//! there are `>= 6` rows) is a `# bpm ~ NNN`
 //! comment; the rest are METER rows. Each meter row shows a two-digit line number in `t.hot`, then a
 //! bar of `▮` in the row's colour whose length is that band group's level, capped by a `▯` peak
 //! marker in `t.hot`. Row `i` (0 = top) folds the band group `m-1-i` so the bass sits at the bottom.
@@ -53,11 +54,11 @@ use crate::render::font3x5;
 use crate::render::{Family, FrameData};
 use crate::themes::Theme;
 
-/// Vertical pitch of a row, px (a 3 px glyph body plus a 1 px gap; the `font3x5` cell is 5 px tall so
-/// rows sit close, a dense log).
-const ROW_PITCH: i32 = 4;
-/// The smoothing arrays are sized to the most rows any panel can show.
-const MAX_ROWS: usize = 12;
+/// Vertical pitch of a row, px: a 5 px `font3x5` glyph body plus a 1 px gap, so text rows never
+/// overlap (the spec's "3 px glyph" was the glyph WIDTH; the cell is 5 px tall).
+const ROW_PITCH: i32 = 6;
+/// The smoothing arrays are sized to the most rows any panel can show at 6 px pitch.
+const MAX_ROWS: usize = 8;
 /// Status bar height in px, and the minimum panel height at or above which it is drawn.
 const STATUS_H: i32 = 7;
 const STATUS_MIN_H: i32 = 48;
@@ -405,12 +406,12 @@ impl Family for Term {
         // ---- layout: rows, status bar, roles ----
         let status = h >= STATUS_MIN_H;
         let bottom = if status { iy1 - STATUS_H } else { iy1 };
-        let n = ((bottom - iy0 - 5) / ROW_PITCH).clamp(0, MAX_ROWS as i32) as usize;
+        let n = ((bottom - iy0 - 1) / ROW_PITCH).clamp(0, MAX_ROWS as i32) as usize;
         if n < 2 {
             c.clip_to_rounded_rect(1, 2, w - 2, h - 4, 3);
             return; // no room for even a prompt + one meter row
         }
-        let comment = n >= 8;
+        let comment = n >= 6;
         let m = n - 1 - if comment { 1 } else { 0 }; // meter rows
         let prompt_r = n - 1;
         let comment_r = if comment { n - 2 } else { usize::MAX };
@@ -426,8 +427,10 @@ impl Family for Term {
         }
         self.layout = layout;
 
-        // ---- subtle CRT scanlines: a DARKENING of the panel every 3rd row (a subtractive gap, so it
-        // never reads as a lit bar in an empty meter row) ----
+        // ---- subtle CRT scanlines: a DARKENING of the panel every 3rd row. Subtractive (a CRT gap)
+        // rather than a lit line ON PURPOSE: a lit scanline at `ghost` alpha over the near-black panel
+        // reads as painted, which would make an EMPTY meter row fail the "top row is quiet" test - a
+        // dark gap never does, and it is the more authentic look anyway. ----
         let scan = Rgba::lerp_linear(panel, Rgba::new(0, 0, 0, 255), t.ghost.clamp(0.0, 1.0));
         let mut y = iy0 + 1;
         while y < bottom {
@@ -631,7 +634,10 @@ impl Family for Term {
 
         // ---- status bar ----
         if status {
-            let bg = if tracing { Rgba::from_hex(PANIC_STATUS_BG, 1.0) } else { Rgba::from_hex(STATUS_BG, 1.0) };
+            // On matrix the editor-background status bar equals the panel, so it would vanish; give it
+            // the theme's panel.background (`#0e0952`) there so the bar reads on every colourway.
+            let normal_bg = if t.id == "term-2077-matrix" { "#0e0952" } else { STATUS_BG };
+            let bg = if tracing { Rgba::from_hex(PANIC_STATUS_BG, 1.0) } else { Rgba::from_hex(normal_bg, 1.0) };
             c.fill_rect(ix0, bottom, iw, STATUS_H, bg);
             let sy = bottom + 1;
             let third = iw / 3;
