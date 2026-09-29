@@ -352,13 +352,14 @@ colourway files, which hot-reload on save and can replace a built-in by reusing 
 
 ## More
 
-**163 colourways across 25 families**: Segmented VFD, Oscilloscope, VU dials, Vaporwave grid,
+**168 colourways across 26 families**: Segmented VFD, Oscilloscope, VU dials, Vaporwave grid,
 Valve row, Fluid, Nixie tubes, Spectrogram, Reel-to-reel, Patchbay, Radar, Pantone, Flame organ,
 Dolphin LCD, 3D spectrum, 3D Pipes, Orbit, Cherry blossom, Kaleidoscope, Rave lasers, Brutalist,
-Chroma field, Virtual Self: wings, Virtual Self: ghost voices, Virtual Self: orb. The full catalogue,
-with a screenshot and one-liner per family, moved out of this README to keep it a reasonable length:
+Chroma field, Virtual Self: wings, Virtual Self: ghost voices, Virtual Self: orb, Bones: VHS tape.
+The full catalogue, with a screenshot and one-liner per family, moved out of this README to keep it
+a reasonable length:
 
-- [docs/themes.md](docs/themes.md) — the full colourway catalogue, all 25 families, and the
+- [docs/themes.md](docs/themes.md) — the full colourway catalogue, all 26 families, and the
   external-theme file format
 - [docs/theme-prompt.md](docs/theme-prompt.md) — a self-contained prompt for having a coding
   agent author new colourways

@@ -12,23 +12,26 @@
 //! - broken bowls on `O`/`S`/`B` - a straight diagonal where a round face would curve,
 //! - hairline 1 px horizontals for the arms of `E`/`T`/`L`/`Z`.
 //!
-//! Only the 13 letters these five words need, plus space: `S E H B O N T A M L W Y Z`.
+//! Only the 14 letters these five words need, plus space: `S E H B O N T A M L W Y Z R` (the `R` is
+//! for the `R` in `SESHOLLOWATE R BOYZ`).
 //!
 //! Row encoding: each `u16` is one row, **bit 0 = the leftmost column** (so `1 << col` tests a
-//! column). The `// ....##` picture beside every literal is the authoritative, rendered-orientation
-//! view; because bit 0 is the LEFT end, the binary literal itself reads left-to-right as the MIRROR
-//! of that picture. Trust the comment. The glyph data was authored as ASCII pictures and the
-//! literals generated from them, so the two cannot drift.
+//! column). Bit `i` is column `i` directly - there is no mirroring between the bits and the
+//! picture. The `// ....##` picture beside every literal is the authoritative, rendered-orientation
+//! view and reads column-for-column with the bits (leftmost `#` in the picture is bit 0). The glyph
+//! data was authored as ASCII pictures and the literals generated from them, so the two cannot drift.
 //!
-//! Nothing in the crate calls this yet: the `sesh` family (the next task) is its only consumer, so
-//! the module-level `dead_code` allow keeps the CI `-D warnings` gate green until that wiring lands.
-//! It follows the same pattern as the not-yet-read `FrameData` fields in `render/mod.rs`.
-#![allow(dead_code)]
+//! The `sesh` family is the sole consumer.
 
 use crate::render::canvas::{Canvas, Rgba};
 
 /// The only characters with a glyph. Anything else yields `None` from [`glyph`].
-pub const GOTHIC_CHARS: &str = "SEHBONTAMLWYZ ";
+///
+/// `cfg(test)` because the release build reaches the glyphs through [`glyph`]/[`draw`], never through
+/// this catalogue - it exists for the font's own coverage tests. Left out of the release build rather
+/// than silenced with an `allow(dead_code)`, so the crate stays warning-free without hiding anything.
+#[cfg(test)]
+pub const GOTHIC_CHARS: &str = "SEHBONTAMLWYZR ";
 
 /// Two hand-drawn sizes: `Small` is 9 rows (glyphs 5-6 columns, space 3), `Large` is 13 rows
 /// (glyphs 7-8 columns, space 4). The `sesh` family picks the largest that fits the panel.
@@ -273,6 +276,24 @@ const Z_L: ([u16; 13], i32) = (
     ],
     7,
 );
+const R_L: ([u16; 13], i32) = (
+    [
+        0b0000010, // .#.....
+        0b0011111, // #####..
+        0b0110011, // ##..##.
+        0b0110011, // ##..##.
+        0b0011011, // ##.##..
+        0b0001111, // ####...
+        0b0011011, // ##.##..
+        0b0110011, // ##..##.
+        0b0110011, // ##..##.
+        0b1100011, // ##...##
+        0b1100011, // ##...##
+        0b1100001, // #....##
+        0b0000001, // #......
+    ],
+    7,
+);
 const SP_L: ([u16; 13], i32) = ([0; 13], 4);
 
 // ===== SMALL (9 rows) =====
@@ -458,6 +479,20 @@ const Z_S: ([u16; 9], i32) = (
     ],
     5,
 );
+const R_S: ([u16; 9], i32) = (
+    [
+        0b00010, // .#...
+        0b00111, // ###..
+        0b01011, // ##.#.
+        0b01011, // ##.#.
+        0b00111, // ###..
+        0b01011, // ##.#.
+        0b01011, // ##.#.
+        0b11001, // #..##
+        0b10001, // #...#
+    ],
+    5,
+);
 const SP_S: ([u16; 9], i32) = ([0; 9], 3);
 
 /// The rows (bit 0 = leftmost column) and column width of `ch`, or `None` if it has no glyph.
@@ -476,6 +511,7 @@ pub fn glyph(ch: char, size: GothicSize) -> Option<(&'static [u16], i32)> {
         (GothicSize::Large, 'W') => (&W_L.0[..], W_L.1),
         (GothicSize::Large, 'Y') => (&Y_L.0[..], Y_L.1),
         (GothicSize::Large, 'Z') => (&Z_L.0[..], Z_L.1),
+        (GothicSize::Large, 'R') => (&R_L.0[..], R_L.1),
         (GothicSize::Large, ' ') => (&SP_L.0[..], SP_L.1),
         (GothicSize::Small, 'S') => (&S_S.0[..], S_S.1),
         (GothicSize::Small, 'E') => (&E_S.0[..], E_S.1),
@@ -490,6 +526,7 @@ pub fn glyph(ch: char, size: GothicSize) -> Option<(&'static [u16], i32)> {
         (GothicSize::Small, 'W') => (&W_S.0[..], W_S.1),
         (GothicSize::Small, 'Y') => (&Y_S.0[..], Y_S.1),
         (GothicSize::Small, 'Z') => (&Z_S.0[..], Z_S.1),
+        (GothicSize::Small, 'R') => (&R_S.0[..], R_S.1),
         (GothicSize::Small, ' ') => (&SP_S.0[..], SP_S.1),
         _ => return None,
     };

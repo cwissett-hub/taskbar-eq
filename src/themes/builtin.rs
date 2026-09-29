@@ -644,6 +644,98 @@ pub fn vsorb_mono() -> Theme {
     }
 }
 
+// Bones / TeamSESH: a VHS tape. See `render::sesh` for what the meter is. The panel is opaque
+// (near-black, or the bleached tape's warm off-white), and everything - scanlines, tracking tears,
+// the blackletter word, the camcorder stamp - is drawn over it. The contrast rule is on `lit`
+// against `panel`, and each set below clears it comfortably (the bleached set is ~15:1). `ghost` is
+// the scanline alpha; `edge_alpha` the word-outline alpha. `hot` appears only on the camcorder stamp
+// and the word outline (never as word fill on the near-black panel, which would fail 3:1).
+
+fn sesh_base() -> Theme {
+    Theme {
+        family: "sesh".into(),
+        texture: Texture::None_,
+        panel_alpha: 1.0,
+        bloom: 0.0,
+        glow_strength: 0.0,
+        edge_alpha: 0.9,
+        // Snappy tears that fall away, with a slowly decaying peak-hold mark.
+        ballistics: Ballistics { attack: 0.7, decay: 0.2, peak_fall: 0.015 },
+        ..Theme::default()
+    }
+}
+
+/// Heavy tracking, a small word: the tape colourway. Off-white picture on near-black.
+pub fn sesh_tape() -> Theme {
+    Theme {
+        id: "sesh-tape".into(),
+        name: "Sesh Tape".into(),
+        lit: "#e8e6e0".into(),
+        hot: "#ffffff".into(),
+        panel: "#0a0a0a".into(),
+        edge: "#3a3a3a".into(),
+        ghost: 0.22,
+        ..sesh_base()
+    }
+}
+
+/// A big word, a gentle tape: the word colourway.
+pub fn sesh_word() -> Theme {
+    Theme {
+        id: "sesh-word".into(),
+        name: "Sesh Word".into(),
+        lit: "#f2f0ea".into(),
+        hot: "#ffffff".into(),
+        panel: "#0a0a0a".into(),
+        edge: "#404040".into(),
+        ghost: 0.12,
+        ..sesh_base()
+    }
+}
+
+/// Chroma bleed: the word drawn thrice, offset a pixel, in red / lit / cyan (the offsets and plate
+/// colours live in `render::sesh`).
+pub fn sesh_vhs() -> Theme {
+    Theme {
+        id: "sesh-vhs".into(),
+        name: "Sesh VHS".into(),
+        lit: "#dcdcdc".into(),
+        hot: "#ffffff".into(),
+        panel: "#0d0d0f".into(),
+        edge: "#444444".into(),
+        ghost: 0.18,
+        ..sesh_base()
+    }
+}
+
+/// The ONE red: the word outline and the REC dot are `hot` (`#c8102e`), nothing else.
+pub fn sesh_red() -> Theme {
+    Theme {
+        id: "sesh-red".into(),
+        name: "Sesh Red".into(),
+        lit: "#e8e6e0".into(),
+        hot: "#c8102e".into(),
+        panel: "#0a0a0a".into(),
+        edge: "#3a3a3a".into(),
+        ghost: 0.18,
+        ..sesh_base()
+    }
+}
+
+/// The inverted tape: a dark picture on a bleached off-white panel, noise streaks dark on light.
+pub fn sesh_bleached() -> Theme {
+    Theme {
+        id: "sesh-bleached".into(),
+        name: "Sesh Bleached".into(),
+        lit: "#111111".into(),
+        hot: "#000000".into(),
+        panel: "#e8e6e0".into(),
+        edge: "#b8b4ac".into(),
+        ghost: 0.25,
+        ..sesh_base()
+    }
+}
+
 pub fn all() -> Vec<Theme> {
     vec![
         vfd_ice(),
@@ -809,6 +901,11 @@ pub fn all() -> Vec<Theme> {
         tube_nixie_green(),
         tube_copper(),
         tube_red_plate(),
+        sesh_tape(),
+        sesh_word(),
+        sesh_vhs(),
+        sesh_red(),
+        sesh_bleached(),
     ]
 }
 
