@@ -162,8 +162,11 @@ pub struct Vsorb {
     bg_final: Option<Canvas>,
     /// The `(w, h, panel, edge, hot, panel_alpha, ghost, disc positions)` `bg_final` was built for.
     bg_final_key: Option<BgFinalKey>,
-    /// Scratch canvas sized to just the orb/spikes' bounding box, reused across frames, so `bloom` can
-    /// run its box blur over that box instead of the whole (much wider) panel.
+    /// Scratch canvas sized to the orb/spikes' worst-case (bass = 1.0) bounding box padded by two
+    /// bloom radii, so `bloom` can run its box blur over that box instead of the whole (much wider)
+    /// panel. Fixed size for a given panel size - built from the RADIUS formula's maximum, not the
+    /// current `self.radius`, which drifts every frame with bass - so `Canvas::new` fires only on an
+    /// actual resize, never mid-playback.
     bloom_scratch: Option<Canvas>,
     /// splitmix64 state, seeded constant, for the shatter's jitter.
     rng: u64,
@@ -354,7 +357,7 @@ impl Vsorb {
         bg.rounded_rect(1, 2, w - 2, h - 4, 3, panel);
         let top = Rgba::from_hex(&t.panel, 1.0);
         let bot = Rgba::from_hex(&t.edge, 1.0);
-        bg.vertical_gradient(2, 2, w - 2, h - 2, &[(0.0, top), (1.0, bot)], false);
+        bg.vertical_gradient(2, 2, w - 4, h - 4, &[(0.0, top), (1.0, bot)], false);
         self.bg_cache = Some(bg);
         self.bg_key = Some((w, h, t.panel.clone(), t.edge.clone(), t.panel_alpha));
     }
@@ -605,38 +608,59 @@ impl Family for Vsorb {
         // `bloom` box-blurs every pixel of whatever canvas it is given, but the orb/spikes/shards
         // never fill more than a bounding box around the panel's centre - a wide taskbar panel around
         // a squat, centred orb is mostly untouched transparent background the blur would otherwise
-        // churn through for nothing. So: bound the box analytically (radius plus the worst-case spike
-        // reach, both provable upper bounds on where anything was actually drawn - see the comment
-        // below), pad it by the bloom radius so the crop sees the same neighbourhood a full-canvas
-        // blur would have (box blur has radius-limited support, so beyond that pad the result is
-        // exactly zero either way), lift just that box into a reused scratch canvas, bloom the box,
-        // and copy it back. Shards fly out to `h * 1.4` on a shatter, well past any box worth cropping
-        // for a rare 700ms flourish, so that path keeps blooming the whole layer.
+        // churn through for nothing. So: bound an INNER box by the worst-case reach - not the current
+        // `self.radius`, which drifts every frame with bass, but the formula's own maximum (see
+        // `max_reach` below) - so the box, and the scratch canvas sized to it, are fixed for a given
+        // panel size and never trigger a reallocation mid-playback, only on an actual resize.
+        //
+        // The inner box is padded by one bloom radius (any wireframe/spike/shard pixel is provably
+        // within it - see the comment on `max_reach`), and the box actually bloomed is the inner box
+        // padded by a SECOND bloom radius on top of that. Blooming the wider outer box and then
+        // pasting back only the inner box is what makes this bit-exact against blooming the whole
+        // canvas: a pixel on the inner box's own edge needs neighbours up to one radius further out
+        // to match a full-canvas blur, and the outer pad supplies exactly those (real, in-canvas,
+        // correctly-zero-there) neighbours - narrower padding (one radius, discarding none of it)
+        // would get the *inner* pixels right but silently give the *outer* pixels a smaller sample
+        // count than a full-canvas blur would (fewer real in-bounds-but-zero taps counted before
+        // hitting the cropped canvas's own edge), which is only a problem if those outer pixels were
+        // ever composited back - they are not, here. Shards fly out to `h * 1.4` on a shatter, well
+        // past any box worth cropping for a rare 700ms flourish, so that path keeps blooming the
+        // whole layer.
         let radius = t.bloom as i32;
         if radius > 0 && t.glow_strength > 0.0 {
             if self.shards_live {
                 layer.bloom(radius, t.glow_strength);
             } else {
-                // Upper bound on any wireframe/spike pixel's distance from centre: wireframe vertices
-                // sit at exactly `self.radius`; spike tips reach `self.radius + spike_len[k]`, and
-                // `spike_len[k]` can never exceed its own target `SPIKE_BASE + lvl * spike_span` (the
-                // exponential smoothing above is a convex combination of the current value and that
-                // target, so by induction from the `SPIKE_BASE` starting value it never overshoots).
-                let reach = self.radius + SPIKE_BASE + spike_span;
-                let bx0 = ((cx - reach).floor() as i32 - radius).max(0);
-                let bx1 = ((cx + reach).ceil() as i32 + radius + 1).min(w);
-                let by0 = ((cy - reach).floor() as i32 - radius).max(0);
-                let by1 = ((cy + reach).ceil() as i32 + radius + 1).min(h);
-                let (bw, bh) = (bx1 - bx0, by1 - by0);
-                if bw > 0 && bh > 0 && (bw < w || bh < h) {
+                // Upper bound on any wireframe/spike pixel's distance from centre, using the RADIUS
+                // formula's own maximum (at bass = 1.0) rather than the current `self.radius`: the
+                // exponential smoothing in both the radius and spike-length updates is a convex
+                // combination of the current value and a target that never exceeds this maximum, so
+                // by induction from their starting values (0 and `SPIKE_BASE`) neither ever
+                // overshoots it.
+                let max_radius = h as f32 * (RADIUS_MIN + RADIUS_GAIN);
+                let reach = max_radius + SPIKE_BASE + spike_span;
+                let ibx0 = (cx - reach).floor() as i32 - radius;
+                let ibx1 = (cx + reach).ceil() as i32 + radius + 1;
+                let iby0 = (cy - reach).floor() as i32 - radius;
+                let iby1 = (cy + reach).ceil() as i32 + radius + 1;
+                let (bx0, bx1) = (ibx0.max(0), ibx1.min(w));
+                let (by0, by1) = (iby0.max(0), iby1.min(h));
+                let ox0 = (bx0 - radius).max(0);
+                let ox1 = (bx1 + radius).min(w);
+                let oy0 = (by0 - radius).max(0);
+                let oy1 = (by1 + radius).min(h);
+                let (obw, obh) = (ox1 - ox0, oy1 - oy0);
+                if bx1 > bx0 && by1 > by0 && obw > 0 && obh > 0 && (obw < w || obh < h) {
                     let mut sub = self
                         .bloom_scratch
                         .take()
-                        .filter(|s| s.width() == bw && s.height() == bh)
-                        .unwrap_or_else(|| Canvas::new(bw, bh));
-                    sub.copy_region(&layer, (bx0, by0), (0, 0), bw, bh);
+                        .filter(|s| s.width() == obw && s.height() == obh)
+                        .unwrap_or_else(|| Canvas::new(obw, obh));
+                    sub.copy_region(&layer, (ox0, oy0), (0, 0), obw, obh);
                     sub.bloom(radius, t.glow_strength);
-                    layer.copy_region(&sub, (0, 0), (bx0, by0), bw, bh);
+                    // Paste back only the inner box - the outer pad ring exists solely to feed the
+                    // inner box's own edge pixels correct neighbours and is discarded, not composited.
+                    layer.copy_region(&sub, (bx0 - ox0, by0 - oy0), (bx0, by0), bx1 - bx0, by1 - by0);
                     self.bloom_scratch = Some(sub);
                 } else {
                     layer.bloom(radius, t.glow_strength);
