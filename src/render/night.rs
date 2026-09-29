@@ -372,51 +372,62 @@ impl Night {
     fn draw_readouts(&self, c: &mut Canvas, origin: (i32, i32), h: i32, d: &FrameData, edge: Rgba, value: Rgba) {
         let (ix0, iy0) = origin;
         let x = ix0 + 2;
+        let right = ix0 + READOUT_W; // nothing may paint at or past this column
         let rms = if d.rms_l.is_finite() { d.rms_l.clamp(0.0, 1.0) } else { 0.0 };
         let three = h >= 52;
         let (row_ram, row_hp, row_net) = (iy0 + 2, if three { iy0 + 8 } else { iy0 + 2 }, iy0 + 14);
 
         if three {
             // RAM + four quartile blocks.
-            let lw = font3x5::draw(c, x, row_ram, "RAM", edge);
+            let lw = font3x5::draw(c, x, row_ram, clip_label("RAM", right - x), edge);
             let filled = (rms * 4.0).round() as i32;
             let bx0 = x + lw + 2;
             for i in 0..4 {
                 let bx = bx0 + i * 4;
+                if bx + 3 > right {
+                    break; // a block would cross into the cells
+                }
                 let col = if i < filled { value } else { edge };
                 c.fill_rect(bx, row_ram, 3, 5, col);
             }
         }
 
         // HP + number.
-        let lw = font3x5::draw(c, x, row_hp, "HP", edge);
+        let lw = font3x5::draw(c, x, row_hp, clip_label("HP", right - x), edge);
         let mut buf = [0u8; 3];
         let s = fmt_u32(self.hp.round() as u32, &mut buf);
-        font3x5::draw(c, x + lw + 2, row_hp, s, value);
+        let vx = x + lw + 2;
+        font3x5::draw(c, vx, row_hp, clip_label(s, right - vx), value);
 
         if three {
             // NET + a two-digit hex byte.
-            let lw = font3x5::draw(c, x, row_net, "NET", edge);
+            let lw = font3x5::draw(c, x, row_net, clip_label("NET", right - x), edge);
             let mut hx = [0u8; 2];
             fmt_hex(self.net_hex, &mut hx);
             if let Ok(s) = std::str::from_utf8(&hx) {
-                font3x5::draw(c, x + lw + 2, row_net, s, value);
+                let vx = x + lw + 2;
+                font3x5::draw(c, vx, row_net, clip_label(s, right - vx), value);
             }
         }
     }
 
-    /// The malfunction telemetry: `SYSTEM` / `MALFUNCTION` / `RELIC 2.0 ERR` in red (white on arasaka),
-    /// drawn over the composed frame so the RGB split fringes it too.
+    /// The malfunction telemetry, in red (white on arasaka), drawn over the composed frame so the RGB
+    /// split fringes it too. The words are chosen to fit whole inside the 34 px column, and every draw
+    /// is clipped by whole glyphs so nothing paints at or past `ix0 + READOUT_W`.
     fn draw_malfunction_readouts(&self, c: &mut Canvas, origin: (i32, i32), h: i32, arasaka: bool, hot: Rgba) {
         let (ix0, iy0) = origin;
         let x = ix0 + 2;
+        let right = ix0 + READOUT_W;
         let col = if arasaka { hot } else { Rgba::from_hex(MALFUNCTION_RED, 1.0) };
+        let draw = |c: &mut Canvas, y: i32, s: &str| {
+            font3x5::draw(c, x, y, clip_label(s, right - x), col);
+        };
         if h >= 52 {
-            font3x5::draw(c, x, iy0 + 2, "SYSTEM", col);
-            font3x5::draw(c, x, iy0 + 8, "MALFUNCTION", col);
-            font3x5::draw(c, x, iy0 + 14, "RELIC 2.0 ERR", col);
+            draw(c, iy0 + 2, "SYSTEM");
+            draw(c, iy0 + 8, "MALFUNC");
+            draw(c, iy0 + 14, "RELIC2.0");
         } else {
-            font3x5::draw(c, x, iy0 + 2, "MALFUNCTION", col);
+            draw(c, iy0 + 2, "MALFUNC");
         }
     }
 
@@ -528,6 +539,18 @@ impl Night {
         }
         self.scratch = Some(scr);
     }
+}
+
+/// The longest whole-glyph prefix of `text` that fits within `max_w` px at the 3x5 font's 4 px pitch
+/// (`font3x5::width(prefix) <= max_w`), so a readout label can never paint past its column. ASCII-only
+/// labels, so a byte prefix is a char prefix.
+fn clip_label(text: &str, max_w: i32) -> &str {
+    if max_w <= 0 {
+        return "";
+    }
+    // width(n chars) = 4n - 1 <= max_w  <=>  n <= (max_w + 1) / 4.
+    let n = (((max_w + 1) / 4) as usize).min(text.len());
+    &text[..n]
 }
 
 /// Formats `v` (0..=999) as decimal into `buf` with no leading zeros, returning the slice.
@@ -684,6 +707,38 @@ mod tests {
             let c = frames(&mut fam, &t, 190, 48, 0.5, 12);
             assert!(lit(&c, &t) > 0, "{id}");
             let _ = frames(&mut Night::default(), &t, 128, 44, 0.6, 5);
+        }
+    }
+
+    #[test]
+    fn readout_labels_never_cross_into_the_cells() {
+        // The malfunction labels must stay inside their 34px column. Measured on a malfunction frame
+        // whose envelope has decayed far enough that the RGB split is off (dx = round(SPLIT_PX*env) = 0)
+        // - so the only bright red in the readout rows is the labels themselves (the glitch bars are
+        // dim at this envelope and the split, which intentionally fringes the WHOLE interior, is not
+        // active here). An unclipped `MALFUNCTION` would paint opaque red past the column into the first
+        // cells; a clipped one cannot.
+        let t = theme("night-liberty");
+        let mut fam = Night::default();
+        let _ = frames(&mut fam, &t, 380, 60, 0.5, 8);
+        fam.flourish.force_next();
+        // Draws needed after the firing frame to bring env into (0.1, 0.5/SPLIT_PX) so dx == 0. The
+        // frames() helper fires on its first draw, so the count includes that one.
+        let per = 16.7 / MALFUNCTION_MS; // env decay per frame at the helper's dt
+        let decays = ((1.0 - 0.13) / per).round() as usize;
+        let c = frames(&mut fam, &t, 380, 60, 0.5, decays + 1);
+        let (ix0, iy0) = (3i32, 4i32);
+        let gap_lo = ix0 + READOUT_W; // 37 - the column's right bound
+        let cell0 = fam.first_cell_x(); // the first cell's left edge
+        assert!(cell0 >= gap_lo, "layout regressed: cell0 {cell0} < column right {gap_lo}");
+        // Opaque #FF003C-ish (the malfunction text). Dim bars at this envelope fall well under r>180.
+        let is_red = |p: Rgba| p.r > 180 && p.g < 80 && (25..100).contains(&(p.b as i32));
+        for &ry in &[iy0 + 2, iy0 + 8, iy0 + 14] {
+            for y in ry..ry + 5 {
+                for x in gap_lo..cell0 {
+                    assert!(!is_red(c.get(x, y)), "a readout label painted red into the cells at {x},{y}");
+                }
+            }
         }
     }
 
