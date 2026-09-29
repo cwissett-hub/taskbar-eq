@@ -862,6 +862,97 @@ pub fn night_liberty() -> Theme {
     }
 }
 
+// Terminal: 2077 - the user's own VSCode "2077" theme (endormi.2077-theme) as a live shell whose
+// output lines are the meter. See `render::term`. Every panel is opaque; the contrast rule is on
+// `lit` against `panel` and each pair clears it comfortably (light or saturated foreground on a navy
+// panel). `hot` is the cursor / peak / line-number colour, `edge` the 1 px border, `ghost` the CRT
+// scanline darkening. Colours are the theme's own, taken from `theme/2077 theme-color-theme.json`.
+fn term_base() -> Theme {
+    Theme {
+        family: "term".into(),
+        texture: Texture::None_,
+        panel_alpha: 1.0,
+        bloom: 0.0,
+        glow_strength: 0.0,
+        edge_alpha: 1.0,
+        // Snappy: a terminal repaints instantly, with a slowly decaying peak-hold marker.
+        ballistics: Ballistics { attack: 0.8, decay: 0.3, peak_fall: 0.02 },
+        ..Theme::default()
+    }
+}
+
+/// The theme verbatim: light foreground on the terminal navy, hot-pink cursor and line numbers, the
+/// seven-colour ANSI row cycle (in `render::term`). A mixed dev shell.
+pub fn term_2077() -> Theme {
+    Theme {
+        id: "term-2077".into(),
+        name: "Term 2077".into(),
+        lit: "#e4eeff".into(),
+        hot: "#ee0077".into(),
+        panel: "#0d0936".into(),
+        edge: "#181657".into(),
+        ghost: 0.10,
+        ..term_base()
+    }
+}
+
+/// Monochrome cyan, pink only on the prompt chevron. A network-ops session.
+pub fn term_2077_cyan() -> Theme {
+    Theme {
+        id: "term-2077-cyan".into(),
+        name: "Term Cyan".into(),
+        lit: "#e4eeff".into(),
+        hot: "#4bc5fa".into(),
+        panel: "#0d0936".into(),
+        edge: "#181657".into(),
+        ghost: 0.10,
+        ..term_base()
+    }
+}
+
+/// Pink/magenta lead, a pink foreground. A git session.
+pub fn term_2077_hot() -> Theme {
+    Theme {
+        id: "term-2077-hot".into(),
+        name: "Term Hot".into(),
+        lit: "#ffd6ec".into(),
+        hot: "#ee0077".into(),
+        panel: "#0d0936".into(),
+        edge: "#181657".into(),
+        ghost: 0.10,
+        ..term_base()
+    }
+}
+
+/// Green on the editor navy, green prompt and cursor. A sysadmin session.
+pub fn term_2077_matrix() -> Theme {
+    Theme {
+        id: "term-2077-matrix".into(),
+        name: "Term Matrix".into(),
+        lit: "#3dd69c".into(),
+        hot: "#06ad00".into(),
+        panel: "#030d22".into(),
+        edge: "#0e0952".into(),
+        ghost: 0.14,
+        ..term_base()
+    }
+}
+
+/// The code-editor token palette (keyword/string/number/function/constant) instead of the ANSI one.
+/// A build & test session.
+pub fn term_2077_editor() -> Theme {
+    Theme {
+        id: "term-2077-editor".into(),
+        name: "Term Editor".into(),
+        lit: "#fdfeff".into(),
+        hot: "#47a1fa".into(),
+        panel: "#030d22".into(),
+        edge: "#181657".into(),
+        ghost: 0.08,
+        ..term_base()
+    }
+}
+
 pub fn all() -> Vec<Theme> {
     vec![
         vfd_ice(),
@@ -1039,6 +1130,11 @@ pub fn all() -> Vec<Theme> {
         night_netrunner(),
         night_corpo(),
         night_liberty(),
+        term_2077(),
+        term_2077_cyan(),
+        term_2077_hot(),
+        term_2077_matrix(),
+        term_2077_editor(),
     ]
 }
 

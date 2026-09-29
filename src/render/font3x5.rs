@@ -31,7 +31,10 @@ use crate::render::canvas::{Canvas, Rgba};
 ///
 /// `'>'` renders as a solid right-pointing triangle - the PLAY marker.
 pub fn glyph(ch: char) -> Option<[u8; 5]> {
-    Some(match ch {
+    // Upper-cased first: this is a single-case 3x5 font (lowercase is not distinguishable at 3px),
+    // so a terminal command typed in lowercase renders in the same capitals as the sesh/night
+    // labels. A no-op for the all-caps callers that predate this.
+    Some(match ch.to_ascii_uppercase() {
         'A' => [0b010, 0b101, 0b111, 0b101, 0b101],
         'B' => [0b110, 0b101, 0b110, 0b101, 0b110],
         'C' => [0b011, 0b100, 0b100, 0b100, 0b011],
@@ -77,6 +80,16 @@ pub fn glyph(ch: char) -> Option<[u8; 5]> {
         '/' => [0b001, 0b001, 0b010, 0b100, 0b100],
         '(' => [0b001, 0b010, 0b010, 0b010, 0b001],
         ')' => [0b100, 0b010, 0b010, 0b010, 0b100],
+        // The terminal family's meter blocks and the punctuation its command/label/trace strings
+        // need: a solid bar cell, an outline peak marker, and `' _ ~ # % =` (`: . - /` already above).
+        '▮' => [0b111, 0b111, 0b111, 0b111, 0b111],
+        '▯' => [0b111, 0b101, 0b101, 0b101, 0b111],
+        '\'' => [0b010, 0b010, 0b000, 0b000, 0b000],
+        '_' => [0b000, 0b000, 0b000, 0b000, 0b111],
+        '~' => [0b000, 0b011, 0b110, 0b000, 0b000],
+        '#' => [0b101, 0b111, 0b101, 0b111, 0b101],
+        '%' => [0b101, 0b001, 0b010, 0b100, 0b101],
+        '=' => [0b000, 0b111, 0b000, 0b111, 0b000],
         // The PLAY marker: a solid right-pointing triangle.
         '>' => [0b100, 0b110, 0b111, 0b110, 0b100],
         ' ' => [0, 0, 0, 0, 0],
@@ -123,7 +136,7 @@ mod tests {
             }
             assert!(rows.iter().any(|r| *r != 0), "{ch:?} is blank");
         }
-        assert!(glyph('#').is_none(), "an unsupported char must yield None");
+        assert!(glyph('@').is_none(), "an unsupported char must yield None");
     }
 
     #[test]
@@ -157,6 +170,8 @@ mod tests {
         let labels = [
             "PLAY", "REC", "TRACKING", "00:00:00", "RAM", "HP", "NET", "SYSTEM", "MALFUNCTION",
             "RELIC 2.0 ERR",
+            // The term family's block glyphs and its status/comment labels.
+            "▮▯>", "~/music", "UTF-8  LF", "EXIT 101", "# bpm ~ 142",
         ];
         for label in labels {
             for ch in label.chars() {

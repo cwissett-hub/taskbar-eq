@@ -1,9 +1,9 @@
 # Themes
 
-**175 colourways across 27 families.** A *family* is a renderer with fixed geometry — code. A
+**180 colourways across 28 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
-## All 27 families
+## All 28 families
 
 Six are written up in full below (Segmented VFD, Oscilloscope, VU dials, Vaporwave grid, Valve
 row, Fluid). The other nineteen shipped later and their full write-ups still live in
@@ -39,6 +39,7 @@ split, and worth knowing before you go looking for one and only find it in the o
 | Virtual Self: orb | A wireframe chrome icosphere the bass inflates, ringed by 24 spectrum spikes; it shatters into its triangles on a flourish |
 | Bones / TeamSESH: VHS | A worn cassette dub — rolling scanlines torn per band with the bass, a blackletter word centred over them (the word font is `gothic`), a camcorder PLAY/REC stamp; the flourish is a tape dropout |
 | Cyberpunk 2077: HUD | A Cyberpunk-2077 combat HUD — chamfered hatch-filled cells as a bottom-up meter, a spectrum scanner, RAM/HP/NET readouts (labels use `font3x5`); the flourish is a relic malfunction (RGB split, red glitch bars) |
+| Terminal: 2077 | The user's VSCode "2077" theme as a live shell — a prompt that types a command per onset, pink line numbers, a block cursor, a status bar, and rows of `▮` bars that grow with the bass (labels use `font3x5`); the flourish is a red Rust `panic!` that scrolls away |
 
 The Virtual Self: wings colourways are `vswings-particle-arts` (ice panel, cobalt-to-electric
 wings, cobalt floor), `vswings-eon-break` (black panel, cobalt-to-electric wings, white floor),
@@ -67,6 +68,14 @@ The Cyberpunk 2077: HUD colourways are `night-yellow` (yellow on black, cyan sca
 values), `night-arasaka` (red on near-black with white readouts, red scanner), `night-netrunner`
 (cyan primary, magenta peaks, bright-cyan scanner), `night-corpo` (white/grey with yellow only on
 peaks, grey scanner) and `night-liberty` (yellow with red peaks and a red scanner).
+
+The Terminal: 2077 colourways are `term-2077` (the theme verbatim: light foreground on terminal
+navy, hot-pink cursor/line numbers, the seven-colour ANSI row cycle — a mixed dev shell),
+`term-2077-cyan` (monochrome cyan, pink only on the prompt — a network-ops session), `term-2077-hot`
+(pink/magenta lead — a git session), `term-2077-matrix` (green on the editor navy, green prompt — a
+sysadmin session) and `term-2077-editor` (the code-editor token palette instead of the ANSI one — a
+build & test session). Each session types a different command list; the flourish is a red Rust
+`panic!` stack trace that scrolls up and away.
 
 **Five families reuse the `[tube]` table for their own hardware materials**, even though only
 one of them is the Valve row (`tube`) family itself: **Cherry blossom**, **Flame organ**,
@@ -180,7 +189,7 @@ Drop a `.toml` file (any filename — the `id` inside is what matters) into
 watched, so saving the file updates the live overlay without a restart — edit a colour, hit
 save, and watch the taskbar change.
 
-A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 175
+A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 180
 built-ins, which are always embedded in the exe regardless of whether that folder exists.
 
 Failure modes are all deliberately soft, because these files are hand-authored:
