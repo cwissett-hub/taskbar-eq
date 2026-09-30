@@ -432,8 +432,9 @@ fn vswings_base() -> Theme {
         // 0.24 rather than the usual 0.35: the wing tips are white or near-white, and at 0.35 their
         // halo swelled into a blob that swallowed the feathered edge - see the family's eyeball notes.
         glow_strength: 0.24,
-        // Quick to rise, slow to fall - the wing beats on the transient and settles between.
-        ballistics: Ballistics { attack: 0.55, decay: 0.12, peak_fall: 0.01 },
+        // Retuned for 150-170 BPM Virtual Self: snappy attack, fast decay and peak fall so the wing
+        // beat resolves cleanly at a kick every ~350-400 ms instead of smearing into the next one.
+        ballistics: Ballistics { attack: 0.9, decay: 0.35, peak_fall: 0.03 },
         ..Theme::default()
     }
 }
@@ -529,8 +530,9 @@ fn vsghost_base() -> Theme {
         glow_strength: 0.0,
         // The resting grid, drawn in `lit` at this alpha, so it is always faintly there.
         ghost: 0.16,
-        // Snappy: the ticks jump on the transient and fall away, and the peak hangs then decays slowly.
-        ballistics: Ballistics { attack: 0.8, decay: 0.25, peak_fall: 0.02 },
+        // Retuned for 150-170 BPM Virtual Self: snappy attack, fast decay and peak fall so the ticks
+        // resolve cleanly at a kick every ~350-400 ms instead of smearing into the next one.
+        ballistics: Ballistics { attack: 0.9, decay: 0.35, peak_fall: 0.03 },
         ..Theme::default()
     }
 }
@@ -602,8 +604,9 @@ fn vsorb_base() -> Theme {
         glow_strength: 0.3,
         // The drifting background discs, drawn in `hot` at this alpha.
         ghost: 0.12,
-        // Quick to swell on the kick, slow to settle - the orb beats with the bass.
-        ballistics: Ballistics { attack: 0.5, decay: 0.1, peak_fall: 0.01 },
+        // Retuned for 150-170 BPM Virtual Self: snappy attack, fast decay and peak fall so the orb
+        // beat resolves cleanly at a kick every ~350-400 ms instead of smearing into the next one.
+        ballistics: Ballistics { attack: 0.9, decay: 0.35, peak_fall: 0.03 },
         ..Theme::default()
     }
 }

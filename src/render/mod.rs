@@ -535,6 +535,198 @@ mod opacity {
             }
         }
     }
+
+    /// Parses `tests/fixtures/high-bpm-bands.csv`: one `#`-prefixed provenance comment, then one row
+    /// per frame of 64 comma-separated band levels, same shape as the other `real-music-*` fixtures.
+    fn parse_high_bpm_fixture() -> Vec<[f32; NUM_BANDS]> {
+        include_str!("../../tests/fixtures/high-bpm-bands.csv")
+            .lines()
+            .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
+            .map(|l| {
+                let mut row = [0.0f32; NUM_BANDS];
+                for (i, v) in l.split(',').filter_map(|v| v.parse::<f32>().ok()).enumerate() {
+                    if i < NUM_BANDS {
+                        row[i] = v;
+                    }
+                }
+                row
+            })
+            .collect()
+    }
+
+    /// Weighted rather than a thresholded count: a hard "differs by more than N" count treats an
+    /// 8-band, amplitude-0.9 kick and a 16-band, amplitude-0.5 off-beat hat as roughly interchangeable
+    /// once both clear the threshold - the wider hat band range then outweighs the kick just by
+    /// spatial coverage, in a family whose paint is spread across the band range rather than
+    /// concentrated in it. Summing the actual per-pixel colour distance keeps a dim, wide hat response
+    /// smaller than a bright, narrow kick response, the way the ear (and the eye, looking at a real
+    /// panel) actually weighs them.
+    fn paint_delta(px: crate::render::canvas::Rgba, bg: crate::render::canvas::Rgba) -> i32 {
+        (px.r as i32 - bg.r as i32).abs() + (px.g as i32 - bg.g as i32).abs() + (px.b as i32 - bg.b as i32).abs()
+    }
+
+    /// Virtual Self's three families - `vswings`, `vsghost`, `vsorb` - are tuned for a kick every
+    /// ~350-400 ms (150-170 BPM Virtual Self / hardcore), not the slower material the shared
+    /// ballistics defaults were picked against. The meter has to actually keep time: fed a fixture
+    /// with a real beat in it, the painted-pixel envelope's autocorrelation peak must land near the
+    /// beat period, and each beat's peak-to-floor swing must be substantial rather than smeared into
+    /// a near-constant glow.
+    ///
+    /// `tests/fixtures/high-bpm-bands.csv` is SYNTHETIC (see its header): a 160 BPM kick (every
+    /// 375 ms, 40 ms decay) on bands 0..8 plus off-beat hats on bands 40..56, both at a 0.05 noise
+    /// floor, 20 s at 60 fps. A live capture from a real Virtual Self track is preferred and should
+    /// replace it when one can be made (see `--levels` and `live_identify`).
+    ///
+    /// On the OLD ballistics/refractory (measured directly, not just asserted): `vswings` and
+    /// `vsorb` both fail the modulation-depth floor (0.33 and 0.27, under 0.35 - the kick's response
+    /// has not decayed enough by the time the off-beat hat arrives to read as a distinct hit).
+    /// `vsghost`'s old ballistics happen to already clear 0.35 on this specific fixture (0.53) - its
+    /// exponential fill decay was already fast enough relative to a 187.5 ms half-beat, even before
+    /// the retune - so it is not a RED case for this particular assertion; it still gets the same
+    /// retune (the brief's ballistics numbers are uniform across the three bases) and the test still
+    /// guards its depth at the new numbers (0.44) and its onset-refractory change, which this test
+    /// does not independently isolate. After the retune, `vswings` and `vsorb` cross the floor
+    /// clearly (0.47 and 0.67).
+    ///
+    /// Slow (feeds 1200 frames to three canvases): excluded from the default suite.
+    /// Run: `cargo test --release slow_vs_high_bpm_response -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn slow_vs_high_bpm_response() {
+        const BEAT_MS: f32 = 375.0; // synthetic fixture: 160 BPM
+        const DT_MS: f32 = 1000.0 / 60.0;
+        let rows = parse_high_bpm_fixture();
+
+        // A pixel's paint is measured against a silently-driven twin at the same `time_s` - the
+        // panel and any time-driven idle motion (a drifting disc, a resting grid) are common to
+        // both, so the diff isolates paint that only exists because the fixture's band energy is
+        // there. Two independently driven `Family` instances are used - one fed the fixture, one
+        // always fed silence - so each keeps its own onset/smoother state, and the silent one never
+        // fires an onset of its own (zero energy never produces a rising flux).
+        let diff_sum = |c: &Canvas, silent: &Canvas| -> f32 {
+            let mut total = 0i64;
+            for y in 3..c.height() - 3 {
+                for x in 2..c.width() - 2 {
+                    total += paint_delta(c.get(x, y), silent.get(x, y)) as i64;
+                }
+            }
+            total as f32
+        };
+
+        for id in ["vswings-particle-arts", "vsghost-white", "vsorb-chrome"] {
+            let t = builtin::all().into_iter().find(|t| t.id == id).unwrap();
+            let mut fam = family_for(&t.family);
+            let mut silent_fam = family_for(&t.family);
+            let mut c = Canvas::new(380, 60);
+            let mut silent = Canvas::new(380, 60);
+
+            let mut painted: Vec<f32> = Vec::with_capacity(rows.len());
+            for (k, row) in rows.iter().enumerate() {
+                let time_s = k as f32 * DT_MS / 1000.0;
+                let d = FrameData { levels: *row, peaks: *row, dt_ms: DT_MS, time_s, ..FrameData::default() };
+                fam.draw(&mut c, &t, &d);
+
+                let silent_d = FrameData {
+                    levels: [0.0; NUM_BANDS],
+                    peaks: [0.0; NUM_BANDS],
+                    dt_ms: DT_MS,
+                    time_s,
+                    ..FrameData::default()
+                };
+                silent_fam.draw(&mut silent, &t, &silent_d);
+
+                painted.push(diff_sum(&c, &silent));
+            }
+
+            // Per-beat modulation depth: how far the painted total falls back from the kick's peak
+            // by the time the NEXT beat's kick is about to land - anchored at two fixed points in
+            // each beat rather than a window (max-min)/max, because this fixture's off-beat hat
+            // (at +187.5 ms, on a different 16-band range) creates its own hump that a plain
+            // window max/min cannot tell apart from the kick's: a family whose kick decays cleanly
+            // but whose hat lingers would still look "resolved" to a window measure, and the
+            // reverse too.
+            //
+            // `peak_i` sits 15 ms into the beat, at the kick's own response; `floor_i` sits at
+            // +180 ms, the moment right before the off-beat hat fires, which is the one point in
+            // the cycle guaranteed to be clear of BOTH events' rise. Depth is (peak-floor)/peak,
+            // averaged over beats 2..30 (0.75-11.25 s in; beats 0-1 are the cold-start warm-up
+            // before the ballistics have settled from their zero initial state).
+            let mut depths = Vec::new();
+            for beat in 2..30usize {
+                let peak_i = ((beat as f32 * BEAT_MS + 15.0) / DT_MS).round() as usize;
+                let floor_i = ((beat as f32 * BEAT_MS + 180.0) / DT_MS).round() as usize;
+                if floor_i >= painted.len() {
+                    break;
+                }
+                let peak = painted[peak_i];
+                let floor = painted[floor_i];
+                if peak > 0.0 {
+                    depths.push((peak - floor) / peak);
+                }
+            }
+            let mod_depth = depths.iter().sum::<f32>() / depths.len().max(1) as f32;
+
+            // Autocorrelation over lags 200-600 ms: the lag with the strongest correlation to the
+            // series' own past is the period the meter is actually beating at.
+            let mean = painted.iter().sum::<f32>() / painted.len() as f32;
+            let centred: Vec<f32> = painted.iter().map(|v| v - mean).collect();
+            let denom: f32 = centred.iter().map(|v| v * v).sum();
+
+            // Autocorrelation rises monotonically as lag -> 0 for any decaying-transient series like
+            // this one, so a raw global argmax over [200, 600] ms is biased toward the window's near
+            // edge rather than the signal's true period. Compute one lag either side of the window
+            // too, and pick the strongest LOCAL maximum (a point higher than both neighbours) inside
+            // it - the standard autocorrelation peak-picking fix for that edge bias. Falls back to
+            // the raw global max only if the window happens to contain no local peak at all.
+            let min_lag = (200.0 / DT_MS).round() as usize;
+            let max_lag = (600.0 / DT_MS).round() as usize;
+            let corr_at = |lag: usize| -> f32 {
+                let mut num = 0.0f32;
+                for i in 0..(centred.len() - lag) {
+                    num += centred[i] * centred[i + lag];
+                }
+                if denom > 0.0 { num / denom } else { 0.0 }
+            };
+            let corrs: Vec<f32> = (min_lag - 1..=max_lag + 1).map(corr_at).collect();
+            let mut best_lag = min_lag;
+            let mut best_corr = f32::MIN;
+            let mut found_local_peak = false;
+            for lag in min_lag..=max_lag {
+                let idx = lag - (min_lag - 1);
+                let c = corrs[idx];
+                let is_local_peak = c >= corrs[idx - 1] && c >= corrs[idx + 1];
+                if is_local_peak && c > best_corr {
+                    best_corr = c;
+                    best_lag = lag;
+                    found_local_peak = true;
+                }
+            }
+            if !found_local_peak {
+                for lag in min_lag..=max_lag {
+                    let c = corrs[lag - (min_lag - 1)];
+                    if c > best_corr {
+                        best_corr = c;
+                        best_lag = lag;
+                    }
+                }
+            }
+            let peak_lag_ms = best_lag as f32 * DT_MS;
+
+            eprintln!("{id}: peak lag {peak_lag_ms:.1} ms (target {BEAT_MS} ms), modulation depth {mod_depth:.3}");
+
+            let tolerance = BEAT_MS * 0.10;
+            assert!(
+                (peak_lag_ms - BEAT_MS).abs() <= tolerance,
+                "{id}: painted-pixel autocorrelation peaks at {peak_lag_ms:.1} ms, not within 10% of \
+                 the {BEAT_MS} ms beat - the meter is not keeping time with a high-BPM track"
+            );
+            assert!(
+                mod_depth >= 0.35,
+                "{id}: per-beat modulation depth {mod_depth:.3} is under the 0.35 floor - the meter is \
+                 smearing into a near-continuous glow instead of resolving each kick"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

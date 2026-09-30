@@ -71,7 +71,7 @@ const SHATTER_MS: f32 = 700.0;
 /// The onset net that speeds the spin. The permissive flux net, so the orb spins up on the beat without
 /// needing its own calibration; the flourish's own trigger is separate and far rarer.
 const SPIN_ONSET_RATIO: f32 = 2.8;
-const SPIN_ONSET_REFRACTORY_MS: f32 = 200.0;
+const SPIN_ONSET_REFRACTORY_MS: f32 = 120.0;
 
 /// How fast the spin-onset excitement decays, in milliseconds.
 const ONSET_DECAY_MS: f32 = 250.0;

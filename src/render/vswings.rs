@@ -78,7 +78,7 @@ const GRID_SCROLL: f32 = 3.5;
 /// The onset that jumps the grid forward a whole cell - the same permissive flux net the flourish uses to
 /// find candidates, so the floor lurches on the beat without needing its own calibration.
 const GRID_ONSET_RATIO: f32 = 2.8;
-const GRID_ONSET_REFRACTORY_MS: f32 = 200.0;
+const GRID_ONSET_REFRACTORY_MS: f32 = 120.0;
 
 /// Feather length: a stub plus level times this fraction of the panel WIDTH. Scaled to width so the wings
 /// grow with the panel and stay legible at 128px, and clamped per-feather to the interior so nothing is

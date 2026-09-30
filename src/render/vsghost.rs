@@ -76,7 +76,7 @@ const MOSH_MS: f32 = 70.0;
 /// The onset net that scrolls the score and swaps the phrase - the same permissive flux net the
 /// flourish uses to find candidates.
 const SCROLL_ONSET_RATIO: f32 = 2.8;
-const SCROLL_ONSET_REFRACTORY_MS: f32 = 200.0;
+const SCROLL_ONSET_REFRACTORY_MS: f32 = 120.0;
 
 /// Display gain from level to tick fill, so a realistic 0.6-0.8 level reaches most of the column.
 const FILL_GAIN: f32 = 1.25;
