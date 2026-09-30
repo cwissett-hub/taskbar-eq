@@ -4,22 +4,33 @@ Kept current and pushed with every change, so progress is visible without readin
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
 **Last updated:** v0.3.2 — FIDELITY PASS 1: FOUR FAMILIES REWORKED, PLUS THE VIRTUAL SELF RETUNE.
-`brutal` (lit tops, shadow sides, formwork, aggregate, cracks, rebar peaks, a slam + dust
-flourish; new `brutal-sodium` colourway), `pipes` (fat shaded pipes, three at once, joints, a
-teapot flourish) and `mesh` (perspective floor, shadows, fog, specular tops, camera yaw, falling
-ghosts on the flourish) and `orbit` (sun with corona, visible orbits, comet tails, an alignment
-flourish) all got a visual-fidelity pass from their original dumps. `pipes` and `mesh` also skip
-bloom entirely on opaque panels (1+ ms saved, byte-identical output) since the bloom composite is
-a no-op there. Separately, all three Virtual Self families (`vswings`, `vsghost`, `vsorb`) are
-retuned for 150-170 BPM material: `ballistics` attack/decay/peak_fall 0.9/0.35/0.03 (all three
-bases, were 0.55/0.12/0.01, 0.8/0.25/0.02, 0.5/0.1/0.01) and onset refractory 120 ms (was 200 ms),
-verified against a new synthetic 160 BPM fixture (`tests/fixtures/high-bpm-bands.csv`,
-`slow_vs_high_bpm_response`) whose autocorrelation and per-beat modulation-depth checks fail on
-the old numbers for `vswings`/`vsorb` and pass on the new ones for all three — see that test's
-doc comment for the measured numbers. All timed families still measure comfortably under budget
-(`slow_vs_timing`): vswings 0.72 ms, vsghost 0.06 ms, vsorb 0.80 ms, sesh 0.27 ms, night 0.20 ms,
-term 0.04 ms. The user judges the four reworked families and the VS retune on the review sheet —
-see Waiting on you below.
+`brutal` (lit tops, shadow sides, formwork, aggregate, cracks, rebar peaks; new `brutal-sodium`
+colourway) fires its slam + dust on every bass onset — the flourish proper is THE MONOLITH, every
+block slamming to full height at once with the panel inverted. `pipes` (fat shaded pipes, three at
+once, joints, a teapot flourish) and `mesh` (perspective floor, shadows, fog, specular tops,
+camera yaw) round out the visual pass; `mesh` sheds a falling ghost whenever a front bar drops 15%
+below the peak it rose to, which is NOT its flourish either — `mesh`'s own flourish is the whole
+stack surging forward one depth step and settling back. `orbit` (sun with corona, visible orbits,
+comet tails, an alignment flourish) rounds out the four. All three of `pipes`/`mesh`/`orbit` also skip bloom entirely on opaque panels
+(1+ ms saved, byte-identical output) since the bloom composite is a no-op there. Separately, all
+three Virtual Self families (`vswings`, `vsghost`, `vsorb`) are retuned for 150-170 BPM material:
+`ballistics` attack/decay/peak_fall 0.9/0.35/0.03 (all three bases, were 0.55/0.12/0.01,
+0.8/0.25/0.02, 0.5/0.1/0.01) and onset refractory 120 ms (was 200 ms). A final review also found
+the three families were smoothing every band TWICE — the shared pipeline `Smoother` already runs
+before `draw`, and each family's `draw` was re-smoothing the result with the same ballistics — so
+the in-draw re-smoothing was removed; the families now track the already-smoothed level directly.
+Verified against a new *synthetic* 160 BPM fixture (`tests/fixtures/high-bpm-bands.csv`,
+`slow_vs_high_bpm_response`), fed through the real `Smoother` pipeline rather than straight into
+`draw`. Neither check alone discriminates old from new ballistics for all three families on this
+fixture - each catches a different subset (the lag check fails old `vswings`/`vsghost` but passes
+old `vsorb`; the depth check fails old `vswings`/`vsorb` but passes old `vsghost`) - so it takes
+both together to show the retune actually changed something for every family; see that test's doc
+comment for the full old-vs-new table and the two smoothing variants measured (A: as shipped with
+double smoothing, B: single smoothing — B shipped, since all three cleared the depth floor on the
+new ballistics and the existing slow tests still passed). All timed families still measure comfortably under budget (`slow_vs_timing`):
+vswings 0.72 ms, vsghost 0.06 ms, vsorb 0.80 ms, sesh 0.27 ms, night 0.20 ms, term 0.04 ms. The
+user judges the four reworked families and the VS retune on the review sheet — see Waiting on you
+below.
 
 Earlier: v0.3.1 — TERM FAMILY SHIPS, PLUS A SESH REWORK. `term` (the user's own VSCode
 2077 theme as a live terminal — output lines are the meter, a prompt types session-specific
@@ -83,7 +94,10 @@ Nothing right now. Queued, in order:
    blossom or vaporwave, I want them to pop more"; `rave` — "very bland, literally just lasers,
    needs something else"; `vswings` — "lots of space on the sides that goes unused"; `vsghost` —
    a RETHINK of the execution keeping the vibe: "just looks like bars over a mostly invisible
-   graphic; I like the vibe but the execution needs work".
+   graphic; I like the vibe but the execution needs work". Also for `vsghost`: the 120 ms onset
+   refractory (from the VS retune, v0.3.2) lets 160 BPM off-beat hats trigger the score's scroll
+   the same as the kick does — the scroll (and `vsorb`'s spin) may now read busier on a real
+   track than intended; ask the user whether that's welcome or needs its own, looser refractory.
 2. **Recapture the high-BPM fixture from a real VS track.** `tests/fixtures/high-bpm-bands.csv`
    is synthetic (160 BPM, kick + off-beat hats) because a live loopback capture needs Spotify
    playing through this machine, which an agent session can't rely on — see the fixture's own
@@ -138,6 +152,16 @@ Nothing right now. Queued, in order:
 
 ## Open, unresolved
 
+- [ ] **User-authored TOML colourways for the Virtual Self families get `Ballistics::default()`,
+      not the family base.** `schema::parse` (`src/themes/schema.rs`) falls back to
+      `Ballistics::default()` (attack 0.55 / decay 0.11 / peak_fall 0.0055 — the generic VFD Ice
+      figure) for any ballistics field a TOML theme omits; it has no way to fall back to
+      `vswings_base`/`vsghost_base`/`vsorb_base`'s own ballistics instead, because the parser
+      builds a theme from `[ballistics]` + the schema's own default, with no notion of "this
+      family's base." A user TOML for `vswings`/`vsghost`/`vsorb` that does not set `[ballistics]`
+      explicitly therefore gets that generic, unrelated default — not the 150-170 BPM numbers the
+      built-in colourways now ship with, and not what the old built-in numbers were either — found
+      while retuning the three for v0.3.2.
 - [ ] **The empty taskbar to the left is still unclaimed.** Measured on the reference machine:
       app buttons end at x≈1119 and the Widgets button starts at x≈1425, roughly 300px of dead
       taskbar between them, most useful to a wide `scene`-style family (see

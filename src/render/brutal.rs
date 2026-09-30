@@ -575,7 +575,11 @@ impl Family for Brutal {
                 (fy + fh - len, fy + fh - cap_at.clamp(0, fh))
             };
             // The ballistic slam: the slab is displaced off its resting surface and drops back onto it.
-            let off = self.slam_off.round() as i32;
+            // Clamped to `fh - len`: past that, the free end (the lit top face) would be pushed off the
+            // PANEL itself - above `fy` when standing, below `fy + fh` when hanging - not just off its
+            // resting surface, and the block's brightest face would go missing for the first frame or
+            // two of every slam on a block tall enough that `len` is close to `fh`.
+            let off = (self.slam_off.round() as i32).min(fh - len);
             by += if self.hanging { off } else { -off };
 
             // The faces, row by row from the FREE end (the end that meets the air - the top when
@@ -1588,6 +1592,77 @@ mod tests {
         assert!(
             slam_top <= settled_top - 2,
             "the slam did not raise the slab: settled top {settled_top}, slammed top {slam_top}"
+        );
+    }
+
+    /// A block tall enough that `fh - len < SLAM_PX` leaves no room for the full ballistic
+    /// displacement without pushing the free end off the panel: standing, that is the lit top face
+    /// rising above `fy`; hanging, it is the free end dropping below `fy + fh`. Either way the
+    /// block's single brightest face - the one `TOP_LIGHTEN` lifts toward white - would vanish for
+    /// the first frame or two of every slam on a block this loud, which is the defect the `min(fh -
+    /// len)` clamp on `off` fixes.
+    ///
+    /// Mutation: drop the `.min(fh - len)` clamp and this fails - the lit top row moves to
+    /// `fy - 1` (or, hanging, past `fy + fh - 1`), outside the panel band the assertion checks.
+    #[test]
+    fn a_full_height_slam_never_pushes_the_lit_face_off_the_panel() {
+        let t = builtin::brutal_concrete();
+        let (fy, fh) = (3, 60 - 6);
+        let (x0, _bw) = Brutal::grid(380).unwrap();
+        let dark = Rgba::from_hex(&t.panel, 1.0);
+        // Rows 0-1 (and 58-59 at the bottom) sit outside `rounded_rect(1, 2, w-2, h-4, ...)` and are
+        // never panel-coloured at all, slam or no slam - starting the scan at `fy - 1` (one row above
+        // where a clamped slam should stop) keeps those uncovered rows out of the comparison while
+        // still catching an unclamped displacement, which would land within a row or two of `fy`.
+        let topmost = |c: &Canvas| -> i32 {
+            let colx = x0 + 1;
+            for y in (fy - 1)..60 {
+                let p = c.get(colx, y);
+                if (p.r, p.g, p.b) != (dark.r, dark.g, dark.b) {
+                    return y;
+                }
+            }
+            60
+        };
+
+        // Standing: a loud, flat level so `len` settles near `fh`, leaving little to no headroom
+        // above the block for the slam to rise into.
+        let mut fam = Brutal::default();
+        let mut c = Canvas::new(380, 60);
+        for k in 0..40 {
+            fam.draw(&mut c, &t, &flat_frame(1.0, k as f32 * 0.0167));
+        }
+        assert!(!fam.hanging, "standing fixture must stay standing");
+        fam.slam_off = SLAM_PX;
+        fam.draw(&mut c, &t, &flat_frame(1.0, 1.0));
+        let top = topmost(&c);
+        assert!(top >= fy, "the slam pushed the lit top face above the panel: row {top}, fy {fy}");
+
+        // Hanging: same loud level, flipped to the ceiling state, same displacement.
+        let mut fam = Brutal::default();
+        let mut c = Canvas::new(380, 60);
+        fam.hanging = true;
+        for k in 0..40 {
+            fam.draw(&mut c, &t, &flat_frame(1.0, k as f32 * 0.0167));
+        }
+        assert!(fam.hanging, "hanging fixture must stay hanging");
+        fam.slam_off = SLAM_PX;
+        fam.draw(&mut c, &t, &flat_frame(1.0, 1.0));
+        // The lowest lit pixel in the column must stay inside the panel band. Stops at `fy + fh`
+        // (one row past where a clamped slam should end), for the same reason the top scan starts
+        // late: rows 58-59 are outside the rounded rect and never panel-coloured either.
+        let colx = x0 + 1;
+        let mut bottom = fy - 1;
+        for y in 0..=(fy + fh) {
+            let p = c.get(colx, y);
+            if (p.r, p.g, p.b) != (dark.r, dark.g, dark.b) {
+                bottom = y;
+            }
+        }
+        assert!(
+            bottom < fy + fh,
+            "the slam pushed the free end below the panel: row {bottom}, fy+fh {}",
+            fy + fh
         );
     }
 

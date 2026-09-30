@@ -35,8 +35,13 @@ not commit dates.
   flourish), `mesh` (perspective floor, shadows, fog, specular tops, camera yaw, falling ghosts),
   `orbit` (sun with corona, visible orbits, comet tails, alignment flourish).
 - Virtual Self families retuned for 150-170 BPM (attack 0.9 / decay 0.35 / peak_fall 0.03, onset
-  refractory 120 ms), verified against a 160 BPM fixture.
-- Performance: pipes and mesh skip bloom on opaque panels (1+ ms saved, byte-identical).
+  refractory 120 ms), verified against a *synthetic* 160 BPM fixture through the real smoothing
+  pipeline. Review also found the three families were smoothing every band TWICE — once in the
+  shared `Smoother` the pipeline already runs before `draw`, then again inside `draw` with the
+  same ballistics — so the in-draw re-smoothing was removed and the families now track the
+  already-smoothed level directly (variant B of the two measured; see `slow_vs_high_bpm_response`'s
+  doc comment for both sets of numbers).
+- Performance: pipes, mesh and orbit skip bloom on opaque panels (1+ ms saved, byte-identical).
 
 ## [0.3.1] — 2026-09-29
 

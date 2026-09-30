@@ -790,29 +790,43 @@ mod tests {
 
     /// The orbit must actually go round: a ball has to change depth over a lap, or it is a 2D ring.
     ///
-    /// Mutation: hold `phase` constant, or set `RZ` to 0 - both leave the depth spread at zero.
+    /// Depth is read from the renderer's OWN geometry (`geo_of` + `point`), not re-derived by hand:
+    /// a hand-rolled copy of the z formula (the previous version of this test) can drift from what
+    /// `geo`/`point` actually compute - it used `RZ` and `ang.sin()` directly, which is the outer
+    /// ring's NOMINAL half-extent before `geo`'s per-panel-height `vs` scaling and skips `shown[i]`'s
+    /// own alignment pull entirely - so a mutation in either would go uncaught by a copy that never
+    /// calls the mutated code.
+    ///
+    /// Mutation: set `RZ` to 0 - every ring collapses to a flat ellipse and the measured spread
+    /// drops to exactly 0. Verified failing. (Freezing `phase` and `tilt_t` alone does NOT zero the
+    /// spread here - `shown[i]` also carries the alignment flourish's own pull toward `align_to`,
+    /// which keeps moving independently of the orbit clock, so that pair is not a usable mutation
+    /// for this particular assertion.)
     /// Slow (one lap at the 0.2 rad/s floor is ~1900 frames); gated out of the default suite. A ball changes depth over one lap. Run: `cargo test --release slow_ -- --ignored`.
     #[test]
     #[ignore]
     fn slow_a_ball_changes_depth_over_one_lap() {
         let mut fam = Orbit::default();
         let t = builtin::orbit_chrome();
-        let mut c = Canvas::new(380, 60);
+        let (w, h) = (380, 60);
+        let mut c = Canvas::new(w, h);
         let (mut lo, mut hi) = (f32::MAX, f32::MIN);
         // One lap is 1/ORBIT_HZ seconds; sample across a little more than that.
         let frames = (1.0 / ORBIT_HZ / 0.0167) as usize + 20;
+        let mut outer_b = 0.0f32;
         for k in 0..frames {
             fam.draw(&mut c, &t, &frame(0.5, k as f32 * 0.0167));
-            let tau = std::f32::consts::TAU;
-            let tilt = TILT_BASE + TILT_AMP * (tau * fam.tilt_t).sin();
-            let a = tau * fam.phase;
-            let z = Z_C + RZ * a.sin() * tilt.cos();
+            let g = geo_of(&fam, w, h);
+            let ball = fam.n - 1; // the outermost ring - the widest depth swing
+            outer_b = g.b[ball];
+            let z = point(&g, ball, fam.shown[ball]).2;
             lo = lo.min(z);
             hi = hi.max(z);
         }
         assert!(
-            hi - lo > RZ,
-            "depth only varied by {:.2} world units over a lap - the ring is flat, not an orbit",
+            hi - lo > outer_b,
+            "depth only varied by {:.2} world units over a lap (ring half-extent {outer_b:.2}) - \
+             the ring is flat, not an orbit",
             hi - lo
         );
     }
