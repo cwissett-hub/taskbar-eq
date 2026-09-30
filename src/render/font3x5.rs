@@ -95,6 +95,10 @@ pub fn glyph(ch: char) -> Option<[u8; 5]> {
         '+' => [0b000, 0b010, 0b111, 0b010, 0b000],
         '[' => [0b011, 0b010, 0b010, 0b010, 0b011],
         ']' => [0b110, 0b010, 0b010, 0b010, 0b110],
+        // Added for the bling family's glitter phrases (`~*UR MINE*~`, `$$$`): an asterisk and a
+        // dollar (an S with the bar through it). `~` was already here for the term family.
+        '*' => [0b000, 0b101, 0b010, 0b101, 0b000],
+        '$' => [0b011, 0b110, 0b010, 0b011, 0b110],
         // The PLAY marker: a solid right-pointing triangle.
         '>' => [0b100, 0b110, 0b111, 0b110, 0b100],
         ' ' => [0, 0, 0, 0, 0],
@@ -182,6 +186,9 @@ mod tests {
             "_(not_a_virus)", "_(official_audio)_(real)", "_FINAL_v2_FINAL", "(1)",
             "_[320kbps]_[LEGIT]", "_(free_download)", "_-_Copy", "_(slowed+reverb)",
             "_(100%_no_virus)", "_(radio_edit)_(extended)",
+            // The bling family's glitter phrases (see `bling::PHRASES`) - the reason `*` and `$`
+            // were added above.
+            "BLING BLING", "ICED OUT", "4 REAL", "XOXO", "~*UR MINE*~", "$$$", "HOTTIE", "LUV U 4EVA",
         ];
         for label in labels {
             for ch in label.chars() {

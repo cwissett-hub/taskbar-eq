@@ -96,6 +96,7 @@ pub fn family_label(family: &str) -> String {
         "sesh" => "Bones / TeamSESH: VHS".into(),
         "night" => "Cyberpunk 2077: HUD".into(),
         "term" => "Terminal: 2077".into(),
+        "bling" => "Blingee: bling bling".into(),
         other => {
             let mut c = other.chars();
             match c.next() {

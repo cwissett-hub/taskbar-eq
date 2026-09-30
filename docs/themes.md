@@ -1,9 +1,9 @@
 # Themes
 
-**181 colourways across 28 families.** A *family* is a renderer with fixed geometry — code. A
+**185 colourways across 29 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
-## All 28 families
+## All 29 families
 
 Six are written up in full below (Segmented VFD, Oscilloscope, VU dials, Vaporwave grid, Valve
 row, Fluid). The other nineteen shipped later and their full write-ups still live in
@@ -40,6 +40,7 @@ split, and worth knowing before you go looking for one and only find it in the o
 | Bones / TeamSESH: VHS | A worn cassette dub — rolling scanlines torn per band with the bass, a blackletter word centred over them (the word font is `gothic`), a camcorder PLAY/REC stamp; the flourish is a tape dropout |
 | Cyberpunk 2077: HUD | A Cyberpunk-2077 combat HUD — chamfered hatch-filled cells as a bottom-up meter, a spectrum scanner, RAM/HP/NET readouts (labels use `font3x5`); the flourish is a relic malfunction (RGB split, red glitch bars) |
 | Terminal: 2077 | The user's VSCode "2077" theme as a live shell — a prompt that types a command per onset, pink line numbers, a block cursor, a status bar, and rows of `▮` bars that grow with the bass (labels use `font3x5`); the flourish is a red Rust `panic!` that scrolls away |
+| Blingee: bling bling | A Blingee GIF, circa 2007 — 24 columns of faceted rhinestone gems rising with the spectrum (a white glint running up each lit column, a hot peak gem), over twinkling per-pixel glitter, a glittery outlined phrase (`font3x5` at 2x) and our own sparkle / `$` / crown / heart stamps popping on strong onsets; the flourish is a white flash then diamond gems under a chrome sweep and a spinning sparkle star |
 
 The Virtual Self: wings colourways are `vswings-particle-arts` (ice panel, cobalt-to-electric
 wings, cobalt floor), `vswings-eon-break` (black panel, cobalt-to-electric wings, white floor),
@@ -76,6 +77,12 @@ navy, hot-pink cursor/line numbers, the seven-colour ANSI row cycle — a mixed 
 sysadmin session) and `term-2077-editor` (the code-editor token palette instead of the ANSI one — a
 build & test session). Each session types a different command list; the flourish is a red Rust
 `panic!` stack trace that scrolls up and away.
+
+The Blingee: bling bling colourways are `bling-pink` (hot-pink glitter and gems on plum, silver
+text outlines), `bling-gold` (gold glitter with diamond-white gems), `bling-ice` ("iced out" —
+blue-white gems and glitter on midnight navy) and `bling-myspace` (lime gems, hot-pink tops and
+glitter on black — very 2006). The flourish is a white flash, then every gem turns diamond white
+under a chrome sweep with a spinning 4-point sparkle star at the loudest column.
 
 **Five families reuse the `[tube]` table for their own hardware materials**, even though only
 one of them is the Valve row (`tube`) family itself: **Cherry blossom**, **Flame organ**,
@@ -189,7 +196,7 @@ Drop a `.toml` file (any filename — the `id` inside is what matters) into
 watched, so saving the file updates the live overlay without a restart — edit a colour, hit
 save, and watch the taskbar change.
 
-A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 181
+A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 185
 built-ins, which are always embedded in the exe regardless of whether that folder exists.
 
 Failure modes are all deliberately soft, because these files are hand-authored:

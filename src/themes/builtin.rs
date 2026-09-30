@@ -979,6 +979,81 @@ pub fn term_2077_editor() -> Theme {
     }
 }
 
+// Blingee: bling bling - a Blingee GIF, circa 2007. See `render::bling` for the meter (rhinestone
+// gem columns) and the decoration (glitter, glitter text, stamps). Every panel is opaque and dark;
+// the contrast rule is on `lit` against `panel` and each set clears it comfortably. `hot` is the top
+// gem, the peak-hold gem and the glitter-text highlight; `edge` the outer ring of the glitter text;
+// `ghost` the brightness of the empty (unlit) rhinestone settings.
+fn bling_base() -> Theme {
+    Theme {
+        family: "bling".into(),
+        texture: Texture::None_,
+        panel_alpha: 1.0,
+        bloom: 0.0,
+        glow_strength: 0.0,
+        edge_alpha: 1.0,
+        // Only `peak_fall` is read (the peak-hold gem): the levels arrive already smoothed.
+        ballistics: Ballistics { attack: 0.8, decay: 0.25, peak_fall: 0.012 },
+        ..Theme::default()
+    }
+}
+
+/// Hot-pink glitter, silver outlines: the default Blingee.
+pub fn bling_pink() -> Theme {
+    Theme {
+        id: "bling-pink".into(),
+        name: "Bling Pink".into(),
+        lit: "#ff5fc8".into(),
+        hot: "#ffd6f2".into(),
+        panel: "#2a0a22".into(),
+        edge: "#c0c0d0".into(),
+        ghost: 0.10,
+        ..bling_base()
+    }
+}
+
+/// Gold glitter, diamond gems.
+pub fn bling_gold() -> Theme {
+    Theme {
+        id: "bling-gold".into(),
+        name: "Bling Gold".into(),
+        lit: "#ffc83a".into(),
+        hot: "#fff2c0".into(),
+        panel: "#1a1204".into(),
+        edge: "#a88a3a".into(),
+        ghost: 0.10,
+        ..bling_base()
+    }
+}
+
+/// "Iced out": blue-white.
+pub fn bling_ice() -> Theme {
+    Theme {
+        id: "bling-ice".into(),
+        name: "Bling Ice".into(),
+        lit: "#8fe8ff".into(),
+        hot: "#ffffff".into(),
+        panel: "#06121e".into(),
+        edge: "#6aa0c0".into(),
+        ghost: 0.10,
+        ..bling_base()
+    }
+}
+
+/// Lime and pink on black, very 2006.
+pub fn bling_myspace() -> Theme {
+    Theme {
+        id: "bling-myspace".into(),
+        name: "Bling MySpace".into(),
+        lit: "#b6ff3a".into(),
+        hot: "#ff4fd8".into(),
+        panel: "#000000".into(),
+        edge: "#3a3a3a".into(),
+        ghost: 0.12,
+        ..bling_base()
+    }
+}
+
 pub fn all() -> Vec<Theme> {
     vec![
         vfd_ice(),
@@ -1162,6 +1237,10 @@ pub fn all() -> Vec<Theme> {
         term_2077_hot(),
         term_2077_matrix(),
         term_2077_editor(),
+        bling_pink(),
+        bling_gold(),
+        bling_ice(),
+        bling_myspace(),
     ]
 }
 
