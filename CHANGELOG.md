@@ -3,6 +3,26 @@
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); dates are release dates,
 not commit dates.
 
+## [Unreleased]
+
+- `term` — readability pass on user feedback ("outputs get covered up almost immediately", "typing
+  is too slow"):
+  - Fake output lines now dwell for a fixed 3s each (`OUTPUT_DWELL_MS`) rather than a count of
+    onsets — the old counter also had an off-by-one, decrementing on the same event that had just
+    set it. The last two outputs are kept at once, newest on the bottom meter row and the previous
+    one on the row above while its own dwell still has time left, each fading independently.
+  - The prompt now types continuously while music plays (`rms > 0.02`), at a rate that scales with
+    loudness, plus a burst of characters on every onset — no longer strictly one char per onset. A
+    command still executes on a strong bass onset, but if it has sat complete for 1.5s with no
+    strong onset, it executes on the next ordinary one instead, so a quiet track can never stall
+    the prompt.
+  - The status bar's left slot (previously a static `~/music`) now shows the now-playing title
+    dressed up as a dodgy downloaded `.mp3` (`daire_-_earth_move_edit_(not_a_virus).mp3` and
+    nine other jokes in the same vein), truncated from the middle to protect the ending and
+    marquee-scrolled when it doesn't fit the slot. `media::with_now_playing` added so this reads
+    the track without allocating a fresh `String` every refresh.
+  - `font3x5` gained `+`, `[`, `]` for the new suffixes.
+
 ## [0.3.1] — 2026-09-29
 
 - `term` — the user's VSCode 2077 theme as a live terminal: output lines are the meter, a prompt

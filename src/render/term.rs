@@ -78,16 +78,64 @@ const FLOURISH_BASS_MIN: f32 = 0.6;
 /// Panic envelope length, ms, and how long each trace row dwells before the trace scrolls up one.
 const PANIC_MS: f32 = 700.0;
 const TRACE_SCROLL_MS: f32 = 60.0;
-/// A fake output line stays visible for this many onsets after its command executes.
-const OUTPUT_LINE_STEPS: u32 = 2;
+/// A fake output line dwells for this long after its command executes, then fades. Time-based
+/// rather than onset-counted: the old `OUTPUT_LINE_STEPS` (a count of onsets) had an off-by-one - the
+/// decrement fired on the very same event that had just set the counter - and it meant a slow track
+/// cleared the line almost immediately while a fast one kept it for ages. Two outputs are kept at
+/// once: the newest takes the bottom meter row, the previous one (while still inside its own dwell)
+/// the row above it, and each fades out purely on its own age.
+const OUTPUT_DWELL_MS: f32 = 3000.0;
 /// The onset net that types the prompt. Copied from `sesh`. NOTE: the 200 ms refractory is why the
 /// typing test drives loud frames every 12 frames (~200 ms) rather than every 6 - one onset per
 /// refractory - see `prompt_types_on_onsets_and_scrolls_on_execute`.
 const ONSET_RATIO: f32 = 2.8;
 const ONSET_REFRACTORY_MS: f32 = 200.0;
+/// Continuous typing rate while `rms > 0.02`, chars/s at `rms_norm = 0`; scales up to 1.5x this at
+/// `rms_norm = 1` (see the `rms_norm` note at the call site). Chosen so a quiet passage still types
+/// at a legible clip (7 chars/s) and a loud one visibly quickens (21 chars/s).
+const TYPE_CPS: f32 = 14.0;
+/// Extra characters typed instantly on every onset, on top of the continuous rate - the "keys are
+/// being hit" feel that pure dt-based typing lacks.
+const TYPE_BURST: usize = 3;
+/// If the command has sat complete this long with no strong onset to execute it, the prompt stops
+/// waiting and executes on the next ORDINARY onset instead - so a quiet track can never stall the
+/// prompt forever waiting for a bass hit that isn't coming.
+const EXEC_STALL_MS: f32 = 1500.0;
 /// The bpm readout clamps here (a plausible track tempo range).
 const BPM_MIN: u16 = 60;
 const BPM_MAX: u16 = 200;
+/// The dodgy suffixes appended to the now-playing title to make it look like a sketchy downloaded
+/// .mp3 - the running joke lives entirely in this list. Chosen by `seq % SUFFIXES.len()`, so the
+/// same track always gets the same suffix (until the seq wraps) rather than flickering between
+/// jokes every refresh.
+const SUFFIXES: [&str; 10] = [
+    "_(not_a_virus)",
+    "_(official_audio)_(real)",
+    "_FINAL_v2_FINAL",
+    "(1)",
+    "_[320kbps]_[LEGIT]",
+    "_(free_download)",
+    "_-_Copy",
+    "_(slowed+reverb)",
+    "_(100%_no_virus)",
+    "_(radio_edit)_(extended)",
+];
+/// The width the cached filename is built to fit, px at `font3x5`'s 4px pitch. This is deliberately
+/// NOT the status bar's actual on-screen slot (which is often much narrower, e.g. ~122px at the
+/// family's usual 380px canvas) - `draw` re-checks the REAL slot every frame and marquee-scrolls
+/// whenever the cached name is wider than it, which is the common case for an ordinary song title.
+/// This constant is only a SAFETY cap on the cache itself: it exists so `build_track_name`'s
+/// middle-truncation ever engages at all (an unbounded title could otherwise overflow `name_buf`'s
+/// 64 bytes) while still comfortably fitting an ordinary title untouched - 50 glyphs (200px) is
+/// `50 * 4 - 1`, i.e. 50 ASCII bytes, well inside the 64-byte buffer even with a full suffix
+/// appended, and wide enough that a normal title + suffix + `.mp3` is never truncated.
+const NAME_SLOT_W: i32 = 200;
+/// How often the cached filename is rebuilt from the live `now_playing` state.
+const NAME_REFRESH_MS: f32 = 500.0;
+/// Marquee scroll rate for a filename longer than its slot, ms per pixel.
+const NAME_SCROLL_MS: f32 = 80.0;
+/// Gap, in px, between the end of one marquee loop and the start of the next.
+const NAME_SCROLL_GAP: i32 = 8;
 
 /// Line highlight and selection, from the theme JSON - drawn behind the loudest / clipping rows.
 const LINE_HIGHLIGHT: &str = "#1c1347";
@@ -105,8 +153,8 @@ const EXIT_LABEL: &str = "EXIT 101";
 const CLEAR_CMD: &str = "clear";
 /// The comment prefix; the tempo is appended as three digits.
 const BPM_PREFIX: &str = "# bpm ~ ";
-/// The status bar's left path and its right encoding readout.
-const STATUS_LEFT: &str = "~/music";
+/// The status bar's right encoding readout. The left slot used to be a static `~/music`; it is now
+/// the now-playing title dressed up as a dodgy .mp3 (see `SUFFIXES` and `build_track_name`).
 const STATUS_RIGHT: &str = "UTF-8  LF";
 
 /// The panic stack trace, verbatim (six lines, truncated to whole glyphs at the interior width).
@@ -249,12 +297,17 @@ pub struct Term {
     peak: [f32; MAX_ROWS],
     /// Line-number base; scrolls up one on each execute.
     line_base: u32,
-    /// The command being typed, and how much of it is typed.
+    /// The command being typed, how much of it is typed, and the fractional character the
+    /// continuous dt-based typing rate has accumulated but not yet turned into a whole char.
     cmd_idx: usize,
     typed: usize,
-    /// The fake output line and how many onsets it stays visible for.
-    output_idx: usize,
-    output_steps_left: u32,
+    typed_frac: f32,
+    /// How long the current command has sat complete (typed in full) with no execute - drives the
+    /// stall fallback in `EXEC_STALL_MS`. Reset to 0 whenever typing is in progress or on execute.
+    complete_since_ms: f32,
+    /// The last two fake output lines shown after an execute: `(command index, age ms)`, newest
+    /// first. Each entry ages independently and is cleared once past `OUTPUT_DWELL_MS`.
+    output_recent: [Option<(usize, f32)>; 2],
     /// Cursor blink accumulator, ms.
     blink_ms: f32,
     /// Onset gaps for the bpm readout, and the refresh accumulator.
@@ -269,6 +322,20 @@ pub struct Term {
     trace_scroll_ms: f32,
     /// This frame's geometry.
     layout: Layout,
+    /// The cached, already-suffixed filename shown in the status bar's left slot - a fixed buffer
+    /// so the per-frame draw never allocates. `name_seq` is the `now_playing` change counter this
+    /// was last built from, so a rebuild only happens when the track actually changes.
+    name_buf: [u8; 64],
+    name_len: usize,
+    name_seq: u64,
+    name_refresh_ms: f32,
+    /// Marquee state for a filename wider than its slot.
+    name_scroll_ms: f32,
+    name_scroll_px: i32,
+    /// Set by `set_track_for_test` so tests can drive the filename deterministically without ever
+    /// touching the process-global `NOW_PLAYING` static.
+    #[cfg(test)]
+    test_track: Option<(String, u64)>,
 }
 
 impl Default for Term {
@@ -282,8 +349,9 @@ impl Default for Term {
             line_base: 0,
             cmd_idx: 0,
             typed: 0,
-            output_idx: 0,
-            output_steps_left: 0,
+            typed_frac: 0.0,
+            complete_since_ms: 0.0,
+            output_recent: [None, None],
             blink_ms: 0.0,
             onset_gaps: [500.0; 8],
             gap_head: 0,
@@ -294,6 +362,16 @@ impl Default for Term {
             trace_row_offset: 0,
             trace_scroll_ms: 0.0,
             layout: Layout::default(),
+            name_buf: [0; 64],
+            name_len: 0,
+            // Sentinel: no real `now_playing` seq will ever equal this on the very first frame, so
+            // the first refresh always rebuilds even though the real seq can start at 0.
+            name_seq: u64::MAX,
+            name_refresh_ms: NAME_REFRESH_MS,
+            name_scroll_ms: 0.0,
+            name_scroll_px: 0,
+            #[cfg(test)]
+            test_track: None,
         }
     }
 }
@@ -314,6 +392,63 @@ impl Term {
     #[cfg(test)]
     pub fn row_box_for_test(&self, row: usize) -> (i32, i32, i32, i32) {
         self.layout.rows[row.min(MAX_ROWS - 1)]
+    }
+    /// Forces the newest fake output line into place, shifting the previous newest into the
+    /// "previous" slot, exactly as a real execute does - without needing a strong onset or any
+    /// particular `cmd_idx`/`line_base` bookkeeping, so the dwell test can drive it deterministically.
+    #[cfg(test)]
+    pub fn force_execute_for_test(&mut self) {
+        self.output_recent[1] = self.output_recent[0];
+        self.output_recent[0] = Some((self.cmd_idx, 0.0));
+    }
+    /// Sets the track the status bar's filename is built from, bypassing `now_playing` entirely -
+    /// see the `test_track` field. Applied on the next `draw`.
+    #[cfg(test)]
+    pub fn set_track_for_test(&mut self, title: &str, seq: u64) {
+        self.test_track = Some((title.to_string(), seq));
+    }
+    /// The cached filename as built, for the tests that check its exact text.
+    #[cfg(test)]
+    pub fn built_name_for_test(&self) -> &str {
+        std::str::from_utf8(&self.name_buf[..self.name_len]).unwrap_or("")
+    }
+
+    /// Copies `built` into the fixed name buffer, truncating at 64 bytes as a last-resort safety
+    /// cap (in practice `build_track_name`'s own slot-fitting loop keeps it far shorter).
+    fn store_name(&mut self, built: &str, seq: u64) {
+        let n = built.len().min(self.name_buf.len());
+        self.name_buf[..n].copy_from_slice(&built.as_bytes()[..n]);
+        self.name_len = n;
+        self.name_seq = seq;
+        self.name_scroll_ms = 0.0;
+        self.name_scroll_px = 0;
+    }
+
+    /// Refreshes the cached filename from `now_playing` (or, in tests, from `test_track`).
+    ///
+    /// In test builds `now_playing`/`with_now_playing` is never called - see the `test_track`
+    /// field - so the tests never touch the process-global static and are fully deterministic.
+    fn refresh_name(&mut self, dt: f32) {
+        self.name_refresh_ms += dt;
+        // Tests may reuse the same seq for a different title on purpose (to exercise a suffix in
+        // isolation), so always rebuild here rather than gating on seq change - unlike the real
+        // path below, where perf actually matters.
+        #[cfg(test)]
+        if let Some((title, seq)) = self.test_track.clone() {
+            let built = build_track_name(&title, seq, NAME_SLOT_W);
+            self.store_name(&built, seq);
+        }
+        #[cfg(not(test))]
+        if self.name_refresh_ms >= NAME_REFRESH_MS {
+            self.name_refresh_ms = 0.0;
+            let last_seq = self.name_seq;
+            crate::win::media::with_now_playing(|title, seq| {
+                if seq != last_seq {
+                    let built = build_track_name(title, seq, NAME_SLOT_W);
+                    self.store_name(&built, seq);
+                }
+            });
+        }
     }
 
     /// Median of the recorded onset gaps, in ms - what an ordinary beat interval is on this track.
@@ -366,6 +501,62 @@ fn clip_label(text: &str, max_w: i32) -> &str {
     }
     let n = (((max_w + 1) / 4) as usize).min(text.len());
     &text[..n]
+}
+
+/// Builds the dodgy .mp3 filename for `title`: lower-cased ASCII with spaces turned to `_` (a `-`
+/// separator is already a valid glyph and is left alone - `Daire - Earth Move Edit` becomes
+/// `daire_-_earth_move_edit`), any character `font3x5::glyph` cannot draw dropped, an empty title
+/// replaced with `untitled_track`, then a suffix from `SUFFIXES` (picked by `seq % SUFFIXES.len()`)
+/// and `.mp3` appended.
+///
+/// If the result would not fit `slot_w` px, characters are removed one at a time from the MIDDLE of
+/// the (slugified) title - never from the suffix or `.mp3` - until it fits or the title is empty:
+/// the joke is the ending, so that always survives whole. `NAME_SLOT_W` is chosen large enough that
+/// the suffix and `.mp3` alone always fit, so this loop always terminates with something that fits.
+fn build_track_name(title: &str, seq: u64, slot_w: i32) -> String {
+    let suffix = SUFFIXES[(seq % SUFFIXES.len() as u64) as usize];
+    let tail = format!("{suffix}.mp3");
+
+    let mut base = String::new();
+    for ch in title.chars() {
+        let mapped = if ch == ' ' { '_' } else { ch.to_ascii_lowercase() };
+        if font3x5::glyph(mapped).is_some() {
+            base.push(mapped);
+        }
+    }
+    if base.is_empty() {
+        base.push_str("untitled_track");
+    }
+
+    loop {
+        let candidate = format!("{base}{tail}");
+        if font3x5::width(&candidate) <= slot_w || base.is_empty() {
+            return candidate;
+        }
+        let mid = base.chars().count() / 2;
+        base = base.chars().enumerate().filter(|(i, _)| *i != mid).map(|(_, c)| c).collect();
+    }
+}
+
+/// Draws `text` (`font3x5`, 4px pitch) at `(x, y)`, painting only the pixels whose column falls in
+/// `[clip_x0, clip_x1)`. No allocation - a plain per-glyph bounds check, same shape as
+/// `font3x5::draw` - used by the marquee so a filename wider than its slot never bleeds into the
+/// status bar's neighbouring zones.
+fn draw_clipped(c: &mut Canvas, x: i32, clip_x0: i32, clip_x1: i32, y: i32, text: &str, col: Rgba) {
+    let mut cx = x;
+    for ch in text.chars() {
+        if let Some(rows) = font3x5::glyph(ch) {
+            for (dy, row) in rows.iter().enumerate() {
+                for dx in 0..3 {
+                    let px = cx + dx;
+                    if px >= clip_x0 && px < clip_x1 && row & (0b100 >> dx) != 0 {
+                        c.fill_rect(px, y + dy as i32, 1, 1, col);
+                    }
+                }
+            }
+        }
+        cx += 4;
+    }
 }
 
 impl Family for Term {
@@ -473,6 +664,19 @@ impl Family for Term {
             self.peak[i] = pk;
         }
 
+        // ---- output lines: age the last two, dropping whichever has passed its dwell ----
+        for slot in self.output_recent.iter_mut() {
+            if let Some((_, age)) = slot {
+                *age += dt;
+                if !age.is_finite() || *age >= OUTPUT_DWELL_MS {
+                    *slot = None;
+                }
+            }
+        }
+
+        // ---- the song, dressed up as a dodgy .mp3, for the status bar's left slot ----
+        self.refresh_name(dt);
+
         // ---- onsets: type the prompt, execute, drive the bpm ----
         let onset = self.onset.update(&d.levels, dt, ONSET_RATIO, ONSET_REFRACTORY_MS);
         let strong = onset && bass > EXEC_BASS;
@@ -481,24 +685,64 @@ impl Family for Term {
             self.since_onset_ms = 0.0;
         }
         let cmd_len = st.cmds[self.cmd_idx.min(st.cmds.len() - 1)].chars().count();
+
+        // Continuous typing, dt-based rather than onset-counted, so a sustained loud passage types
+        // visibly faster than a quiet one rather than at the same one-char-per-onset rate either way.
+        // `rms_norm` maps rms 0..0.25 onto 0..1 (rms rarely exceeds ~0.25 in practice), so `TYPE_CPS`
+        // ranges from 0.5x at silence-ish levels up to 1.5x at a genuinely loud passage.
+        let rms = {
+            let r = (d.rms_l + d.rms_r) * 0.5;
+            if r.is_finite() {
+                r.clamp(0.0, 1.0)
+            } else {
+                0.0
+            }
+        };
+        if rms > 0.02 && self.typed < cmd_len {
+            let rms_norm = (rms * 4.0).clamp(0.0, 1.0);
+            let cps = TYPE_CPS * (0.5 + rms_norm);
+            self.typed_frac += cps * dt / 1000.0;
+            if !self.typed_frac.is_finite() {
+                self.typed_frac = 0.0;
+            }
+            while self.typed_frac >= 1.0 && self.typed < cmd_len {
+                self.typed_frac -= 1.0;
+                self.typed += 1;
+            }
+        }
+        if self.typed >= cmd_len {
+            self.complete_since_ms += dt;
+            if !self.complete_since_ms.is_finite() {
+                self.complete_since_ms = EXEC_STALL_MS;
+            }
+        } else {
+            self.complete_since_ms = 0.0;
+        }
+
         if onset {
             // Record the gap for the tempo readout.
             self.onset_gaps[self.gap_head] = self.since_onset_ms.clamp(1.0, 5000.0);
             self.gap_head = (self.gap_head + 1) % self.onset_gaps.len();
             self.gap_n = (self.gap_n + 1).min(self.onset_gaps.len());
             self.since_onset_ms = 0.0;
-            // Type, or execute when complete.
             if self.typed < cmd_len {
-                self.typed += 1;
-            } else if strong {
-                self.line_base = self.line_base.wrapping_add(1);
-                self.output_idx = self.cmd_idx;
-                self.output_steps_left = OUTPUT_LINE_STEPS;
-                self.cmd_idx = (self.cmd_idx + 1) % st.cmds.len();
-                self.typed = 0;
-            }
-            if self.output_steps_left > 0 {
-                self.output_steps_left -= 1;
+                // A burst of characters on top of the continuous rate: onsets should still feel
+                // like keys being hit, not just a smooth typewriter.
+                self.typed = (self.typed + TYPE_BURST).min(cmd_len);
+            } else {
+                // Execute on a strong onset as before, or - if the command has sat complete for
+                // too long waiting for one - on the next ordinary onset, so a quiet track can
+                // never stall the prompt forever.
+                let stalled = self.complete_since_ms >= EXEC_STALL_MS;
+                if strong || stalled {
+                    self.output_recent[1] = self.output_recent[0];
+                    self.output_recent[0] = Some((self.cmd_idx, 0.0));
+                    self.line_base = self.line_base.wrapping_add(1);
+                    self.cmd_idx = (self.cmd_idx + 1) % st.cmds.len();
+                    self.typed = 0;
+                    self.typed_frac = 0.0;
+                    self.complete_since_ms = 0.0;
+                }
             }
         }
         // Refresh the bpm once a second from the median onset gap.
@@ -556,11 +800,22 @@ impl Family for Term {
             if let Ok(s) = std::str::from_utf8(&ln) {
                 font3x5::draw(c, ix0 + 1, y0, s, hot);
             }
-            // The newest (bottom) meter row shows the fake output line after an execute.
-            if i == m - 1 && self.output_steps_left > 0 && !tracing {
-                let out = st.outputs[self.output_idx.min(st.outputs.len() - 1)];
-                font3x5::draw(c, barx0, y0, clip_label(out, barx1 - barx0), lit);
-                continue;
+            // The newest (bottom) meter row shows the fake output line after an execute, and - for
+            // the second-newest row above it, while that one is still within its own dwell - the
+            // output before it. Each fades independently on its own age (see the ageing loop above).
+            let show_output = if i == m - 1 {
+                self.output_recent[0]
+            } else if m >= 2 && i == m - 2 {
+                self.output_recent[1]
+            } else {
+                None
+            };
+            if let Some((idx, _)) = show_output {
+                if !tracing {
+                    let out = st.outputs[idx.min(st.outputs.len() - 1)];
+                    font3x5::draw(c, barx0, y0, clip_label(out, barx1 - barx0), lit);
+                    continue;
+                }
             }
             // The bar: `▮` cells in the row colour, `▯` peak marker in hot.
             let col_hex = st.rows[(m1 - 1 - i) % st.rows.len()];
@@ -646,8 +901,36 @@ impl Family for Term {
                 let ex = ix0 + third + (third - font3x5::width(EXIT_LABEL)).max(0) / 2;
                 font3x5::draw(c, ex, sy, clip_label(EXIT_LABEL, third), Rgba::new(255, 255, 255, 255));
             } else {
-                // left: ~/music
-                font3x5::draw(c, ix0 + 2, sy, clip_label(STATUS_LEFT, third - 2), text);
+                // left: the now-playing title as a dodgy .mp3, marquee-scrolled if it doesn't fit.
+                let slotx0 = ix0 + 2;
+                let slot = (third - 2).max(0);
+                // Copied out of `name_buf` first: the marquee below needs `&mut self`, which a
+                // borrow straight from the buffer would still be alive across.
+                let mut name_local = [0u8; 64];
+                let name_local_len = self.name_len;
+                name_local[..name_local_len].copy_from_slice(&self.name_buf[..name_local_len]);
+                let name = std::str::from_utf8(&name_local[..name_local_len]).unwrap_or("");
+                let name_w = font3x5::width(name);
+                if name_w <= slot {
+                    draw_clipped(c, slotx0, slotx0, slotx0 + slot, sy, name, text);
+                } else if name_w > 0 {
+                    self.name_scroll_ms += dt;
+                    let total = (name_w + NAME_SCROLL_GAP).max(1);
+                    while self.name_scroll_ms >= NAME_SCROLL_MS {
+                        self.name_scroll_ms -= NAME_SCROLL_MS;
+                        self.name_scroll_px = (self.name_scroll_px + 1) % total;
+                    }
+                    draw_clipped(c, slotx0 - self.name_scroll_px, slotx0, slotx0 + slot, sy, name, text);
+                    draw_clipped(
+                        c,
+                        slotx0 - self.name_scroll_px + total,
+                        slotx0,
+                        slotx0 + slot,
+                        sy,
+                        name,
+                        text,
+                    );
+                }
                 // centre: ▮ + rms percent + %
                 let rms = (((d.rms_l + d.rms_r) * 0.5).max(0.0)).min(1.0);
                 let rms = if rms.is_finite() { rms } else { 0.0 };
@@ -728,8 +1011,9 @@ mod tests {
             v.extend_from_slice(lists);
         }
         v.extend_from_slice(&TRACE);
+        v.extend_from_slice(&SUFFIXES);
         v.extend_from_slice(&[
-            STATUS_LEFT, STATUS_RIGHT, EXIT_LABEL, CLEAR_CMD, BPM_PREFIX, "▮▯>", "0123456789%",
+            STATUS_RIGHT, EXIT_LABEL, CLEAR_CMD, BPM_PREFIX, "▮▯>", "0123456789%", "untitled_track.mp3",
         ]);
         v
     }
@@ -815,6 +1099,128 @@ mod tests {
                 assert!(crate::render::font3x5::glyph(ch).is_some(), "{s:?} {ch:?}");
             }
         }
+    }
+
+    #[test]
+    fn every_suffix_char_has_a_glyph() {
+        for s in SUFFIXES {
+            for ch in s.chars() {
+                assert!(crate::render::font3x5::glyph(ch).is_some(), "suffix {s:?} char {ch:?}");
+            }
+        }
+    }
+
+    /// Counts lit pixels in a row's bar box, for comparing "output text is drawn there" against
+    /// "output text is gone" without depending on exactly which glyphs the output string used.
+    fn row_lit(c: &Canvas, t: &Theme, (x0, x1, y0, y1): (i32, i32, i32, i32)) -> usize {
+        let panel = Rgba::from_hex(&t.panel, 1.0);
+        (y0..y1).flat_map(|y| (x0..x1).map(move |x| (x, y))).filter(|&(x, y)| drew_over_panel(c.get(x, y), panel)).count()
+    }
+
+    #[test]
+    fn outputs_stay_readable_for_three_seconds() {
+        let t = theme("term-2077");
+        let mut fam = Term::default();
+        let mut c = Canvas::new(380, 60);
+        let mut d = FrameData::default();
+        d.dt_ms = 16.7;
+        // A low, CONSTANT level: no flux rise means no onset ever fires (so nothing re-executes and
+        // resets the dwell out from under the test), and it keeps the row's own meter bar close to
+        // empty so its pixel count cleanly distinguishes "output text drawn" from "output text gone".
+        for v in d.levels.iter_mut() {
+            *v = 0.05;
+        }
+        d.peaks = d.levels;
+        d.rms_l = 0.05;
+        d.rms_r = 0.05;
+        fam.draw(&mut c, &t, &d); // establish geometry (rows_for_test/row_box_for_test need it)
+        fam.force_execute_for_test(); // cmd_idx is still 0 here, so this is OUT_2077[0]
+
+        let row = fam.rows_for_test() - 1;
+        let box_ = fam.row_box_for_test(row);
+
+        // A reference render of the output text alone, at the same box, to know what "present" looks
+        // like in pixel count (rather than hardcoding a number that would silently drift if the
+        // string or the font changed).
+        let mut reference = Canvas::new(380, 60);
+        let lit_col = Rgba::from_hex(&t.lit, 1.0);
+        font3x5::draw(&mut reference, box_.0, box_.2, clip_label(OUT_2077[0], box_.1 - box_.0), lit_col);
+        let expected = row_lit(&reference, &t, box_);
+        assert!(expected > 10, "reference render of the output text drew almost nothing: {expected}");
+
+        // At 2.5s (150 frames) the line must still be there.
+        for k in 0..150 {
+            d.time_s = k as f32 * 0.0167;
+            fam.draw(&mut c, &t, &d);
+        }
+        let at_2_5s = row_lit(&c, &t, box_);
+        assert!(at_2_5s >= expected - 2, "output line faded before 3s: {at_2_5s} lit px, expected ~{expected}");
+
+        // By 3.3s (50 more frames, 200 total) it must be gone - back to a near-empty meter row.
+        for k in 150..200 {
+            d.time_s = k as f32 * 0.0167;
+            fam.draw(&mut c, &t, &d);
+        }
+        let at_3_3s = row_lit(&c, &t, box_);
+        assert!(at_3_3s < expected / 2, "output line still present after 3.3s: {at_3_3s} lit px, expected ~{expected}");
+    }
+
+    #[test]
+    fn typing_is_fast_while_music_plays() {
+        let t = theme("term-2077"); // first cmd is "cargo run --release", 20 chars - plenty of room
+        let mut fam = Term::default();
+        let mut c = Canvas::new(380, 60);
+        let mut d = FrameData::default();
+        d.dt_ms = 16.7;
+        // A CONSTANT level again: no rise, no onset, so every typed char comes from the continuous
+        // dt-based rate alone, not the onset burst - "no onsets" per the test's own name.
+        for v in d.levels.iter_mut() {
+            *v = 0.25;
+        }
+        d.peaks = d.levels;
+        d.rms_l = 0.25;
+        d.rms_r = 0.25;
+        for k in 0..60 {
+            // ~1.0s at 16.7ms/frame
+            d.time_s = k as f32 * 0.0167;
+            fam.draw(&mut c, &t, &d);
+        }
+        assert!(fam.typed_len_for_test() >= 10, "typed only {} chars in ~1s at rms 0.25", fam.typed_len_for_test());
+    }
+
+    #[test]
+    fn the_song_becomes_a_dodgy_mp3() {
+        let t = theme("term-2077");
+        let mut fam = Term::default();
+        let mut c = Canvas::new(380, 60);
+        let d = FrameData { dt_ms: 16.7, ..FrameData::default() };
+
+        fam.set_track_for_test("Daire - Earth Move Edit", 0);
+        fam.draw(&mut c, &t, &d);
+        assert_eq!(fam.built_name_for_test(), "daire_-_earth_move_edit_(not_a_virus).mp3");
+
+        fam.set_track_for_test("Daire - Earth Move Edit", 3);
+        fam.draw(&mut c, &t, &d);
+        assert!(fam.built_name_for_test().ends_with("(1).mp3"), "{:?}", fam.built_name_for_test());
+
+        fam.set_track_for_test("", 3);
+        fam.draw(&mut c, &t, &d);
+        assert_eq!(fam.built_name_for_test(), "untitled_track(1).mp3");
+
+        // A 200+ char title: the built name must still end with the FULL suffix and `.mp3`, and
+        // still fit the slot it was built for - never truncated from the wrong end.
+        let long = "a very long track title that just keeps going on and on ".repeat(4);
+        assert!(long.len() > 200);
+        fam.set_track_for_test(&long, 0);
+        fam.draw(&mut c, &t, &d);
+        let built = fam.built_name_for_test().to_string();
+        let expected_tail = format!("{}.mp3", SUFFIXES[0]);
+        assert!(built.ends_with(&expected_tail), "{built:?} does not end with {expected_tail:?}");
+        assert!(
+            font3x5::width(&built) <= NAME_SLOT_W,
+            "{built:?} is {}px, wider than its {NAME_SLOT_W}px slot",
+            font3x5::width(&built)
+        );
     }
 
     #[test]
@@ -956,6 +1362,7 @@ mod tests {
             // A beat every 15 frames is an onset; ~120 frames types a few commands and executes.
             for (tag, level) in [("calm", 0.30f32), ("loud", 0.85)] {
                 let mut fam = Term::default();
+                fam.set_track_for_test("Daire - Earth Move Edit", 0);
                 let mut c = Canvas::new(380, 60);
                 for k in 0..140 {
                     c.clear();
@@ -986,6 +1393,7 @@ mod tests {
         for (w, h) in [(190, 48), (128, 44)] {
             let t = theme("term-2077");
             let mut fam = Term::default();
+            fam.set_track_for_test("Daire - Earth Move Edit", 0);
             let mut c = Canvas::new(w, h);
             for k in 0..140 {
                 c.clear();

@@ -402,6 +402,21 @@ pub fn now_playing() -> (String, u64) {
     NOW_PLAYING.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
+/// Borrows the current track under the lock, without cloning the title string.
+///
+/// `now_playing` above allocates a fresh `String` on every call, which is fine for the banner (once
+/// per track change) but wrong for a render family that wants to poll the title every frame or two -
+/// the `term` family's status-bar filename does. This hands the title and its change counter to `f`
+/// while the lock is held and returns whatever `f` returns, so the caller never needs its own copy.
+// Only called from `term`'s non-test path (`#[cfg(not(test))]` - see its `refresh_name`), so a
+// `cargo test` build has no call site at all and would otherwise warn this dead, tripping `clippy
+// -D warnings`.
+#[cfg_attr(test, allow(dead_code))]
+pub fn with_now_playing<R>(f: impl FnOnce(&str, u64) -> R) -> R {
+    let g = NOW_PLAYING.lock().unwrap_or_else(|e| e.into_inner());
+    f(&g.0, g.1)
+}
+
 fn publish(title: &str) {
     let mut g = NOW_PLAYING.lock().unwrap_or_else(|e| e.into_inner());
     if g.0 != title {

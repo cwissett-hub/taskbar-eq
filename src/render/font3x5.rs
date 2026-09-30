@@ -90,6 +90,11 @@ pub fn glyph(ch: char) -> Option<[u8; 5]> {
         '#' => [0b101, 0b111, 0b101, 0b111, 0b101],
         '%' => [0b101, 0b001, 0b010, 0b100, 0b101],
         '=' => [0b000, 0b111, 0b000, 0b111, 0b000],
+        // Added for the term family's dodgy .mp3 suffixes (`_[320kbps]_[LEGIT]`,
+        // `_(slowed+reverb)`): a plus and a pair of square brackets.
+        '+' => [0b000, 0b010, 0b111, 0b010, 0b000],
+        '[' => [0b011, 0b010, 0b010, 0b010, 0b011],
+        ']' => [0b110, 0b010, 0b010, 0b010, 0b110],
         // The PLAY marker: a solid right-pointing triangle.
         '>' => [0b100, 0b110, 0b111, 0b110, 0b100],
         ' ' => [0, 0, 0, 0, 0],
@@ -172,6 +177,11 @@ mod tests {
             "RELIC 2.0 ERR",
             // The term family's block glyphs and its status/comment labels.
             "▮▯>", "~/music", "UTF-8  LF", "EXIT 101", "# bpm ~ 142",
+            // The term family's dodgy .mp3 filename suffixes (see `term::SUFFIXES`) - the reason
+            // `+`, `[`, `]` were added above.
+            "_(not_a_virus)", "_(official_audio)_(real)", "_FINAL_v2_FINAL", "(1)",
+            "_[320kbps]_[LEGIT]", "_(free_download)", "_-_Copy", "_(slowed+reverb)",
+            "_(100%_no_virus)", "_(radio_edit)_(extended)",
         ];
         for label in labels {
             for ch in label.chars() {
