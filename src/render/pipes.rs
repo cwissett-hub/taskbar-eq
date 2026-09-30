@@ -113,8 +113,16 @@ const Z_MIN: f32 = 1.0;
 const COORD_LIMIT: i32 = 4096;
 
 /// Runs alive at once, and segments each keeps before its tail is dropped.
-const MAX_RUNS: usize = 4;
-const MAX_SEG: usize = 26;
+///
+/// THREE, one per hue (`lit`, `hot`, and their midpoint) - fidelity pass 1. Four runs in three hues put
+/// two same-hue pipes on the panel, which reads as one pipe that jumped. At any width wide enough for a
+/// lattice all three run, so a 128px panel is a lattice of three pipes too rather than one.
+const MAX_RUNS: usize = 3;
+///
+/// The cell budget was 26 when one pipe had the panel to itself. With three sharing it, a run capped at
+/// 60% of 26 (15 cells) left most of the lattice empty - measured in the fidelity-pass dumps, three short
+/// streaks on a black strip. 44 keeps 26 per run, so three runs lay about 78 cells across the lattice.
+const MAX_SEG: usize = 44;
 
 /// Milliseconds per segment at silence and at full drive.
 const GROW_SLOW_MS: f32 = 300.0;
@@ -141,6 +149,29 @@ const RESET_MS: f32 = 1400.0;
 /// How much faster pipe is laid during the surge. 3x is visible without outrunning the aliasing bound.
 const SURGE_RATE: f32 = 3.0;
 
+/// How many segments a run keeps before its tail dissolves, segment by segment - 60% of `MAX_SEG`,
+/// the cell budget. Shorter than the old flush-at-`MAX_SEG` so THREE fat pipes fill the lattice
+/// without clogging it into a solid block: a run past this length drops its oldest cell for every new
+/// one it lays, so the tail retreats continuously rather than the whole run vanishing.
+const KEEP_SEG: usize = MAX_SEG * 3 / 5;
+
+/// The teapot. The Utah teapot is the graphics world's in-joke, and the real 3D-Pipes screensaver
+/// drops one in at random - so ours appears at the growing tip on a flourish and rides along for
+/// `TEAPOT_MS`, drawn in `hot`. This is OUR OWN 9x7 silhouette (spout left, handle right, domed lid),
+/// one row per `u16` with bit 8 the leftmost column - not lifted from any asset.
+const TEAPOT_W: i32 = 9;
+const TEAPOT_H: i32 = 7;
+const TEAPOT_MS: f32 = 600.0;
+const TEAPOT: [u16; TEAPOT_H as usize] = [
+    0b000_010_000, // ....#....  the knob
+    0b001_111_100, // ..#####..  the lid
+    0b101_111_111, // #.#######  spout tip, body, top of the handle
+    0b011_111_101, // .######.#  spout joins the body; the handle's hole
+    0b001_111_111, // ..#######  body, bottom of the handle
+    0b001_111_100, // ..#####..  body
+    0b000_111_000, // ...###...  the foot
+];
+
 /// A lattice cell. `x` runs across the panel, `j` is the vertical level (0 = top), `k` the depth plane.
 #[derive(Clone, Copy, Default, PartialEq)]
 struct Cell {
@@ -156,6 +187,8 @@ struct Run {
     dir: u8,
     due: f32,
     seed: u32,
+    /// Set on any frame a new segment was laid, so that segment glows `hot` for exactly that frame.
+    grew: bool,
 }
 
 #[derive(Default)]
@@ -168,6 +201,56 @@ pub struct Pipes {
     onset: crate::dsp::onset::Flux,
     flourish: crate::dsp::flourish::Trigger,
     reset: crate::dsp::flourish::Envelope,
+    /// Milliseconds the teapot has left at the tip; set to `TEAPOT_MS` on a flourish.
+    teapot_ms: f32,
+    /// The top-left the teapot was last drawn at, for the test to find it. `None` when not showing.
+    teapot_at: Option<(i32, i32)>,
+    /// Every segment of every run for this frame, depth-sorted before painting. Kept on the struct and
+    /// only ever cleared, so after the first frame `draw` does not allocate - see `Seg`.
+    list: Vec<Seg>,
+}
+
+/// One segment queued for painting: its two cells, which run (and so which hue) it belongs to, whether
+/// it is the tip laid this frame, whether a ball joint sits on its far cell, and a sort key that is
+/// unique per segment, so the UNSTABLE (allocation-free) sort still paints in a fixed order.
+#[derive(Clone, Copy)]
+struct Seg {
+    from: Cell,
+    to: Cell,
+    run: usize,
+    hot_tip: bool,
+    joint: bool,
+    key: (i32, usize, usize),
+}
+
+/// The widest cross-section a tube can be drawn at: `rad.clamp(.., 6.0)` gives rr <= 6, so 13 px, and a
+/// joint is one wider again.
+const PROFILE_MAX: usize = 15;
+
+/// The shading across a tube's cross-section, from the side facing the light (index 0) to the side
+/// facing away. This is what makes a pipe a CYLINDER rather than a ribbon: a rim, a hard 1px specular
+/// stripe one pixel in from the lit edge, the body, then a falloff into a shaded underside. Written into
+/// a fixed array so the per-sample paint is a table lookup.
+fn profile(out: &mut [Rgba; PROFILE_MAX], n: usize, body: Rgba, panel: Rgba) -> usize {
+    let n = n.clamp(1, PROFILE_MAX);
+    let white = Rgba::new(255, 255, 255, 255);
+    let black = Rgba::new(0, 0, 0, 255);
+    let spec = Rgba::lerp_linear(body, white, 0.55);
+    let under = Rgba::lerp_linear(body, panel, 0.62);
+    for (u, px) in out.iter_mut().enumerate().take(n) {
+        let t = if n > 1 { u as f32 / (n - 1) as f32 } else { 0.5 };
+        *px = if n >= 3 && u == n - 1 {
+            under
+        } else if (n >= 5 && u == 1) || (n < 5 && u == 0) {
+            spec
+        } else if u == 0 {
+            Rgba::lerp_linear(body, white, 0.18) // the rim, above the stripe
+        } else {
+            // Past the middle the body turns away from the light.
+            Rgba::lerp_linear(body, black, ((t - 0.45) * 0.9).clamp(0.0, 0.45))
+        };
+    }
+    n
 }
 
 fn resp(level: f32, sensitivity: f32) -> f32 {
@@ -324,6 +407,19 @@ fn project(cx: f32, x: f32, y: f32, z: f32, fit: Fit) -> Option<(i32, i32, f32)>
     ))
 }
 
+/// A filled disc, for the ball joints at every turn. Same scanline form the orbit family uses; the
+/// +0.5 bias keeps the outline round rather than square at the small radii these joints run at.
+fn disc(c: &mut Canvas, col: i32, row: i32, r: i32, colour: Rgba) {
+    if r <= 0 {
+        c.fill_rect(col, row, 1, 1, colour);
+        return;
+    }
+    for dy in -r..=r {
+        let dx = (((r * r - dy * dy) as f32).max(0.0).sqrt() + 0.5) as i32;
+        c.fill_rect(col - dx, row + dy, dx * 2 + 1, 1, colour);
+    }
+}
+
 impl Run {
     fn restart(&mut self, nx: i32, nz: i32) {
         self.seg.clear();
@@ -381,6 +477,7 @@ impl Run {
         }
         self.due = self.due.min(period * 4.0);
         let mut pending = turn;
+        self.grew = false;
         while self.due >= period {
             self.due -= period;
             self.steer(pending, nx, nz);
@@ -391,7 +488,9 @@ impl Run {
             }
             self.at = next;
             self.seg.push(next);
-            if self.seg.len() > MAX_SEG {
+            self.grew = true;
+            // Past 60% of the cell budget the tail dissolves segment by segment - see KEEP_SEG.
+            if self.seg.len() > KEEP_SEG {
                 self.seg.remove(0);
             }
         }
@@ -410,6 +509,12 @@ impl Family for Pipes {
         let dt = if d.dt_ms.is_finite() { d.dt_ms.clamp(0.0, 200.0) } else { 16.7 };
         let fired = self.flourish.update(&d.levels, dt, t.flourish);
         let reset = self.reset.update(fired, dt, RESET_MS);
+        // The teapot rides the tip for TEAPOT_MS from the flourish, then continues - see TEAPOT.
+        if fired {
+            self.teapot_ms = TEAPOT_MS;
+        }
+        self.teapot_ms = (self.teapot_ms - dt).max(0.0);
+        self.teapot_at = None;
 
         let panel = Rgba::from_hex(&t.panel, t.panel_alpha);
         c.rounded_rect(1, 2, w - 2, h - 4, 3, panel);
@@ -438,10 +543,10 @@ impl Family for Pipes {
         // A resize invalidates cells in BOTH axes, and this guard only covered one of them.
         //
         // `Fit` is derived entirely from the HEIGHT, so a width-only change leaves it equal and this
-        // never fired - and the run count below is `nx / 8` clamped to MAX_RUNS, which is 4 at both
-        // 380px (nx 46) and 330px (nx 40), so that check did not fire either. A run left at `at.x = 44`
+        // never fired - and the run count below (then `nx / 8` clamped to 4; now `nx / 4` clamped to
+        // 3) is the same at both 380px (nx 46) and 330px (nx 40), so that check did not fire either. A run left at `at.x = 44`
         // with 40 columns is then stranded PERMANENTLY: `steer` finds none of its six candidates inside,
-        // so `dir` is left as it was, and `grow` rejects the step it takes. One of four pipes froze into
+        // so `dir` is left as it was, and `grow` rejects the step it takes. One pipe froze into
         // a static streak while the others kept growing.
         if self.fit != Some(fit) || self.nx != nx {
             self.fit = Some(fit);
@@ -450,7 +555,7 @@ impl Family for Pipes {
         }
         let cx = w as f32 * 0.5;
 
-        let runs = ((nx as usize) / 8).clamp(1, MAX_RUNS);
+        let runs = ((nx as usize) / 4).clamp(1, MAX_RUNS);
         if self.runs.len() != runs {
             self.runs = (0..runs)
                 .map(|i| {
@@ -462,9 +567,13 @@ impl Family for Pipes {
                     r
                 })
                 .collect();
+            // Every segment of every run, plus a tip each - reserved once so `list` never grows in draw.
+            self.list = Vec::with_capacity(MAX_RUNS * (MAX_SEG + 2));
+            for r in &mut self.runs {
+                r.seg.reserve(MAX_SEG + 2);
+            }
         }
         // Deliberately NOT a restart - see `RESET_MS`. Clearing the runs was the reported jarring cut.
-        let _ = fired;
 
         let turn = self.onset.update(&d.levels, dt, 2.8, 200.0);
         let bands = d.levels.len();
@@ -476,64 +585,193 @@ impl Family for Pipes {
             let m = |p: u8, q: u8| (p as f32 * (1.0 - k) + q as f32 * k) as u8;
             Rgba::new(m(a.r, b.r), m(a.g, b.g), m(a.b, b.b), 255)
         };
+        // THREE pipes, each in its own hue: `lit`, `hot`, and the linear midpoint of the two. Keyed on
+        // the run index so the trio is stable rather than shuffling, which is what lets several runs
+        // read as several pipes rather than as copies of one signal.
+        let mid = Rgba::lerp_linear(lit, hot, 0.5);
+        let hues = [lit, hot, mid];
 
         // Grow, then gather every segment of every run so they can be painted FAR TO NEAR across runs
         // as well as within one. Sorting on k descending IS the occlusion - no z-buffer - and it is only
         // correct because the projection keeps distinct depth planes on distinct rows.
-        let mut all: Vec<(Cell, Cell)> = Vec::new();
+        //
+        // Each entry carries its run (so its hue), whether it is the freshly-laid tip (glows `hot` for one
+        // frame), and whether its far cell is a turn (a ball joint sits there).
+        self.list.clear();
         for ri in 0..runs {
             let lo = (ri * bands) / runs;
             let hi = (((ri + 1) * bands) / runs).clamp(lo + 1, bands);
-            let band = d.levels[lo..hi].iter().copied().fold(0.0f32, f32::max);
-            // The surge feeds the growth rate rather than the geometry, so it can never move anything
+            let band = d.levels[lo..hi].iter().fold(0.0f32, |m, &v| m.max(v));
+            // The surge scales the RATE, never the geometry, so a flourish cannot move anything
             // discontinuously - it only makes the next segment arrive sooner.
             let drive = (resp(band, t.sensitivity) + reset * (SURGE_RATE - 1.0)).clamp(0.0, 1.0);
             self.runs[ri].grow(drive, turn, dt, nx, fit.nz);
+            let grew = self.runs[ri].grew;
             let seg = &self.runs[ri].seg;
-            for i in 0..seg.len() {
+            let n = seg.len();
+            for i in 0..n {
                 let from = if i == 0 { seg[i] } else { seg[i - 1] };
-                all.push((from, seg[i]));
+                // A turn: the direction into this cell differs from the direction out of it. The tip
+                // also gets a joint so a run ends in a rounded cap rather than a flat face.
+                let joint = if i > 0 && i + 1 < n {
+                    let d1 = (seg[i].x - seg[i - 1].x, seg[i].j - seg[i - 1].j, seg[i].k - seg[i - 1].k);
+                    let d2 = (seg[i + 1].x - seg[i].x, seg[i + 1].j - seg[i].j, seg[i + 1].k - seg[i].k);
+                    d1 != d2
+                } else {
+                    i + 1 == n
+                };
+                let hot_tip = grew && i == n - 1;
+                self.list.push(Seg { from, to: seg[i], run: ri, hot_tip, joint, key: (-seg[i].k, ri, i) });
             }
         }
-        all.sort_by_key(|(_, to)| -to.k);
+        // Unstable: `sort_by_key` is a merge sort that allocates a buffer. The key is unique per segment,
+        // so the order is as fixed as a stable sort's would be.
+        self.list.sort_unstable_by_key(|s| s.key);
 
-        for (from, to) in all {
-            let (fx, fy, fz) = eye(from, nx);
-            let (tx, ty, tz) = eye(to, nx);
-            let (Some((c0, r0, rad0)), Some((c1, r1, rad1))) =
-                (project(cx, fx, fy, fz, fit), project(cx, tx, ty, tz, fit))
-            else {
-                continue; // behind the near plane, or poisoned - skip it
-            };
-
-            // Depth shading AS WELL AS the size taper. The far end is already 2.75x smaller; dimming it
-            // too is what stops the back of the lattice reading as clutter.
-            let far01 = (to.k as f32 / fit.nz.max(1) as f32).clamp(0.0, 1.0);
-            let body = blend(if reset > 0.01 { hot } else { lit }, panel, far01 * 0.55);
-
-            let steps = (c1 - c0).abs().max((r1 - r0).abs()).max(1);
-            // Keyline over the whole tube first, so crossing pipes in one hue still separate - the trick
-            // chroma established, which the last two families both needed.
+        // Painted one DEPTH PLANE at a time: every keyline in the plane, then every tube in it. The keyline
+        // is what separates crossing pipes (the trick chroma established), but drawn per segment it cut a
+        // notch into the end of the previous segment of the SAME pipe, so a far pipe read as a dotted line.
+        // Per plane, a pipe only outlines itself against what is behind it.
+        let white = Rgba::new(255, 255, 255, 255);
+        let mut prof = [Rgba::new(0, 0, 0, 0); PROFILE_MAX];
+        let mut g0 = 0;
+        while g0 < self.list.len() {
+            let k = self.list[g0].to.k;
+            let mut g1 = g0;
+            while g1 < self.list.len() && self.list[g1].to.k == k {
+                g1 += 1;
+            }
             for pass in 0..2 {
-                for s in 0..=steps {
-                    let col = c0 + (c1 - c0) * s / steps;
-                    let row = r0 + (r1 - r0) * s / steps;
-                    let rad = rad0 + (rad1 - rad0) * s as f32 / steps as f32;
-                    let rr = rad.clamp(0.6, 6.0).round().max(1.0) as i32;
+                for gi in g0..g1 {
+                    let sg = self.list[gi];
+                    let (fx, fy, fz) = eye(sg.from, nx);
+                    let (tx, ty, tz) = eye(sg.to, nx);
+                    let (Some((c0, r0, rad0)), Some((c1, r1, rad1))) =
+                        (project(cx, fx, fy, fz, fit), project(cx, tx, ty, tz, fit))
+                    else {
+                        continue;
+                    };
+                    let steps = (c1 - c0).abs().max((r1 - r0).abs()).max(1);
+                    // A run of overlapping squares along the segment. Sampling every pixel over-draws - a
+                    // 7px square advancing 1px repaints 6 columns it already owns - so it strides by the
+                    // thinnest radius on the segment, which still leaves no gap.
+                    let rr_min = rad0.min(rad1).clamp(0.6, 6.0).round().max(1.0) as i32;
+                    let stride = rr_min.max(1);
+                    let at = |s: i32| {
+                        let col = c0 + (c1 - c0) * s / steps;
+                        let row = r0 + (r1 - r0) * s / steps;
+                        let rad = rad0 + (rad1 - rad0) * s as f32 / steps as f32;
+                        let rr = rad.clamp(0.6, 6.0).round().max(1.0) as i32;
+                        (col, row, rr)
+                    };
+                    let joint_r = rad1.clamp(0.6, 6.0).round().max(1.0) as i32 + 1;
                     if pass == 0 {
-                        c.fill_rect(col - rr - 1, row - rr - 1, rr * 2 + 3, rr * 2 + 3, key);
-                    } else {
-                        c.fill_rect(col - rr, row - rr, rr * 2 + 1, rr * 2 + 1, body);
+                        let mut s = 0;
+                        loop {
+                            let (col, row, rr) = at(s);
+                            c.fill_rect(col - rr - 1, row - rr - 1, rr * 2 + 3, rr * 2 + 3, key);
+                            if s == steps {
+                                break;
+                            }
+                            s = (s + stride).min(steps);
+                        }
+                        if sg.joint {
+                            disc(c, c1, r1, joint_r + 1, key);
+                        }
+                        continue;
+                    }
+
+                    // Depth shading AS WELL AS the size taper. The far end is already 2.75x smaller; dimming
+                    // it too is what stops the back of the lattice reading as clutter. The surge warms every
+                    // pipe toward `hot` in proportion to the envelope - a blend, so the three hues survive
+                    // it; the freshly-laid tip glows `hot` outright for its one frame.
+                    let far01 = (k as f32 / fit.nz.max(1) as f32).clamp(0.0, 1.0);
+                    let hue = hues[sg.run % hues.len()];
+                    let base = if sg.hot_tip { hot } else { Rgba::lerp_linear(hue, hot, reset.clamp(0.0, 1.0) * 0.6) };
+                    let body = blend(base, panel, far01 * 0.55);
+                    // Lit from above-left. A mostly-vertical tube is shaded ACROSS ITS COLUMNS (stripe on
+                    // the left); anything else across its rows (stripe on top). Shading a vertical tube by
+                    // rows striped it like a ladder, one band per sample square.
+                    let vertical = (r1 - r0).abs() > (c1 - c0).abs();
+                    let mut s = 0;
+                    loop {
+                        let (col, row, rr) = at(s);
+                        let n = profile(&mut prof, (rr * 2 + 1) as usize, body, panel);
+                        for (u, &px) in prof.iter().enumerate().take(n) {
+                            let o = u as i32 - rr;
+                            if vertical {
+                                c.fill_rect(col + o, row - rr, 1, rr * 2 + 1, px);
+                            } else {
+                                c.fill_rect(col - rr, row + o, rr * 2 + 1, 1, px);
+                            }
+                        }
+                        if s == steps {
+                            break;
+                        }
+                        s = (s + stride).min(steps);
+                    }
+                    // The ball joint - a filled disc of radius+1 at the corner (and the tip), the round
+                    // joint the real screensaver has, shaded top to bottom like the tubes, with a glint.
+                    if sg.joint {
+                        let r = joint_r;
+                        let n = profile(&mut prof, (r * 2 + 1) as usize, body, panel);
+                        for dy in -r..=r {
+                            let dx = (((r * r - dy * dy) as f32).max(0.0).sqrt() + 0.5) as i32;
+                            let u = ((dy + r) as usize).min(n - 1);
+                            c.fill_rect(c1 - dx, r1 + dy, dx * 2 + 1, 1, prof[u]);
+                        }
+                        if r >= 3 {
+                            c.fill_rect(c1 - r / 2, r1 - r / 2, 1, 1, Rgba::lerp_linear(body, white, 0.8));
+                        }
                     }
                 }
             }
-            // A brighter cap on the joint - the ball joint the real screensaver has, and what makes a
-            // corner read as a corner rather than as a kink.
-            let rr = rad1.clamp(0.6, 6.0).round().max(1.0) as i32;
-            c.fill_rect(c1 - rr, r1 - rr, rr * 2 + 1, 1.max(rr), blend(body, hot, 0.45));
+            g0 = g1;
         }
 
-        c.bloom(t.bloom as i32, t.glow_strength);
+        // The teapot: at the first run's growing tip, just above it in the not-yet-laid space, drawn
+        // in `hot` for as long as the flourish gives it - our own 9x7 silhouette (see TEAPOT).
+        if self.teapot_ms > 0.0 {
+            if let Some(run) = self.runs.first() {
+                if let Some(&tip) = run.seg.last() {
+                    let (ex, ey, ez) = eye(tip, nx);
+                    if let Some((tc, tr, _)) = project(cx, ex, ey, ez, fit) {
+                        // Centred on the tip horizontally, lifted clear of it so the silhouette sits in
+                        // panel rather than on top of the hot tube, and clamped inside the interior.
+                        let ax = (tc - TEAPOT_W / 2).clamp(2, (w - 2 - TEAPOT_W).max(2));
+                        let ay = (tr - TEAPOT_H - 3).clamp(3, (h - 3 - TEAPOT_H).max(3));
+                        // A panel-colour keyline round the silhouette first, as the pipes have, so the
+                        // teapot reads as an object in front of the lattice rather than a hot smudge on it.
+                        for pass in 0..2 {
+                            for (r, bits) in TEAPOT.iter().enumerate() {
+                                for col in 0..TEAPOT_W {
+                                    if bits & (1 << (TEAPOT_W - 1 - col)) != 0 {
+                                        let (px, py) = (ax + col, ay + r as i32);
+                                        if pass == 0 {
+                                            c.fill_rect(px - 1, py - 1, 3, 3, key);
+                                        } else {
+                                            c.fill_rect(px, py, 1, 1, hot);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        self.teapot_at = Some((ax, ay));
+                    }
+                }
+            }
+        }
+
+        // The bloom composites each pixel OVER its own halo, so on an opaque panel every interior pixel
+        // hides its halo completely, and the clip below then clears the only pixels that could show one
+        // (the margin outside the panel). It was measured costing 1.17 of the 1.26 ms this family took at
+        // 380x60 for no visible pixel. Kept for a hand-authored colourway with a translucent panel, which
+        // is the one case it can still change anything.
+        if t.panel_alpha < 1.0 {
+            c.bloom(t.bloom as i32, t.glow_strength);
+        }
+        // Clip last: a joint disc or the bloom at the lattice's edge is one pixel from the rounded corners.
+        c.clip_to_rounded_rect(1, 2, w - 2, h - 4, 3);
     }
 }
 
@@ -647,10 +885,10 @@ mod tests {
     ///
     /// This is the hole the depth test did not cover. `Fit` is derived entirely from the HEIGHT, so a
     /// width change leaves it equal and the resize guard never fires - and the run count is
-    /// `nx / 8` clamped to MAX_RUNS, which is 4 at both 380px (nx 46) and 330px (nx 40), so that check
-    /// does not fire either. A run sitting at `at.x = 45` is then outside `0..40` for good: `steer` finds
+    /// `nx / 4` clamped to MAX_RUNS (3; it was `nx / 8` clamped to 4), the same at both 380px (nx 46)
+    /// and 330px (nx 40), so that check does not fire either. A run sitting at `at.x = 45` is then outside `0..40` for good: `steer` finds
     /// none of its six candidates inside, so `dir` is left alone, and `grow` rejects the step it then
-    /// takes. Nothing can ever move it again, and one of the four pipes becomes a static streak.
+    /// takes. Nothing can ever move it again, and one of the pipes becomes a static streak.
     ///
     /// Mutation: drop `nx` from the resize guard AND the stranded-cell restart in `grow`, and the
     /// narrowed run stops growing while the others carry on.
@@ -791,6 +1029,217 @@ mod tests {
         }
     }
 
+    /// THREE pipes grow at once, each in its own hue - `lit`, `hot`, and their linear midpoint - so
+    /// the panel reads as a lattice of several pipes rather than copies of one signal.
+    ///
+    /// Checked by hue, not by run count: a body pixel at depth `k` is a straight blend of its run's
+    /// hue toward the panel, so it lies on that hue's line to the panel. The crown and underside
+    /// shading fall OFF those lines, as does the panel, so a pixel on the midpoint line can only have
+    /// come from a midpoint-hued run existing - which is the property this defends.
+    ///
+    /// Mutation: give every run one hue - the midpoint line loses all its pixels and the count drops
+    /// below three.
+    #[test]
+    fn three_pipes_grow_at_once() {
+        let t = builtin::pipes_win95_teal();
+        let mut fam = Pipes::default();
+        let mut c = Canvas::new(380, 60);
+        for k in 0..60 {
+            fam.draw(&mut c, &t, &frame(0.6, k as f32 * 0.0167));
+        }
+        assert!(fam.runs.len() >= 3, "fewer than three runs were built: {}", fam.runs.len());
+        let lit = Rgba::from_hex(&t.lit, 1.0);
+        let hot = Rgba::from_hex(&t.hot, 1.0);
+        let mid = Rgba::lerp_linear(lit, hot, 0.5);
+        let panel = Rgba::from_hex(&t.panel, 1.0);
+        // Does `p` lie on the straight line from `hue` to `panel`, i.e. is it that hue at some depth?
+        let on_line = |p: Rgba, hue: Rgba| -> bool {
+            let span = (hue.r as i32 - panel.r as i32).abs()
+                + (hue.g as i32 - panel.g as i32).abs()
+                + (hue.b as i32 - panel.b as i32).abs();
+            if span < 30 {
+                return false;
+            }
+            // Solve the blend fraction from whichever channel separates the hue from the panel most,
+            // then confirm the other two channels agree.
+            let (h0, p0, c0) = [
+                (hue.r as f32, panel.r as f32, p.r as f32),
+                (hue.g as f32, panel.g as f32, p.g as f32),
+                (hue.b as f32, panel.b as f32, p.b as f32),
+            ]
+            .into_iter()
+            .max_by(|a, b| (a.0 - a.1).abs().partial_cmp(&(b.0 - b.1).abs()).unwrap())
+            .unwrap();
+            let a = ((c0 - h0) / (p0 - h0)).clamp(0.0, 1.0);
+            let fit = |hc: u8, pc: u8, pv: u8| {
+                (hc as f32 + (pc as f32 - hc as f32) * a - pv as f32).abs() <= 4.0
+            };
+            fit(hue.r, panel.r, p.r) && fit(hue.g, panel.g, p.g) && fit(hue.b, panel.b, p.b)
+        };
+        let (mut saw_lit, mut saw_hot, mut saw_mid) = (false, false, false);
+        for y in 4..56 {
+            for x in 4..376 {
+                let p = c.get(x, y);
+                if p.a == 0 {
+                    continue;
+                }
+                // A pixel very near the panel is ambiguous (every hue's line ends there); skip it.
+                if (p.r as i32 - panel.r as i32).abs()
+                    + (p.g as i32 - panel.g as i32).abs()
+                    + (p.b as i32 - panel.b as i32).abs()
+                    < 24
+                {
+                    continue;
+                }
+                if on_line(p, mid) {
+                    saw_mid = true;
+                } else if on_line(p, lit) {
+                    saw_lit = true;
+                } else if on_line(p, hot) {
+                    saw_hot = true;
+                }
+            }
+        }
+        let n = saw_lit as u32 + saw_hot as u32 + saw_mid as u32;
+        assert!(
+            n >= 3,
+            "fewer than three hues drawn: lit={saw_lit} hot={saw_hot} mid={saw_mid}"
+        );
+    }
+
+    /// A near pipe is FAT and ROUND: a front-depth cross-section is at least 5px across and has a row
+    /// lighter than its body - the specular stripe that gives the tube volume - on the side facing the
+    /// light.
+    ///
+    /// Measured within ONE cross-section: a column's contiguous run of non-panel pixels 5..=9 tall is a
+    /// horizontal tube's thickness (the keyline, which is the panel colour, bounds it). Its brightest
+    /// pixel must beat the run's median by a clear margin and sit in the run's upper half. Required on
+    /// many columns, so a single joint glint or two touching pipes cannot pass it.
+    ///
+    /// The first version of this test took the luminance range over a fixed 9-row window, which spans
+    /// neighbouring pipes at different depth shades and passed with the tube shading deleted.
+    ///
+    /// Mutation: make `profile` return the flat body for every row (or thin the pipe with a smaller
+    /// `R_PIPE`) - no cross-section has a lit stripe, or none is 5px, and this fails.
+    #[test]
+    fn pipes_are_fat_with_a_highlight() {
+        let t = builtin::pipes_win95_teal();
+        let mut fam = Pipes::default();
+        let (w, h) = (380, 60);
+        let mut c = Canvas::new(w, h);
+        for k in 0..120 {
+            fam.draw(&mut c, &t, &frame(0.6, k as f32 * 0.0167));
+        }
+        let panel = Rgba::from_hex(&t.panel, 1.0);
+        let lum = |p: Rgba| 0.2126 * p.r as f32 + 0.7152 * p.g as f32 + 0.0722 * p.b as f32;
+        let non_panel = |p: Rgba| {
+            p.a > 0
+                && ((p.r as i32 - panel.r as i32).abs()
+                    + (p.g as i32 - panel.g as i32).abs()
+                    + (p.b as i32 - panel.b as i32).abs())
+                    > 24
+        };
+        let mut good = 0;
+        for x in 4..w - 4 {
+            let mut y = 3;
+            while y < h - 3 {
+                if !non_panel(c.get(x, y)) {
+                    y += 1;
+                    continue;
+                }
+                let y0 = y;
+                while y < h - 3 && non_panel(c.get(x, y)) {
+                    y += 1;
+                }
+                let n = y - y0;
+                if (5..=9).contains(&n) {
+                    let mut ls = [0.0f32; 9];
+                    for (i, l) in ls.iter_mut().enumerate().take(n as usize) {
+                        *l = lum(c.get(x, y0 + i as i32));
+                    }
+                    let run = &mut ls[..n as usize];
+                    let (imax, lmax) =
+                        run.iter().enumerate().fold((0, f32::MIN), |b, (i, &l)| if l > b.1 { (i, l) } else { b });
+                    run.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                    let median = run[run.len() / 2];
+                    if lmax - median >= 12.0 && (imax as i32) < n / 2 {
+                        good += 1;
+                    }
+                }
+            }
+        }
+        assert!(
+            good >= 12,
+            "only {good} fat (5-9px) cross-sections have a lit stripe on the light side - the tubes read flat"
+        );
+    }
+
+    /// The teapot appears at the growing tip on a flourish, drawn in `hot`, within three frames.
+    ///
+    /// Its 9x7 silhouette is matched at the anchor the family recorded: every set bit is `hot`, and at
+    /// least one unset bit is NOT - so a solid hot region (which the surge paints on the near tube)
+    /// cannot pass for the teapot, and neither can the empty panel with the teapot deleted.
+    ///
+    /// Mutation: never draw the teapot - the anchor is never set and no silhouette is found.
+    #[test]
+    fn teapot_appears_on_the_flourish() {
+        let t = builtin::pipes_win95_teal();
+        let mut fam = Pipes::default();
+        let mut c = Canvas::new(380, 60);
+        for k in 0..80 {
+            fam.draw(&mut c, &t, &frame(0.6, k as f32 * 0.0167));
+        }
+        let hot = Rgba::from_hex(&t.hot, 1.0);
+        let is_hot = |p: Rgba| {
+            p.a > 200
+                && (p.r as i32 - hot.r as i32).abs() <= 6
+                && (p.g as i32 - hot.g as i32).abs() <= 6
+                && (p.b as i32 - hot.b as i32).abs() <= 6
+        };
+        fam.flourish.force_next();
+        let mut ok = false;
+        for k in 80..83 {
+            fam.draw(&mut c, &t, &frame(0.6, k as f32 * 0.0167));
+            let Some((ax, ay)) = fam.teapot_at else { continue };
+            let (mut all_set_hot, mut any_unset_cold) = (true, false);
+            for (r, bits) in TEAPOT.iter().enumerate() {
+                for col in 0..TEAPOT_W {
+                    let set = bits & (1 << (TEAPOT_W - 1 - col)) != 0;
+                    let p = c.get(ax + col, ay + r as i32);
+                    if set && !is_hot(p) {
+                        all_set_hot = false;
+                    }
+                    if !set && !is_hot(p) {
+                        any_unset_cold = true;
+                    }
+                }
+            }
+            if all_set_hot && any_unset_cold {
+                ok = true;
+                break;
+            }
+        }
+        assert!(ok, "the teapot silhouette never appeared at the tip on the flourish");
+    }
+
+    /// Run: cargo test --release probe_pipes_cost -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn probe_pipes_cost() {
+        let t = builtin::pipes_win95_teal();
+        let mut fam = Pipes::default();
+        let mut c = Canvas::new(380, 60);
+        for k in 0..120 {
+            fam.draw(&mut c, &t, &frame(0.8, k as f32 * 0.0167));
+        }
+        let n = 300;
+        let t0 = std::time::Instant::now();
+        for k in 0..n {
+            fam.draw(&mut c, &t, &frame(0.8, k as f32 * 0.0167));
+        }
+        println!("pipes: {:.3} ms/frame at 380x60", t0.elapsed().as_secs_f64() * 1000.0 / n as f64);
+    }
+
     /// Run: cargo test --release dump_pipes -- --ignored --nocapture
     #[test]
     #[ignore]
@@ -845,6 +1294,33 @@ mod tests {
             }
             let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/eyeball");
             std::fs::write(dir.join(format!("pipes-h{hh}.rgba")), &out).unwrap();
+        }
+
+        // The fidelity-pass eye test: calm / loud / flourish (the teapot, a few frames in) for two
+        // colourways at the wide size and at 128x44, so fat pipes, the highlight and underside, the
+        // ball joints and three concurrent pipes can be judged against the glow-and-depth families.
+        for tid in ["pipes-win95-teal", "pipes-neon-magenta"] {
+            let theme = builtin::all().into_iter().find(|t| t.id == tid).unwrap();
+            for (w, hh) in [(380, 60), (128, 44)] {
+                for (tag, gain) in [("calm", 0.30), ("loud", 0.85)] {
+                    let mut fam = Pipes::default();
+                    let mut c = Canvas::new(w, hh);
+                    for k in 0..500 {
+                        fam.draw(&mut c, &theme, &frame(gain, k as f32 * 0.0167));
+                    }
+                    write(format!("{tid}-{tag}-{w}x{hh}"), &c);
+                }
+                let mut fam = Pipes::default();
+                let mut c = Canvas::new(w, hh);
+                for k in 0..400 {
+                    fam.draw(&mut c, &theme, &frame(0.62, k as f32 * 0.0167));
+                }
+                fam.flourish.force_next();
+                for k in 400..412 {
+                    fam.draw(&mut c, &theme, &frame(0.62, k as f32 * 0.0167));
+                }
+                write(format!("{tid}-flourish-{w}x{hh}"), &c);
+            }
         }
 
     }

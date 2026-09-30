@@ -193,7 +193,7 @@ families** have one, and each is that instrument's characteristic fault or ritua
 | Flame organ | A flashback: every burner guts to its pilot, then an ignition front relights them |
 | Dolphin LCD | The dolphin leaps clear of the display and lands, throwing a splash along the waterline |
 | 3D spectrum | The whole stack surges one depth step forward and settles back |
-| 3D Pipes | Every run is abandoned at once and fresh pipes start, the way the screensaver resets |
+| 3D Pipes | A surge: every pipe lays pipe three times as fast and warms toward hot, and a teapot rides the growing tip |
 | Orbit | The ring scatters outward and is drawn back in |
 | Cherry blossom | A storm: lightning strikes the castle and a gust lets the branch go of a great deal at once |
 | Brutalist | The monolith: every block slams to full height and figure and ground invert |
@@ -352,7 +352,7 @@ colourway files, which hot-reload on save and can replace a built-in by reusing 
 
 ## More
 
-**180 colourways across 28 families**: Segmented VFD, Oscilloscope, VU dials, Vaporwave grid,
+**181 colourways across 28 families**: Segmented VFD, Oscilloscope, VU dials, Vaporwave grid,
 Valve row, Fluid, Nixie tubes, Spectrogram, Reel-to-reel, Patchbay, Radar, Pantone, Flame organ,
 Dolphin LCD, 3D spectrum, 3D Pipes, Orbit, Cherry blossom, Kaleidoscope, Rave lasers, Brutalist,
 Chroma field, Virtual Self: wings, Virtual Self: ghost voices, Virtual Self: orb, Bones / TeamSESH: VHS,

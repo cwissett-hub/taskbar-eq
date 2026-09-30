@@ -193,6 +193,42 @@ const DUST_MIX: f32 = 0.30;
 /// The peak-hold cap's thickness in pixels.
 const CAP_PX: i32 = 2;
 
+/// The material a block is now cut from, all in linear light off the block's own `lit` tone.
+///
+/// A flat slab reads as a bar with the segments removed - which is what the user called "very basic".
+/// A block has to look like a solid with a light on it: a lit top face, a front face, and a shadow
+/// side. These three faces plus aggregate speckle and formwork lines are what turn the rectangle into
+/// cast concrete. All are derived from the block's own front tone so a rainbow colourway keeps its hue
+/// and every colourway lights the same way.
+const TOP_H: i32 = 2; // the lit top face, in rows
+const SHADOW_W: i32 = 3; // the shadow side, in columns, on the right
+const TOP_LIGHTEN: f32 = 0.20; // how far the top face moves toward white
+const SHADOW_DARKEN: f32 = 0.35; // how far the shadow side moves toward black
+const SPECKLE_DARKEN: f32 = 0.16; // aggregate speckle, one shade darker than the front
+const SPECKLE_FRAC: f32 = 0.05; // roughly this fraction of front-face pixels are speckled
+const FORMWORK_DARKEN: f32 = 0.22; // the board-mark lines
+const FORMWORK_EVERY: i32 = 9; // one formwork line every this many rows
+const AO_DARKEN: f32 = 0.30; // ambient occlusion at the foot of a full-height block
+/// No face goes darker than this, however the shadow, board-mark and occlusion stack. Darkening in
+/// linear light scales luminance by (1 - t), so 0.5 halves it: the two mid-luminance colourways (sodium
+/// #8a8378 and shock #ff2e88, both ~0.23-0.25) then sit at ~3.1-3.3:1 on their near-black panels, which
+/// keeps the 3:1 floor. The uncapped foot of a full-height shadow side (0.35 + 0.30) was ~2.5:1.
+const FACE_DARKEN_MAX: f32 = 0.5;
+
+/// The slam. A bass onset drops each slab from `SLAM_PX` above its resting level down onto its level
+/// over `SLAM_MS`, a ballistic offset that eases to zero. It is what makes the beat land with weight
+/// rather than just toggling the layout.
+const SLAM_PX: f32 = 3.0;
+const SLAM_MS: f32 = 60.0;
+
+/// The dust puff: three faint `ghost`-alpha motes per block that lift off its base on the slam and
+/// fade in `PUFF_MS`. Distinct from the flip's grains-and-chunks debris - this is the soft kick of
+/// air, drawn in the ghost tone, not the powder the slab grinds off.
+const MAX_PUFF: usize = 128;
+const PUFF_PER_BLOCK: usize = 3;
+const PUFF_MS: f32 = 300.0;
+const PUFF_RISE: f32 = 6.0; // pixels a mote lifts over its whole life
+
 /// The flourish: THE MONOLITH. Every block slams to full height at once and the panel inverts, so the
 /// blocks become dark voids in a lit field, then it releases.
 ///
@@ -225,6 +261,17 @@ struct Dust {
     live: bool,
 }
 
+/// One mote of the slam's air puff. A soft `ghost`-alpha speck, not a grain of concrete.
+#[derive(Clone, Copy, Default)]
+struct Puff {
+    x: f32,
+    y: f32,
+    /// Pixels per millisecond, signed: motes lift AWAY from the surface the slab hit.
+    vy: f32,
+    age: f32,
+    live: bool,
+}
+
 #[derive(Default)]
 pub struct Brutal {
     onset: crate::dsp::onset::Flux,
@@ -234,6 +281,11 @@ pub struct Brutal {
     slab: crate::dsp::flourish::Envelope,
     /// The dust pool. Sized once on first use and reused thereafter - see `MAX_DUST`.
     dust: Vec<Dust>,
+    /// The slam's air puff pool. Preallocated on first use, never grown - see `MAX_PUFF`.
+    puff: Vec<Puff>,
+    /// The ballistic slam offset in pixels, `SLAM_PX` on a bass onset easing to zero. Drawn as a
+    /// vertical displacement so the slabs drop onto their level rather than snapping to it.
+    slam_off: f32,
     /// Advanced on every emission, so consecutive slams throw different dust while any single slam is
     /// reproducible from its seed.
     seed: u32,
@@ -324,6 +376,55 @@ impl Brutal {
         }
     }
 
+    /// Lifts three faint motes off each block's base on the slam. Ghost-alpha air, not powder - it
+    /// rises AWAY from the surface the slab hit (up off the floor, down off the ceiling) and fades in
+    /// `PUFF_MS`. Its own pool, preallocated and reused exactly like the dust.
+    fn puff(&mut self, hanging: bool, x0: i32, bw: i32, fy: i32, fh: i32) {
+        if self.puff.len() != MAX_PUFF {
+            self.puff = vec![Puff::default(); MAX_PUFF];
+        }
+        // Up off the floor when standing, down off the ceiling when hanging.
+        let base = if hanging { fy as f32 } else { (fy + fh - 1) as f32 };
+        let vy = if hanging { PUFF_RISE / PUFF_MS } else { -PUFF_RISE / PUFF_MS };
+        let mut next = 0usize;
+        for b in 0..BLOCKS {
+            let bx = x0 + b as i32 * (bw + GAP);
+            for g in 0..PUFF_PER_BLOCK {
+                let slot = loop {
+                    if next >= MAX_PUFF {
+                        return;
+                    }
+                    let i = next;
+                    next += 1;
+                    if !self.puff[i].live {
+                        break i;
+                    }
+                };
+                // Spread across the block's own width, deterministically per block and mote so the
+                // puff is reproducible in a golden render.
+                let across = rand01(0xA17B_EE01 ^ b as u32, g as u32 * 3 + 1);
+                self.puff[slot] = Puff {
+                    x: bx as f32 + across * (bw - 1).max(0) as f32,
+                    y: base,
+                    vy,
+                    age: 0.0,
+                    live: true,
+                };
+            }
+        }
+    }
+
+    /// Advances every live puff mote and retires the finished ones.
+    fn drift_puff(&mut self, ms: f32, fy: i32, fh: i32) {
+        for p in self.puff.iter_mut().filter(|p| p.live) {
+            p.age += ms;
+            p.y += p.vy * ms;
+            if p.age >= PUFF_MS || !p.y.is_finite() || p.y < fy as f32 || p.y > (fy + fh - 1) as f32 {
+                p.live = false;
+            }
+        }
+    }
+
     /// Advances every live grain by one frame and retires the ones that are finished.
     fn drift(&mut self, secs: f32, fy: i32, fh: i32, w: i32) {
         for g in self.dust.iter_mut().filter(|g| g.live) {
@@ -390,6 +491,9 @@ impl Family for Brutal {
         // put every new grain a pixel off the surface on the very frame it was born - the frame where the
         // impact is supposed to read.
         self.drift(dt / 1000.0, fy, fh, w);
+        self.drift_puff(dt, fy, fh);
+        // The ballistic slam offset eases to zero - see SLAM_PX.
+        self.slam_off = (self.slam_off - SLAM_PX * dt / SLAM_MS).max(0.0);
 
         // ---- the flip ----
         if self.onset.update(&d.levels, dt, FLIP_RATIO, FLIP_REFRACTORY_MS) {
@@ -397,6 +501,9 @@ impl Family for Brutal {
             // The slam. Thrown from the surface being ENTERED, so the dust and the blocks arrive
             // together rather than the dust trailing the state it belongs to by a frame.
             self.slam(self.hanging, x0, bw, fy, fh, drive);
+            // The blocks drop onto their level, and the base kicks up a faint puff of air.
+            self.slam_off = SLAM_PX;
+            self.puff(self.hanging, x0, bw, fy, fh);
         }
 
         // ---- the flourish ----
@@ -450,15 +557,75 @@ impl Family for Brutal {
             // per column reads as painted concrete, where a hue that moved would read as a light show
             // and this family is explicitly not that.
             let x01 = if BLOCKS > 1 { i as f32 / (BLOCKS - 1) as f32 } else { 0.5 };
-            let body = lerp(crate::render::tint(t, x01, d.time_s, false, &t.lit, 1.0), dark, slab);
+            let front = crate::render::tint(t, x01, d.time_s, false, &t.lit, 1.0);
+            let body = lerp(front, dark, slab);
             let tip = lerp(crate::render::tint(t, x01, d.time_s, true, &t.hot, 1.0), dark, slab);
+            // The three faces and the two textures, all off the block's own front tone and all lerped
+            // toward `dark` by `slab` so the whole block collapses into the panel colour under the
+            // monolith exactly as the flat body used to. A lit top face, a shadow side, aggregate
+            // speckle and formwork lines are what make the rectangle read as a cast block - see the
+            // face constants.
+            let white = Rgba::new(255, 255, 255, 255);
+            let black = Rgba::new(0, 0, 0, 255);
+            let top_face = lerp(lerp(front, white, TOP_LIGHTEN), dark, slab);
             // The two states. `hanging` grows downward from the ceiling, otherwise upward from the floor.
-            let (by, cap_y) = if self.hanging {
+            let (mut by, cap_y) = if self.hanging {
                 (fy, fy + cap_at.clamp(0, fh) - CAP_PX)
             } else {
                 (fy + fh - len, fy + fh - cap_at.clamp(0, fh))
             };
-            c.fill_rect(bx, by, bw, len, body);
+            // The ballistic slam: the slab is displaced off its resting surface and drops back onto it.
+            let off = self.slam_off.round() as i32;
+            by += if self.hanging { off } else { -off };
+
+            // The faces, row by row from the FREE end (the end that meets the air - the top when
+            // standing, the bottom when hanging) back to the base. Row by row because the front and the
+            // shadow side both carry an ambient-occlusion ramp: they darken toward the surface the block
+            // stands on, by up to AO_DARKEN at the full panel height, which is what seats a block on its
+            // floor instead of leaving it pasted flat on the panel. The ramp is keyed on distance from
+            // the free end in PANEL rows, so a short block stays lit and only a tall one goes dark at the
+            // foot. The lit end face (TOP_H rows at the free end) spans the whole width including the
+            // shadow side so the lit edge reads unbroken across the corner; a 1px arris one shade down
+            // sits under it, which is what makes the lit face read on a colourway already near white.
+            let top_h = TOP_H.min(len);
+            // Narrow blocks (128px panels) cannot give three of their ~6 columns to shadow - that turned
+            // the monolith into a row of dark stripes. A fifth of the width, at least one column.
+            let sh_w = SHADOW_W.min(bw / 5).max(1).min((bw - 1).max(0));
+            let front_w = (bw - sh_w).max(0);
+            for r in 0..len {
+                let py = by + r;
+                // Distance from the free end, in rows.
+                let e = if self.hanging { len - 1 - r } else { r };
+                if e < top_h {
+                    c.fill_rect(bx, py, bw, 1, top_face);
+                    continue;
+                }
+                let ao = AO_DARKEN * (e as f32 / fh.max(1) as f32).clamp(0.0, 1.0);
+                let row_front = lerp(lerp(front, black, ao), dark, slab);
+                let row_shadow = lerp(lerp(front, black, (SHADOW_DARKEN + ao).min(FACE_DARKEN_MAX)), dark, slab);
+                if sh_w > 0 {
+                    c.fill_rect(bx + front_w, py, sh_w, 1, row_shadow);
+                }
+                if front_w == 0 {
+                    continue;
+                }
+                // The arris under the lit face, then the formwork board-marks every FORMWORK_EVERY rows
+                // (counted from the free end so they ride with the slab), then speckled front.
+                if e == top_h || (e - top_h) % FORMWORK_EVERY == FORMWORK_EVERY - 1 {
+                    let line = lerp(lerp(front, black, (FORMWORK_DARKEN + ao).min(FACE_DARKEN_MAX)), dark, slab);
+                    c.fill_rect(bx, py, front_w, 1, line);
+                    continue;
+                }
+                c.fill_rect(bx, py, front_w, 1, row_front);
+                // Aggregate speckle: static damage keyed on the block index and block-relative row, so
+                // it rides with the slab rather than crawling, one shade down from this row's front.
+                let speckle = lerp(lerp(front, black, (SPECKLE_DARKEN + ao).min(FACE_DARKEN_MAX)), dark, slab);
+                for cxp in 0..front_w {
+                    if rand01(0x5EED_C0DE ^ i as u32, (e as u32) * 37 + cxp as u32 + 1) < SPECKLE_FRAC {
+                        c.fill_rect(bx + cxp, py, 1, 1, speckle);
+                    }
+                }
+            }
 
             // ---- the cracks ----
             //
@@ -520,10 +687,47 @@ impl Family for Brutal {
                 }
             }
 
-            // The peak cap, anchored to THIS BLOCK'S BASE rather than to a panel row - see the module
-            // note. Only drawn when the peak is genuinely ahead of the block, or it just thickens the tip.
+            // The rebar peak marker, anchored to THIS BLOCK'S BASE rather than to a panel row - see the
+            // module note. A 1px vertical `hot` bar standing out of the block's free end to where the
+            // peak reached, with a 2px bent hook at its end: reinforcing bar left poking out of a pour,
+            // not the flat cap bar it replaces. It grows out of the concrete rather than floating in
+            // front of it, so the peak reads as part of the block. Only drawn when the peak is
+            // genuinely ahead of the block.
             if cap_at > len + CAP_PX {
-                c.fill_rect(bx, cap_y.clamp(fy, fy + fh - CAP_PX), bw, CAP_PX, tip);
+                let cxr = bx + bw / 2 - 1;
+                let cy = cap_y.clamp(fy, fy + fh - 1);
+                // From the free end of the (slam-displaced) block out to the peak row.
+                let (r0, r1) = if self.hanging {
+                    ((by + len).min(cy), cy + CAP_PX - 1)
+                } else {
+                    (cy, (by - 1).max(cy))
+                };
+                let (r0, r1) = (r0.clamp(fy, fy + fh - 1), r1.clamp(fy, fy + fh - 1));
+                c.fill_rect(cxr, r0, 1, r1 - r0 + 1, tip);
+                // The bent hook at the free end of the bar.
+                let hook = if self.hanging { r1 } else { r0 };
+                c.fill_rect(cxr, hook, 3, 1, tip);
+                c.fill_rect(cxr + 2, if self.hanging { hook - 1 } else { hook + 1 }, 1, 1, tip);
+            }
+        }
+
+        // The sodium glow: a colourway that sets `edge_glow` is lit from the floor by a sodium lamp,
+        // a wash of `edge` at `edge_alpha` fading to nothing by 40% of the height. Drawn OVER the
+        // blocks, not behind them, because it is light rather than a backdrop: the feet of the blocks
+        // pick up the orange the way concrete under a site lamp does, and that is what makes the
+        // colourway read as lit rather than as grey bars in front of an orange stripe. Quadratic
+        // falloff, so the top of the pool is soft rather than a visible edge. Carried on `edge`/
+        // `edge_alpha`/`edge_glow`, which this family otherwise leaves unused, so no schema field is
+        // added.
+        if t.edge_glow > 0.0 {
+            let gh = ((fh as f32) * 0.40).round().max(1.0) as i32;
+            let lamp = Rgba::from_hex(&t.edge, 1.0);
+            for gy in 0..gh {
+                let f = 1.0 - gy as f32 / gh as f32;
+                let a = (t.edge_alpha * f * f * (1.0 - slab)).clamp(0.0, 1.0);
+                if a > 0.003 {
+                    c.fill_rect(2, fy + fh - 1 - gy, w - 4, 1, Rgba::new(lamp.r, lamp.g, lamp.b, (a * 255.0) as u8));
+                }
             }
         }
 
@@ -543,6 +747,20 @@ impl Family for Brutal {
         for g in self.dust.iter().filter(|g| g.live) {
             let (col, sz) = if g.size > 1 { (lump, g.size) } else { (grain, 1) };
             c.fill_rect(g.x as i32, g.y as i32, sz, sz, col);
+        }
+
+        // ---- the slam's air puff ----
+        //
+        // Faint `ghost`-alpha motes rising off the block bases, softest at their end of life. Drawn in
+        // the block tone at the ghost alpha, so it reads as a breath of dust in the air rather than as
+        // the solid powder the grains are.
+        let puff_rgb = lerp(crate::render::tint(t, 0.5, d.time_s, false, &t.lit, 1.0), background, 0.15);
+        for p in self.puff.iter().filter(|p| p.live) {
+            let fade = (1.0 - p.age / PUFF_MS).clamp(0.0, 1.0);
+            let a = (t.ghost * fade).clamp(0.0, 1.0);
+            if a > 0.01 {
+                c.fill_rect(p.x as i32, p.y as i32, 1, 1, Rgba::new(puff_rgb.r, puff_rgb.g, puff_rgb.b, (a * 255.0) as u8));
+            }
         }
 
         // No bloom. Every colourway here sets `bloom` to 0 and this family would ignore it anyway - see
@@ -1051,8 +1269,12 @@ mod tests {
             "dust is in the air, so a second run on a row might be a grain rather than a fork"
         );
 
-        let body = Rgba::from_hex(&t.lit, 1.0);
-        let is_body = |px: Rgba| (px.r, px.g, px.b) == (body.r, body.g, body.b);
+        // Anything that is not CRACK is body. The block is no longer one flat `lit` fill - it has a
+        // shadow side, an occlusion ramp, speckle and formwork - so matching `lit` exactly would count
+        // every one of those as a crack run and pass with the fork deleted. The crack colour is exact
+        // (`lit` mixed toward the panel by CRACK_MIX), so a run of it can only be a crack.
+        let crack = Rgba::lerp_linear(Rgba::from_hex(&t.lit, 1.0), Rgba::from_hex(&t.panel, 1.0), CRACK_MIX);
+        let is_body = |px: Rgba| (px.r, px.g, px.b) != (crack.r, crack.g, crack.b);
         // A forked row needs THREE separated runs, not two.
         //
         // Two is worthless as a signature, and the first version of this test used it and was vacuous:
@@ -1067,7 +1289,9 @@ mod tests {
                 let mut runs = 0;
                 let mut in_run = false;
                 let mut any_body_seen = false;
-                for x in bx..bx + bw {
+                // The front face only: the shadow side's occlusion ramp passes through the crack's tone
+                // at some row, and would count as a third run on its own.
+                for x in bx..bx + bw - SHADOW_W {
                     let px = c.get(x, y);
                     if is_body(px) {
                         any_body_seen = true;
@@ -1214,6 +1438,159 @@ mod tests {
         }
     }
 
+    /// A flat, onset-free frame: constant levels so `Flux` sees no rise and nothing slams.
+    fn flat_frame(gain: f32, t_s: f32) -> FrameData {
+        let mut d = FrameData { dt_ms: 16.7, time_s: t_s, ..FrameData::default() };
+        for v in d.levels.iter_mut() {
+            *v = gain;
+        }
+        d.peaks = d.levels;
+        d
+    }
+
+    /// The slabs are cast BLOCKS, not flat bars: a lit top face and a shadow side give them the
+    /// material of a solid. At a driven level the top two rows read lighter than the front face and
+    /// the right columns darker, in luminance.
+    ///
+    /// Averaged over the faces so a stray aggregate-speckle pixel cannot decide the comparison.
+    ///
+    /// Mutation: draw the top face in the front tone (drop the TOP_LIGHTEN lift), or drop the
+    /// SHADOW_DARKEN term from the side - either comparison collapses. Both verified failing.
+    #[test]
+    fn slabs_have_a_lit_top_and_a_shadow_side() {
+        // Sodium, a mid-grey: on `brutal-concrete` (#f2f5f7) a 20% lift toward white is ~4 levels, which
+        // no threshold can tell from the occlusion ramp - there the lit face is carried by the arris line
+        // under it, and a lit-top check on near-white passed with the lift deleted.
+        let t = builtin::brutal_sodium();
+        let (x0, bw) = Brutal::grid(380).unwrap();
+        let mut fam = Brutal::default();
+        let mut c = Canvas::new(380, 60);
+        // Standing (the default), settled on a flat level so no onset flips it and no slam offset
+        // shifts the faces while they are being measured.
+        for k in 0..40 {
+            fam.draw(&mut c, &t, &flat_frame(0.8, k as f32 * 0.0167));
+        }
+        assert!(!fam.hanging, "the fixture must stay standing");
+        let lum = |p: Rgba| 0.2126 * p.r as f32 + 0.7152 * p.g as f32 + 0.0722 * p.b as f32;
+        let dark = Rgba::from_hex(&t.panel, 1.0);
+        let bx = x0;
+        // The block's top row: the highest non-panel row in a front (left) column.
+        let col = bx + 1;
+        let mut top = None;
+        for y in 3..57 {
+            let p = c.get(col, y);
+            if (p.r, p.g, p.b) != (dark.r, dark.g, dark.b) {
+                top = Some(y);
+                break;
+            }
+        }
+        let top = top.expect("no block was drawn");
+        let front_w = (bw - SHADOW_W).max(1);
+        let avg = |y0: i32, y1: i32| {
+            let (mut s, mut n) = (0.0f32, 0);
+            for y in y0..y1 {
+                for x in bx..bx + front_w {
+                    s += lum(c.get(x, y));
+                    n += 1;
+                }
+            }
+            s / n.max(1) as f32
+        };
+        let top_l = avg(top, top + TOP_H);
+        // Below the arris (the darker row directly under the lit face), so the comparison is the lit face
+        // against the front face and not against a board-mark.
+        let front_l = avg(top + TOP_H + 1, top + TOP_H + 6);
+        assert!(
+            top_l > front_l + 10.0,
+            "the lit top face is not lighter than the front: {top_l:.1} vs {front_l:.1}"
+        );
+        // The shadow side: the rightmost columns darker than the front, at a mid row below the top.
+        let midy = top + TOP_H + 4;
+        let front_col = lum(c.get(bx + 1, midy));
+        let shadow_col = lum(c.get(bx + bw - 1, midy));
+        assert!(
+            shadow_col + 3.0 < front_col,
+            "the shadow side is not darker than the front: {shadow_col:.1} vs {front_col:.1}"
+        );
+    }
+
+    /// A bass onset SLAMS: the slab is displaced off its resting level and drops back onto it, and
+    /// the base kicks a faint puff of air that has cleared within 300ms.
+    ///
+    /// The displacement is checked on PIXELS - the slab is drawn at least 2px above where it settles.
+    /// The puff is checked on the pool STATE, not on pixels: a ghost-alpha mote is one faint pixel
+    /// over concrete of a similar tone, and reading it back off the canvas would mean inferring it
+    /// from whatever happened to be drawn there - the same reason the grain tests assert on state.
+    ///
+    /// Mutation: drop the `slam_off` displacement (the slab no longer rises), never emit the puff, or
+    /// never retire it.
+    #[test]
+    fn a_bass_onset_slams_and_puffs_dust() {
+        let t = builtin::brutal_concrete();
+        let (x0, bw) = Brutal::grid(380).unwrap();
+        let (fy, fh) = (3, 60 - 6);
+
+        // --- part A: an onset sets the slam and emits a puff that clears in 300ms ---
+        let mut fam = Brutal::default();
+        let mut c = Canvas::new(380, 60);
+        for k in 0..30 {
+            fam.draw(&mut c, &t, &flat_frame(0.35, k as f32 * 0.0167));
+        }
+        assert!(fam.puff.iter().all(|p| !p.live), "the settle frames must not puff");
+        // Drive beats until the first onset flips the state; that is the slam frame.
+        let mut slammed = false;
+        let mut had_puff = false;
+        for k in 0..200 {
+            let was = fam.hanging;
+            fam.draw(&mut c, &t, &beat_frame(k as f32 * 0.0167, 6, k, 0.8));
+            if fam.hanging != was {
+                assert!(fam.slam_off > 0.0, "the onset did not set the slam offset");
+                let base = if fam.hanging { fy as f32 } else { (fy + fh - 1) as f32 };
+                had_puff = fam.puff.iter().any(|p| p.live && (p.y - base).abs() <= 6.0);
+                slammed = true;
+                break;
+            }
+        }
+        assert!(slammed, "no onset ever flipped the panel");
+        assert!(had_puff, "the slam kicked no puff off the slab base");
+        // 300ms of flat, onset-free frames: every mote must retire.
+        for k in 0..25 {
+            fam.draw(&mut c, &t, &flat_frame(0.35, 10.0 + k as f32 * 0.0167));
+        }
+        assert_eq!(fam.puff.iter().filter(|p| p.live).count(), 0, "the puff never cleared");
+
+        // --- part B: the slam offset draws the slab above its settled level ---
+        let dark = Rgba::from_hex(&t.panel, 1.0);
+        let topmost = |c: &Canvas| -> i32 {
+            let colx = x0 + 1;
+            for y in 3..57 {
+                let p = c.get(colx, y);
+                if (p.r, p.g, p.b) != (dark.r, dark.g, dark.b) {
+                    return y;
+                }
+            }
+            57
+        };
+        let _ = bw;
+        let mut fam = Brutal::default();
+        let mut c = Canvas::new(380, 60);
+        // A low level, so the standing block is short and has clear panel above it to rise into.
+        for k in 0..40 {
+            fam.draw(&mut c, &t, &flat_frame(0.30, k as f32 * 0.0167));
+        }
+        assert!(!fam.hanging, "part B must stay standing");
+        let settled_top = topmost(&c);
+        // Force the slam offset and redraw the SAME frame, so length is unchanged and only the
+        // ballistic displacement can move the top.
+        fam.slam_off = SLAM_PX;
+        fam.draw(&mut c, &t, &flat_frame(0.30, 1.0));
+        let slam_top = topmost(&c);
+        assert!(
+            slam_top <= settled_top - 2,
+            "the slam did not raise the slab: settled top {settled_top}, slammed top {slam_top}"
+        );
+    }
+
     #[test]
     #[ignore]
     fn probe_brutal_cost() {
@@ -1298,5 +1675,49 @@ mod tests {
             fam.draw(&mut c, &t, &frame(0.62, k as f32 * 0.0167));
         }
         write("brutal-monolith".into(), &c);
+
+        // The fidelity-pass eye test: calm / loud / flourish for concrete and sodium, at the wide
+        // size and at 128x44, so the material (top light, shadow, speckle, formwork, slam, puff) and
+        // the sodium floor-glow can be judged and compared to the glow-and-depth families.
+        for (tid, tag) in [("brutal-concrete", "concrete"), ("brutal-sodium", "sodium")] {
+            let theme = builtin::all().into_iter().find(|t| t.id == tid).unwrap();
+            for (w, hh) in [(380, 60), (128, 44)] {
+                // calm
+                let mut fam = Brutal::default();
+                let mut c = Canvas::new(w, hh);
+                for k in 0..80 {
+                    fam.draw(&mut c, &theme, &frame(0.22, k as f32 * 0.0167));
+                }
+                write(format!("brutal-{tag}-calm-{w}x{hh}"), &c);
+                // loud, caught a few frames after a slam so the offset and puff are fresh
+                let mut fam = Brutal::default();
+                let mut c = Canvas::new(w, hh);
+                for k in 0..200 {
+                    fam.draw(&mut c, &theme, &beat_frame(k as f32 * 0.0167, 16, k, 0.92));
+                }
+                write(format!("brutal-{tag}-loud-{w}x{hh}"), &c);
+                // the level drops away under held peaks, so the rebar stands out of every block
+                let mut d = frame(0.30, 200.0 * 0.0167);
+                for p in d.peaks.iter_mut() {
+                    *p = 0.85;
+                }
+                for k in 0..6 {
+                    d.time_s = (200 + k) as f32 * 0.0167;
+                    fam.draw(&mut c, &theme, &d);
+                }
+                write(format!("brutal-{tag}-rebar-{w}x{hh}"), &c);
+                // flourish (the monolith), mid-hold
+                let mut fam = Brutal::default();
+                let mut c = Canvas::new(w, hh);
+                for k in 0..120 {
+                    fam.draw(&mut c, &theme, &frame(0.55, k as f32 * 0.0167));
+                }
+                fam.flourish.force_next();
+                for k in 120..134 {
+                    fam.draw(&mut c, &theme, &frame(0.55, k as f32 * 0.0167));
+                }
+                write(format!("brutal-{tag}-flourish-{w}x{hh}"), &c);
+            }
+        }
     }
 }

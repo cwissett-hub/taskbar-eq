@@ -393,6 +393,29 @@ pub fn brutal_cast() -> Theme {
     }
 }
 
+/// Sodium: raw concrete lit from below by a sodium-vapour work lamp.
+///
+/// The warmest, moodiest colourway here - grey slabs standing in an orange floor-glow, the way a
+/// building site looks under the low-pressure sodium lamps that used to light them. The glow is a
+/// vertical wash of `edge` (`#ff9a1a`) at `edge_alpha` fading to nothing by 40% of the panel height;
+/// the family draws it because `edge_glow` is non-zero, which no other brutal colourway sets, so it
+/// rides existing theme fields rather than a new schema one. `lit` is a mid concrete grey that still
+/// clears the 3:1 floor against the near-black panel, and `hot` a pale sodium white for the rebar.
+pub fn brutal_sodium() -> Theme {
+    Theme {
+        id: "brutal-sodium".into(),
+        name: "Sodium".into(),
+        lit: "#8a8378".into(),
+        hot: "#ffd27a".into(),
+        panel: "#0a0804".into(),
+        edge: "#ff9a1a".into(),
+        edge_alpha: 0.35,
+        edge_glow: 1.0,
+        ghost: 0.24,
+        ..brutal_base()
+    }
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Virtual Self: wings - angel wings on Y2K chrome. See `render::vswings` for what the meter is. The
 // panel is opaque (dark or ice) and covers the widget like every other family. Restrained on purpose:
@@ -1038,6 +1061,7 @@ pub fn all() -> Vec<Theme> {
         brutal_shock(),
         brutal_primary(),
         brutal_cast(),
+        brutal_sodium(),
         vswings_particle_arts(),
         vswings_eon_break(),
         vswings_angel_voices(),

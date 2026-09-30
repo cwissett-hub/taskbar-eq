@@ -1,6 +1,6 @@
 # Themes
 
-**180 colourways across 28 families.** A *family* is a renderer with fixed geometry — code. A
+**181 colourways across 28 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
 ## All 28 families
@@ -27,12 +27,12 @@ split, and worth knowing before you go looking for one and only find it in the o
 | Flame organ | A Rubens' tube: a gas manifold whose flame height traces the wave |
 | Dolphin LCD | 1990s car head-unit dot-matrix display, a dolphin arcing over a spectrum |
 | 3D spectrum | Winamp/WMP bars in depth — five staggered rows, oblique (not perspective) |
-| 3D Pipes | The Windows screensaver, driven — real perspective projection |
+| 3D Pipes | The Windows screensaver, driven — real perspective projection; three fat shaded pipes grow at once with ball joints at every turn |
 | Orbit | Spheres circling in real 3D, pulsing to the music, occlusion as a depth cue |
 | Cherry blossom | Petals off a branch in the wind; a lightning storm strikes a castle on a bass hit |
 | Kaleidoscope | Frieze-group (not rosette) mirrored symmetry; radius is frequency |
 | Rave lasers | A sweeping laser fan that strobes on the kick, for frenchcore |
-| Brutalist | Concrete blocks slamming between floor/ceiling on the beat — position, not glow |
+| Brutalist | Cast concrete blocks with lit tops, shadow sides, aggregate speckle and formwork, slamming between floor/ceiling on the beat — position, not glow; the `brutal-sodium` colourway lights them from the floor with a sodium-lamp glow |
 | Chroma field | Zero-sum vertical stripes in spectrum order; a swelling stripe pinches its neighbours |
 | Virtual Self: wings | 32 bands fanned into two mirrored angel wings on a Y2K chrome floor; bass beats the root feathers |
 | Virtual Self: ghost voices | A piano-roll glitch terminal — bands as scrolling MIDI columns, light rays, a romanised phrase, a datamosh flourish |
@@ -189,7 +189,7 @@ Drop a `.toml` file (any filename — the `id` inside is what matters) into
 watched, so saving the file updates the live overlay without a restart — edit a colour, hit
 save, and watch the taskbar change.
 
-A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 180
+A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 181
 built-ins, which are always embedded in the exe regardless of whether that folder exists.
 
 Failure modes are all deliberately soft, because these files are hand-authored:
