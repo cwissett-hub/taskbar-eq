@@ -48,8 +48,9 @@ pub fn glyph(ch: char) -> Option<[u8; 5]> {
         'K' => [0b101, 0b110, 0b100, 0b110, 0b101],
         'L' => [0b100, 0b100, 0b100, 0b100, 0b111],
         'M' => [0b101, 0b111, 0b111, 0b101, 0b101],
-        // N: a filled-diagonal form; reads as N in a word, as a blob alone (see the module note).
-        'N' => [0b101, 0b111, 0b111, 0b111, 0b101],
+        // The arch form: the old near-solid N ([101,111,111,111,101]) differed from M by one pixel, so
+        // "DANGER TO MANIFOLD" read as "DAMGER TO MAMIFOLD". An arch cannot be confused with M or H.
+        'N' => [0b110, 0b101, 0b101, 0b101, 0b101],
         'O' => [0b111, 0b101, 0b101, 0b101, 0b111],
         'P' => [0b111, 0b101, 0b111, 0b100, 0b100],
         'Q' => [0b111, 0b101, 0b101, 0b111, 0b001],
