@@ -27,7 +27,7 @@ a snapshot and can drift.
 | ✅ | **Random colourway / random theme**, from the menu or a key | working |
 | ✅ | **Suspends under a fullscreen app**, hiding the window and dropping to a 250 ms tick | working |
 | ✅ | **Handle watchdog** — warns at 3,000, exits at 30,000 | working |
-| ✅ | Right-click equaliser → theme menu; left-click → `Win+W` | working |
+| ✅ | Right-click equaliser → theme menu; left-click → show now playing | working |
 | ✅ | External TOML colourways, versioned schema, override-by-id, `[vaporwave]` + `[tube]` + `[fluid]` tables | working |
 | ✅ | **Hot reload** — save a theme file and the taskbar updates, no restart | working |
 | ✅ | Frame-rate-independent animation (`dt_ms`), so scroll and the gate's timings do not drift with load | working |

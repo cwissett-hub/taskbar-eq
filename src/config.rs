@@ -30,6 +30,8 @@ pub struct Hotkeys {
     pub flourish_toggle: String,
     /// Identify the current song with Shazam and show it in the banner.
     pub identify_song: String,
+    /// Show the current track name in the banner, the same way a track change does.
+    pub show_now_playing: String,
 }
 
 impl Hotkeys {
@@ -50,6 +52,7 @@ impl Hotkeys {
             5 => &self.flourish,
             6 => &self.flourish_toggle,
             7 => &self.identify_song,
+            8 => &self.show_now_playing,
             _ => return None,
         })
     }
@@ -64,6 +67,7 @@ impl Hotkeys {
             5 => &mut self.flourish,
             6 => &mut self.flourish_toggle,
             7 => &mut self.identify_song,
+            8 => &mut self.show_now_playing,
             _ => return None,
         })
     }
@@ -319,6 +323,45 @@ mod tests {
         let c: Config = toml::from_str("theme = \"neon-pink\"").unwrap();
         assert_eq!(c.theme, "neon-pink");
         assert_eq!(c.hide_ms, 4500, "missing keys must take defaults");
+    }
+
+    #[test]
+    fn a_v0_3_2_config_without_the_show_now_playing_key_still_loads() {
+        // A real [hotkeys] table as v0.3.2 would have written it - seven keys, no
+        // `show_now_playing`, because that slot did not exist yet. `#[serde(default)]` on
+        // `Hotkeys` is what makes this load instead of falling back to `Config::default()` and
+        // silently discarding the user's theme, width and every other setting alongside it.
+        let s = r#"
+theme = "vfd-ice"
+threshold_dbfs = -55.0
+reveal_ms = 400
+hide_ms = 4500
+fade_ms = 450
+width = 380
+autostart = false
+media_backend = "session"
+show_track_name = true
+flourishes = true
+recents = []
+
+[hotkeys]
+play_pause = "Win+Ctrl+Space"
+next_track = "Win+Ctrl+Period"
+prev_track = "Win+Ctrl+Comma"
+random_theme = ""
+random_colourway = ""
+flourish = ""
+flourish_toggle = ""
+identify_song = "Win+Ctrl+I"
+"#;
+        let c: Config = toml::from_str(s).expect("an old config missing one key must still parse");
+        assert_eq!(c.hotkeys.play_pause, "Win+Ctrl+Space");
+        assert_eq!(c.hotkeys.identify_song, "Win+Ctrl+I");
+        assert_eq!(
+            c.hotkeys.show_now_playing, "",
+            "the new slot must default to unbound, not alias another field"
+        );
+        assert_eq!(c.hotkeys.slot(crate::win::hotkeys::SLOTS - 1), Some(""));
     }
 
     #[test]

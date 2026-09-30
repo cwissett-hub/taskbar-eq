@@ -65,6 +65,9 @@ const ID_FLOURISH_TOGGLE: usize = 1123;
 const ID_IDENTIFY_NOW: usize = 1124;
 const ID_SONG_HISTORY: usize = 1125;
 const ID_SONGS_FOLDER: usize = 1126;
+/// The `♪ <title>` line at the very top of the menu. Clicking it shows the same banner a track
+/// change would - see `now_playing_menu_label`.
+const ID_NOW_PLAYING: usize = 1127;
 /// Ten recent songs live here. Below ID_THEME_BASE (2000) because the theme arm is `>=`.
 const ID_SONG_BASE: usize = 1900;
 const SONG_SLOTS: usize = 10;
@@ -98,6 +101,30 @@ pub enum TrayEvent {
     SongHistory,
     /// Reveal the folder holding songs.jsonl.
     OpenSongsFolder,
+    /// Show the current track name in the banner now, from the `♪` line at the top of the menu.
+    ShowNowPlaying,
+}
+
+/// The `♪ <title>` line at the top of the context menu: the label to show, and whether it is
+/// enabled (false when nothing is playing, in which case the label is the disabled placeholder).
+///
+/// Pure so it is testable without a real menu. 48 characters is comfortably short of what a tray
+/// menu column can hold at the app's usual DPI settings without wrapping or getting clipped by the
+/// screen edge.
+pub fn now_playing_menu_label(title: &str) -> (String, bool) {
+    const MAX_CHARS: usize = 48;
+    let title = title.trim();
+    if title.is_empty() {
+        return ("♪ (nothing playing)".to_string(), false);
+    }
+    let chars: Vec<char> = title.chars().collect();
+    let shown = if chars.len() > MAX_CHARS {
+        let keep: String = chars[..MAX_CHARS.saturating_sub(3)].iter().collect();
+        format!("{keep}...")
+    } else {
+        title.to_string()
+    };
+    (format!("♪ {shown}"), true)
 }
 
 /// One recent song in the Songs submenu: the label as the menu shows it, the URL it opens.
@@ -292,6 +319,27 @@ impl Tray {
             crate::win::darkmode::apply();
 
             let menu: HMENU = CreatePopupMenu().ok()?;
+
+            // ---- Now playing -------------------------------------------------------------------
+            // First line, deliberately: this is the cheapest possible answer to "what is
+            // playing", ahead of even the theme name, and clicking it re-shows the same banner a
+            // track change would. Disabled with a placeholder when nothing is loaded, same
+            // reasoning as the Spotify controls' parent label below - the row must report
+            // REALITY, and a disabled clickable row that does nothing is a worse lie than one that
+            // cannot be clicked at all.
+            {
+                let (title, _) = crate::win::media::now_playing();
+                let (label, enabled) = now_playing_menu_label(&title);
+                let mut wide: Vec<u16> = label.encode_utf16().chain(std::iter::once(0)).collect();
+                let flags = if enabled { MF_STRING } else { MF_STRING | MF_DISABLED | MF_GRAYED };
+                let _ = AppendMenuW(
+                    menu,
+                    flags,
+                    ID_NOW_PLAYING,
+                    windows::core::PCWSTR(wide.as_mut_ptr()),
+                );
+                let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+            }
 
             // ---- Themes -----------------------------------------------------------------------
             //
@@ -538,17 +586,46 @@ impl Tray {
 
             // ---- Songs ------------------------------------------------------------------------
             // The identification is offered as an ACTION as well as a binding, like the shuffles
-            // and flourishes: it must work before any key is set. Slot 7 is `Slot::IdentifySong`.
+            // and flourishes: it must work before any key is set.
+            //
+            // The slot indices are LOOKED UP, not hard-coded. This used to read `transport.keys[7]`
+            // and `ID_BIND_BASE + 7`, true only because `Slot::IdentifySong` happened to sit at
+            // index 7 in `Slot::ALL` - the tray's own copy of a rule the earlier `.skip(3)` bug in
+            // the Random submenu already broke once for a different array. Any future reordering
+            // of `Slot::ALL` would silently bind this row to the wrong action instead of failing to
+            // compile.
+            let identify_idx = crate::win::hotkeys::Slot::ALL
+                .iter()
+                .position(|s| *s == crate::win::hotkeys::Slot::IdentifySong)
+                .expect("Slot::IdentifySong is always in Slot::ALL");
+            let show_now_playing_idx = crate::win::hotkeys::Slot::ALL
+                .iter()
+                .position(|s| *s == crate::win::hotkeys::Slot::ShowNowPlaying)
+                .expect("Slot::ShowNowPlaying is always in Slot::ALL");
             if let Ok(sub) = CreatePopupMenu() {
                 let _ = AppendMenuW(sub, MF_STRING, ID_IDENTIFY_NOW, w!("Identify this song now"));
                 {
-                    let text = format!("Identify key:  {}", transport.keys[7]);
+                    let text = format!("Identify key:  {}", transport.keys[identify_idx]);
                     let mut wide: Vec<u16> =
                         text.encode_utf16().chain(std::iter::once(0)).collect();
                     let _ = AppendMenuW(
                         sub,
                         MF_STRING,
-                        ID_BIND_BASE + 7,
+                        ID_BIND_BASE + identify_idx,
+                        windows::core::PCWSTR(wide.as_mut_ptr()),
+                    );
+                }
+                {
+                    // Wired like the row above: the `♪` line at the top of the menu (and the
+                    // overlay's left click, and this key) all take the SAME action - see
+                    // `hotkeys::request_now_playing`. This row only sets which key does it.
+                    let text = format!("Show now playing key:  {}", transport.keys[show_now_playing_idx]);
+                    let mut wide: Vec<u16> =
+                        text.encode_utf16().chain(std::iter::once(0)).collect();
+                    let _ = AppendMenuW(
+                        sub,
+                        MF_STRING,
+                        ID_BIND_BASE + show_now_playing_idx,
                         windows::core::PCWSTR(wide.as_mut_ptr()),
                     );
                 }
@@ -651,6 +728,9 @@ impl Tray {
             }
             if id == ID_IDENTIFY_NOW {
                 return Some(TrayEvent::IdentifyNow);
+            }
+            if id == ID_NOW_PLAYING {
+                return Some(TrayEvent::ShowNowPlaying);
             }
             if id == ID_SONG_HISTORY {
                 return Some(TrayEvent::SongHistory);
@@ -898,6 +978,37 @@ unsafe extern "system" fn tray_wndproc(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn now_playing_label_is_disabled_and_reads_nothing_playing_when_empty() {
+        assert_eq!(
+            now_playing_menu_label(""),
+            ("♪ (nothing playing)".to_string(), false)
+        );
+        // Whitespace-only counts as empty too - a session can report a title of all spaces.
+        assert_eq!(
+            now_playing_menu_label("   "),
+            ("♪ (nothing playing)".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn now_playing_label_shows_a_short_title_verbatim_and_enabled() {
+        let (label, enabled) = now_playing_menu_label("Song - Artist");
+        assert_eq!(label, "♪ Song - Artist");
+        assert!(enabled);
+    }
+
+    #[test]
+    fn now_playing_label_truncates_a_long_title_with_an_ellipsis() {
+        let title = "x".repeat(80);
+        let (label, enabled) = now_playing_menu_label(&title);
+        assert!(enabled);
+        // "♪ " + 45 kept chars + "..." = 50 chars total; the kept portion is the 48-char budget
+        // minus the 3 for "...".
+        let expected = format!("♪ {}...", "x".repeat(45));
+        assert_eq!(label, expected);
+    }
 
     #[test]
     fn song_entries_escape_menu_ampersands_and_carry_spotify_urls() {

@@ -473,9 +473,17 @@ impl Ticker {
             // reveal/hide fade applies to the banner too rather than leaving it at full strength
             // while the meter fades away underneath it.
             //
-            // Two sources share the one banner: a track change (optional, `show_track_name`) and
-            // the song identifier (always - the user asked for it by pressing a key). The
-            // identifier's text is sticky while listening and fades normally once it has an answer.
+            // Three sources share the one banner: a track change (optional, `show_track_name`),
+            // the song identifier (always - the user asked for it by pressing a key), and a direct
+            // "show now playing" request (the tray's `♪` line, its hotkey, or a left click on the
+            // meter - all three funnel through `hotkeys::request_now_playing`). The identifier's
+            // text is sticky while listening and fades normally once it has an answer.
+            //
+            // Drained unconditionally, once per tick, regardless of which branch below fires - a
+            // request that arrived while a track-change or identify banner was about to take the
+            // `else if` branches must not be left set and shown stale on some LATER, unrelated
+            // banner change.
+            let now_playing_requested = win::hotkeys::take_now_playing_request();
             let (id_text, id_seq, id_sticky) = identify::banner();
             if id_seq != self.identify_seq {
                 self.identify_seq = id_seq;
@@ -484,6 +492,13 @@ impl Ticker {
                 } else {
                     render::banner::Banner::new(&id_text, r.h - 4)
                 };
+            } else if now_playing_requested {
+                // Nothing playing: do nothing, per spec - no empty banner. The request is still
+                // consumed (above), so it cannot resurface once something starts playing later.
+                let (title, _) = win::media::now_playing();
+                if !title.trim().is_empty() {
+                    self.banner = render::banner::Banner::new(&title, r.h - 4);
+                }
             } else if self.show_track_name {
                 let (title, seq) = win::media::now_playing();
                 if seq != self.track_seq {
@@ -934,14 +949,18 @@ fn main() -> Result<()> {
         tray.poll();
 
         // The overlay itself is clickable while it is up. Right-click opens the same
-        // menu as the tray icon (one implementation, two entry points); left-click
-        // sends Win+W, because the overlay is covering the Widgets button and without
-        // it the weather would simply be unreachable while music plays.
+        // menu as the tray icon (one implementation, two entry points); left-click shows
+        // the current track name, via the same request the hotkey and the tray's `♪`
+        // line set - see `hotkeys::request_now_playing`.
+        //
+        // This used to send Win+W to open the Widgets panel the overlay sits on top of.
+        // The user asked (30 Sep 2026) for that click-through to be removed in favour of
+        // showing the song instead, so `open_widgets_panel` and the `SendInput` helper it
+        // was the only caller of are gone - see git history if that behaviour is wanted
+        // back.
         let overlay_click = with_ticker(|t| t.overlay.take_event()).flatten();
         if overlay_click == Some(win::overlay::OverlayEvent::LeftClick) {
-            if let Err(e) = win::overlay::open_widgets_panel() {
-                log::write(&format!("could not open the widgets panel: {e}"));
-            }
+            win::hotkeys::request_now_playing();
         }
         let want_menu =
             tray.take_right_click() || overlay_click == Some(win::overlay::OverlayEvent::RightClick);
@@ -978,6 +997,12 @@ fn main() -> Result<()> {
                     }
                 }
                 Some(TrayEvent::IdentifyNow) => identify::request(),
+                Some(TrayEvent::ShowNowPlaying) => {
+                    // Routed through the SAME request the hotkey and the overlay's left click set,
+                    // so all three show the banner through exactly one path - see
+                    // `hotkeys::request_now_playing`.
+                    win::hotkeys::request_now_playing();
+                }
                 Some(TrayEvent::OpenUrl(url)) => {
                     if let Err(e) = win::overlay::open_url(&url) {
                         log::write(&format!("could not open {url}: {e}"));

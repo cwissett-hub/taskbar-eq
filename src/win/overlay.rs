@@ -12,10 +12,6 @@ use windows::Win32::Graphics::Gdi::{
     AC_SRC_OVER, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, BI_RGB, DIB_RGB_COLORS, HBITMAP, HDC,
 };
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_LWIN,
-    VK_W,
-};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, IsWindowVisible, LoadCursorW, PeekMessageW,
     RegisterClassW,
@@ -326,30 +322,6 @@ pub fn open_url(url: &str) -> Result<()> {
     } else {
         Err(anyhow!("ShellExecuteW returned {} for {url}", r.0 as usize))
     }
-}
-
-pub fn open_widgets_panel() -> Result<()> {
-    let key = |vk: VIRTUAL_KEY, up: bool| INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT {
-                wVk: vk,
-                dwFlags: if up { KEYEVENTF_KEYUP } else { Default::default() },
-                ..Default::default()
-            },
-        },
-    };
-    let seq = [
-        key(VK_LWIN, false),
-        key(VK_W, false),
-        key(VK_W, true),
-        key(VK_LWIN, true),
-    ];
-    let sent = unsafe { SendInput(&seq, std::mem::size_of::<INPUT>() as i32) };
-    if sent as usize != seq.len() {
-        return Err(anyhow!("SendInput sent {sent} of {} events", seq.len()));
-    }
-    Ok(())
 }
 
 unsafe extern "system" fn wndproc(

@@ -82,8 +82,12 @@ want it gone completely. Nothing is written anywhere else and nothing is registe
 
 | Action | What it does |
 |---|---|
-| **Left-click** | Opens the Widgets panel (synthesises `Win+W`). The overlay sits *on top of* the Widgets button, so without this the weather would be unreachable while music plays |
+| **Left-click** | Shows the current track name in the banner — the same one a track change shows, and the same action as the tray menu's `♪` line and the "show now playing" key. Does nothing if nothing is playing |
 | **Right-click** | Opens the tray menu — the same menu, one implementation with two entry points |
+
+(Older versions opened the Windows Widgets panel on a left click, since the overlay sits *on top
+of* the Widgets button. That was removed in favour of showing the song; press `Win+W` directly if
+you want the Widgets panel while the meter is up.)
 
 Nothing else is handled: no wheel, no drag, no hover. The overlay takes `WS_EX_NOACTIVATE` so it
 never steals focus, but deliberately **not** `WS_EX_TRANSPARENT`, which is what lets it receive those
@@ -96,6 +100,7 @@ Right-click, left-click or the context-menu key — all three open it.
 
 | Item | What it does |
 |---|---|
+| **`♪ <title>`** (first line) | The current track name, truncated if long. Click it to show the banner again. Disabled and reading `♪ (nothing playing)` when there is nothing to show |
 | **One submenu per family** | Every colourway in that family. The active one is ticked, and so is its family. Families appear in the order the theme registry first mentions them, not alphabetically |
 | **Spotify controls** | Bind the three transport keys, and choose how they are sent. The parent label tells you the state: `Spotify controls`, `…: not set up` when no key is bound, or `…: not working` when a bound key failed to register |
 | **Random** | `Any theme now`, `Another colourway of this theme now`, and the two keys for those |
@@ -109,7 +114,7 @@ Every key label shows the *live* registration result, not what the config says �
 
 ### Keys
 
-Seven bindable actions. **All of them ship unbound**, and that is a deliberate choice rather than an
+Nine bindable actions. **All of them ship unbound**, and that is a deliberate choice rather than an
 omission: `RegisterHotKey` is first-come and exclusive, and this app can start at logon, so a default
 binding would quietly seize a chord machine-wide for every other program on the machine.
 
@@ -121,6 +126,7 @@ binding would quietly seize a chord machine-wide for every other program on the 
 | `flourish` | Fire the current family's flourish now |
 | `flourish_toggle` | Flourishes on/off, persisted |
 | `identify_song` | Name the song currently playing, via Shazam (see Song identification) |
+| `show_now_playing` | Show the current track name in the banner — the same action as the tray menu's `♪` line and a left click on the meter |
 
 **Binding one:** tray menu → the submenu → click the `…key:` line. A small **Set key** dialog opens,
 echoes the modifiers as you hold them, and commits on the first non-modifier key. `Esc` cancels,
@@ -169,6 +175,10 @@ rather than sitting outside them.
 The meter behind it dims to 66% **toward the panel colour** and never by alpha — alpha is what the
 Windows weather widget shows through, so dimming that way would make the forecast appear inside the
 meter. Turn the whole thing off with `show_track_name = false`.
+
+You can also call up the same banner on demand, independent of `show_track_name`: left-click the
+meter, click the `♪ <title>` line at the top of the tray menu, or press the `show_now_playing` key
+once you've bound one. All three do nothing if nothing is playing.
 
 ### Flourishes
 
@@ -342,7 +352,7 @@ refusing to start, so a partial file keeps working and a bad one cannot lock you
 | `media_backend` | `"session"` | `"session"` or `"media-keys"` — see Spotify transport above |
 | `show_track_name` | `true` | The track-change banner |
 | `flourishes` | `true` | Global on/off for flourishes, separate from each colourway's own rate |
-| `[hotkeys]` | all empty | `play_pause`, `next_track`, `prev_track`, `random_theme`, `random_colourway`, `flourish`, `flourish_toggle`, `identify_song` |
+| `[hotkeys]` | all empty | `play_pause`, `next_track`, `prev_track`, `random_theme`, `random_colourway`, `flourish`, `flourish_toggle`, `identify_song`, `show_now_playing` |
 | `autostart` | `false` | **A record, not the truth.** The live state is the registry `Run` value, which is what the menu reads |
 
 The same folder holds `taskbar-eq.log` (truncated per run) and a `themes\` directory for your own

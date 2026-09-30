@@ -54,11 +54,14 @@ pub enum Slot {
     FlourishToggle,
     /// Identify the song currently playing, via Shazam. See `crate::identify`.
     IdentifySong,
+    /// Show the current track name in the banner, the same way a track change does. Does nothing
+    /// when nothing is playing - see `crate::win::media::now_playing`.
+    ShowNowPlaying,
 }
 
 /// How many hotkey slots there are. Used for the config array and the outcome array, so adding a
 /// slot cannot leave one of them behind.
-pub const SLOTS: usize = 8;
+pub const SLOTS: usize = 9;
 
 impl Slot {
     pub const ALL: [Slot; SLOTS] = [
@@ -70,6 +73,7 @@ impl Slot {
         Slot::Flourish,
         Slot::FlourishToggle,
         Slot::IdentifySong,
+        Slot::ShowNowPlaying,
     ];
 
     /// The `RegisterHotKey` id. Small and fixed, well inside the documented 0x0000..0xBFFF range
@@ -84,6 +88,7 @@ impl Slot {
             Slot::Flourish => 6,
             Slot::FlourishToggle => 7,
             Slot::IdentifySong => 8,
+            Slot::ShowNowPlaying => 9,
         }
     }
 
@@ -101,7 +106,8 @@ impl Slot {
             | Slot::RandomColourway
             | Slot::Flourish
             | Slot::FlourishToggle
-            | Slot::IdentifySong => None,
+            | Slot::IdentifySong
+            | Slot::ShowNowPlaying => None,
         }
     }
 
@@ -115,6 +121,7 @@ impl Slot {
             Slot::Flourish => "flourish now",
             Slot::FlourishToggle => "flourishes on/off",
             Slot::IdentifySong => "identify song",
+            Slot::ShowNowPlaying => "show now playing",
         }
     }
 }
@@ -357,6 +364,24 @@ pub fn take_toggle_request() -> bool {
     TOGGLE_REQUEST.swap(false, Ordering::Relaxed)
 }
 
+/// Set when the show-now-playing hotkey (or its tray/menu/click equivalents) is pressed. The main
+/// loop owns the banner, so it does the drawing - see `Ticker`'s tick in `main.rs`.
+static NOW_PLAYING_REQUEST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Asks for the current track name to be shown in the banner.
+///
+/// Public so the hotkey, the tray's `♪` line and a left click on the meter all take the same route:
+/// a single flag the main loop drains once, rather than three call sites independently deciding
+/// whether something is playing and each risking a different answer.
+pub fn request_now_playing() {
+    NOW_PLAYING_REQUEST.store(true, Ordering::Relaxed);
+}
+
+/// Takes any pending show-now-playing request.
+pub fn take_now_playing_request() -> bool {
+    NOW_PLAYING_REQUEST.swap(false, Ordering::Relaxed)
+}
+
 /// Takes any pending shuffle request.
 pub fn take_random_request() -> Option<crate::themes::pick::RandomKind> {
     match RANDOM_REQUEST.swap(0, Ordering::Relaxed) {
@@ -399,6 +424,7 @@ pub fn on_wm_hotkey(id: usize) -> bool {
             // Spawns a thread and returns; the listening, the network and the file write all
             // happen off the wndproc.
             Slot::IdentifySong => crate::identify::request(),
+            Slot::ShowNowPlaying => request_now_playing(),
             // Every remaining slot has a media action, so this arm is unreachable - but written out
             // rather than left as a catch-all, so adding a slot with no action is a compile error
             // instead of a silent no-op.
@@ -546,6 +572,7 @@ mod tests {
             "Win+Ctrl+F",
             "Win+Ctrl+T",
             "Win+Ctrl+I",
+            "Win+Ctrl+N",
         ];
         let first = reg.apply_all_with(&mut fake, texts);
         assert!(first.iter().all(|o| o.is_working()), "{first:?}");
@@ -559,7 +586,7 @@ mod tests {
         let mut fake = FakeRegistrar::default();
         let mut reg = Registry::for_test();
         let texts: [&str; SLOTS] =
-            ["Win+Ctrl+Space", "Win+Ctrl+Space", "", "", "", "", "", ""];
+            ["Win+Ctrl+Space", "Win+Ctrl+Space", "", "", "", "", "", "", ""];
         let out = reg.apply_all_with(&mut fake, texts);
         assert!(out[0].is_working());
         assert!(
@@ -567,6 +594,17 @@ mod tests {
             "{:?}",
             out[1]
         );
+    }
+
+    #[test]
+    fn the_show_now_playing_hotkey_sets_the_request_flag() {
+        // Drain first, in case an earlier test in this file's (single) process left it set.
+        let _ = take_now_playing_request();
+        assert!(!take_now_playing_request(), "should start drained");
+        let id = Slot::ShowNowPlaying.id() as usize;
+        assert!(on_wm_hotkey(id), "the id must be recognised as ours");
+        assert!(take_now_playing_request(), "pressing the key must set the request");
+        assert!(!take_now_playing_request(), "taking the request must drain it");
     }
 
     #[test]
