@@ -1132,6 +1132,84 @@ pub fn nos_miami() -> Theme {
     }
 }
 
+// Fast & Furious: Tokyo Drift - a night skyline with neon, a car drifting whose tyre smoke is the meter.
+// See `render::drift`. `lit` is the car body (the brightest stop, so it carries the contrast rule);
+// `hot` its tail light, the needle, `DRIFT!` and a few signs; `edge` the sky's horizon shade and the
+// windows; `ghost` the smoke's alpha. The one zone's `lit` is the neon - the family reads only `zones[0]`.
+fn drift_base() -> Theme {
+    Theme {
+        family: "drift".into(),
+        texture: Texture::None_,
+        panel_alpha: 1.0,
+        bloom: 0.0,
+        glow_strength: 0.0,
+        edge_alpha: 1.0,
+        // Nothing here is read by the family: the levels arrive already smoothed.
+        ballistics: Ballistics { attack: 0.8, decay: 0.25, peak_fall: 0.012 },
+        ..Theme::default()
+    }
+}
+
+/// Night Shibuya: pink neon, a white car.
+pub fn drift_shibuya() -> Theme {
+    Theme {
+        id: "drift-shibuya".into(),
+        name: "Drift Shibuya".into(),
+        lit: "#e6e6ee".into(),
+        hot: "#ff2a5a".into(),
+        panel: "#06040e".into(),
+        edge: "#2a2440".into(),
+        ghost: 0.35,
+        zones: vec![Zone { upto: 1.0, lit: "#ff4fd8".into(), hot: "#ff4fd8".into() }],
+        ..drift_base()
+    }
+}
+
+/// A mountain pass: green neon, amber tail lights.
+pub fn drift_touge() -> Theme {
+    Theme {
+        id: "drift-touge".into(),
+        name: "Drift Touge".into(),
+        lit: "#d8e8d8".into(),
+        hot: "#ffb000".into(),
+        panel: "#040806".into(),
+        edge: "#1a2a20".into(),
+        ghost: 0.30,
+        zones: vec![Zone { upto: 1.0, lit: "#39ff8a".into(), hot: "#39ff8a".into() }],
+        ..drift_base()
+    }
+}
+
+/// The orange-and-black livery.
+pub fn drift_orange() -> Theme {
+    Theme {
+        id: "drift-orange".into(),
+        name: "Drift Orange".into(),
+        lit: "#ff7a1a".into(),
+        hot: "#ffffff".into(),
+        panel: "#0a0602".into(),
+        edge: "#2a1a0a".into(),
+        ghost: 0.35,
+        zones: vec![Zone { upto: 1.0, lit: "#ff7a1a".into(), hot: "#ff7a1a".into() }],
+        ..drift_base()
+    }
+}
+
+/// A cold blue night.
+pub fn drift_night() -> Theme {
+    Theme {
+        id: "drift-night".into(),
+        name: "Drift Night".into(),
+        lit: "#8fb8ff".into(),
+        hot: "#ffffff".into(),
+        panel: "#020408".into(),
+        edge: "#141c2a".into(),
+        ghost: 0.30,
+        zones: vec![Zone { upto: 1.0, lit: "#39c0ff".into(), hot: "#39c0ff".into() }],
+        ..drift_base()
+    }
+}
+
 pub fn all() -> Vec<Theme> {
     vec![
         vfd_ice(),
@@ -1323,6 +1401,10 @@ pub fn all() -> Vec<Theme> {
         nos_original(),
         nos_quarter(),
         nos_miami(),
+        drift_shibuya(),
+        drift_touge(),
+        drift_orange(),
+        drift_night(),
     ]
 }
 

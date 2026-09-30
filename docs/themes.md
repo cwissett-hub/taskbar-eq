@@ -1,9 +1,9 @@
 # Themes
 
-**189 colourways across 30 families.** A *family* is a renderer with fixed geometry — code. A
+**193 colourways across 31 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
-## All 30 families
+## All 31 families
 
 Six are written up in full below (Segmented VFD, Oscilloscope, VU dials, Vaporwave grid, Valve
 row, Fluid). The other nineteen shipped later and their full write-ups still live in
@@ -42,6 +42,7 @@ split, and worth knowing before you go looking for one and only find it in the o
 | Terminal: 2077 | The user's VSCode "2077" theme as a live shell — a prompt that types a command per onset, pink line numbers, a block cursor, a status bar, and rows of `▮` bars that grow with the bass (labels use `font3x5`); the flourish is a red Rust `panic!` that scrolls away |
 | Blingee: bling bling | A Blingee GIF, circa 2007 — 24 columns of faceted rhinestone gems rising with the spectrum (a white glint running up each lit column, a hot peak gem), over twinkling per-pixel glitter, a glittery outlined phrase (`font3x5` at 2x) and our own sparkle / `$` / crown / heart stamps popping on strong onsets; the flourish is a white flash then diamond gems under a chrome sweep and a spinning sparkle star |
 | Fast & Furious: NOS | A street-racing in-car dash from the early films / 2 Fast 2 Furious — a carbon-fibre panel with a backlit dial face, a 48-LED tacho arc that sweeps with the spectrum (lit, then amber, then red toward the redline) under a needle on rms, 10 shift lights that all flash blue at the redline, the gear and MPH (`font3x5` at 2x) and a neon under-glow on bass hits; the flourish is the NOS hit — a blinking green-on-black `DANGER TO MANIFOLD` warning screen, then a purge of white speed lines with the tacho pinned |
+| Fast & Furious: Tokyo Drift | Tokyo Drift — a night skyline (hazy far towers, black near blocks with lit windows, a neon-washed horizon) with flickering neon signs, and our own generic coupe drifting along the ground line on a pendulum that swings with rms; its tyre-smoke trail is the meter — 64 puffs, one per band from the car backwards, each a soft disc of radius `1 + level * 7`, so the smoke billows at the car on bass; a steering gauge with `ANGLE NN` (`font3x5`) top right; the flourish is the drift — the car whips across the full width laying a wall of `hot`-tinted smoke, the neon flashes and `DRIFT!` slams in |
 
 The Virtual Self: wings colourways are `vswings-particle-arts` (ice panel, cobalt-to-electric
 wings, cobalt floor), `vswings-eon-break` (black panel, cobalt-to-electric wings, white floor),
@@ -91,6 +92,13 @@ digits, purple under-glow), `nos-original` (2001 LA: orange LEDs and face, green
 and `nos-miami` (Miami neon: pink LEDs, lime digits and needle, aqua under-glow). The flourish is the
 NOS hit: 300 ms of green-on-black `DANGER TO MANIFOLD` (two lines on a narrow panel) with `NOS` and
 a draining gauge, then a purge of speed lines with the tacho, needle and shift lights pinned.
+
+The Fast & Furious: Tokyo Drift colourways are `drift-shibuya` (night Shibuya: pink neon and a pink
+horizon, red signs among them, a white car), `drift-touge` (a mountain pass: green neon, amber tail
+lights and signs, a pale car), `drift-orange` (the orange-and-black livery: an orange car, orange
+neon, white signs) and `drift-night` (a cold blue night: blue neon, a pale-blue car, white signs).
+The flourish is the drift: the car whips out past the right edge and back in from the left, pinned
+at full angle, with the smoke at maximum radius tinted `hot`, the neon flashing and `DRIFT!` at 2x.
 
 **Five families reuse the `[tube]` table for their own hardware materials**, even though only
 one of them is the Valve row (`tube`) family itself: **Cherry blossom**, **Flame organ**,
@@ -204,7 +212,7 @@ Drop a `.toml` file (any filename — the `id` inside is what matters) into
 watched, so saving the file updates the live overlay without a restart — edit a colour, hit
 save, and watch the taskbar change.
 
-A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 189
+A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 193
 built-ins, which are always embedded in the exe regardless of whether that folder exists.
 
 Failure modes are all deliberately soft, because these files are hand-authored:

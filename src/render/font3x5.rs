@@ -100,6 +100,8 @@ pub fn glyph(ch: char) -> Option<[u8; 5]> {
         // dollar (an S with the bar through it). `~` was already here for the term family.
         '*' => [0b000, 0b101, 0b010, 0b101, 0b000],
         '$' => [0b011, 0b110, 0b010, 0b011, 0b110],
+        // Added for the drift family's `DRIFT!`.
+        '!' => [0b010, 0b010, 0b010, 0b000, 0b010],
         // The PLAY marker: a solid right-pointing triangle.
         '>' => [0b100, 0b110, 0b111, 0b110, 0b100],
         ' ' => [0, 0, 0, 0, 0],
