@@ -577,16 +577,35 @@ mod opacity {
     /// floor, 20 s at 60 fps. A live capture from a real Virtual Self track is preferred and should
     /// replace it when one can be made (see `--levels` and `live_identify`).
     ///
-    /// On the OLD ballistics/refractory (measured directly, not just asserted): `vswings` and
-    /// `vsorb` both fail the modulation-depth floor (0.33 and 0.27, under 0.35 - the kick's response
-    /// has not decayed enough by the time the off-beat hat arrives to read as a distinct hit).
-    /// `vsghost`'s old ballistics happen to already clear 0.35 on this specific fixture (0.53) - its
-    /// exponential fill decay was already fast enough relative to a 187.5 ms half-beat, even before
-    /// the retune - so it is not a RED case for this particular assertion; it still gets the same
-    /// retune (the brief's ballistics numbers are uniform across the three bases) and the test still
-    /// guards its depth at the new numbers (0.44) and its onset-refractory change, which this test
-    /// does not independently isolate. After the retune, `vswings` and `vsorb` cross the floor
-    /// clearly (0.47 and 0.67).
+    /// Each fixture row is fed through `crate::dsp::ballistics::Smoother::new(t.ballistics)` before
+    /// `draw` sees it - matching what actually ships: `Ticker::tick` (`main.rs`) runs every band
+    /// through exactly that `Smoother`, using the theme's own ballistics, before `FrameData` is even
+    /// built. Feeding `draw` the raw fixture row directly (this test's first version) skips that
+    /// whole stage and measures a pipeline the app never runs.
+    ///
+    /// That pipeline stage is also why a review caught the three families smoothing every band
+    /// TWICE: each of `vswings`/`vsghost`/`vsorb` used to re-smooth the ALREADY-smoothed `d.levels`
+    /// inside its own `draw`, with the SAME ballistics, which is a second low-pass pass rather than
+    /// a second effect. Two variants were measured on the (then still synthetic-only) fixture:
+    ///
+    /// | colourway | lag, A (shipped, double-smoothed) | depth, A | lag, B (in-draw re-smoothing removed) | depth, B |
+    /// |---|---|---|---|---|
+    /// | vswings-particle-arts | 366.7 ms | 0.469 | 366.7 ms | 0.487 |
+    /// | vsghost-white         | 366.7 ms | 0.410 | 366.7 ms | 0.434 |
+    /// | vsorb-chrome          | 383.3 ms | 0.585 | 383.3 ms | 0.666 |
+    ///
+    /// Both variants clear the depth floor on the NEW ballistics for all three, so per the ruling
+    /// (ship B only if all three clear 0.35 AND the existing `slow_` suite still passes - it did,
+    /// 58/58) **B shipped**: the in-draw re-smoothing is removed from all three files, and they now
+    /// track the pipeline-smoothed `d.levels` directly.
+    ///
+    /// On the OLD ballistics/refractory, measured the same way (variant B code, pipeline-smoothed
+    /// input): `vswings` fails BOTH assertions (lag 566.7 ms, depth 0.347); `vsorb` fails the depth
+    /// floor (lag 383.3 ms - a pass - depth 0.275); `vsghost` fails only the lag (566.7 ms, depth
+    /// 0.501 - a pass). So for this fixture the autocorrelation-lag check and the modulation-depth
+    /// check each catch a different subset of the old tuning's families, and NEITHER check alone
+    /// discriminates old from new for all three at once - together they do. After the retune (the
+    /// numbers in the table's B column), all three clear both.
     ///
     /// Slow (feeds 1200 frames to three canvases): excluded from the default suite.
     /// Run: `cargo test --release slow_vs_high_bpm_response -- --ignored --nocapture`
@@ -620,15 +639,34 @@ mod opacity {
             let mut c = Canvas::new(380, 60);
             let mut silent = Canvas::new(380, 60);
 
+            // The bands reaching `draw` have ALREADY been through `Smoother::new(theme.ballistics)`
+            // in production (`main.rs`'s `Ticker::tick`) before `FrameData` is even built - feeding
+            // a family's `draw` the raw fixture row directly, as this test used to, skips that whole
+            // stage and is not what ships. Two independent `Smoother`s (both using `t.ballistics`,
+            // the same instance the pipeline constructs) stand in for it here: one fed the fixture,
+            // one fed silence, matching `fam`/`silent_fam` one-to-one.
+            let mut pipeline = crate::dsp::ballistics::Smoother::new(t.ballistics);
+            let mut pipeline_silent = crate::dsp::ballistics::Smoother::new(t.ballistics);
+            let zero = [0.0f32; NUM_BANDS];
+
             let mut painted: Vec<f32> = Vec::with_capacity(rows.len());
             for (k, row) in rows.iter().enumerate() {
                 let time_s = k as f32 * DT_MS / 1000.0;
-                let d = FrameData { levels: *row, peaks: *row, dt_ms: DT_MS, time_s, ..FrameData::default() };
+
+                pipeline.update(row, DT_MS);
+                let d = FrameData {
+                    levels: *pipeline.levels(),
+                    peaks: *pipeline.peaks(),
+                    dt_ms: DT_MS,
+                    time_s,
+                    ..FrameData::default()
+                };
                 fam.draw(&mut c, &t, &d);
 
+                pipeline_silent.update(&zero, DT_MS);
                 let silent_d = FrameData {
-                    levels: [0.0; NUM_BANDS],
-                    peaks: [0.0; NUM_BANDS],
+                    levels: *pipeline_silent.levels(),
+                    peaks: *pipeline_silent.peaks(),
                     dt_ms: DT_MS,
                     time_s,
                     ..FrameData::default()

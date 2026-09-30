@@ -254,8 +254,6 @@ impl Family for Vsghost {
         let scroll = self.scroll_px.rem_euclid(iw as f32);
 
         // ---- the piano roll ----
-        let attack = t.ballistics.attack.clamp(0.0, 1.0);
-        let decay = t.ballistics.decay.clamp(0.0, 1.0);
         let peak_fall = t.ballistics.peak_fall.max(0.0);
         let num_cols = (iw / COL_PITCH).max(1);
 
@@ -263,12 +261,11 @@ impl Family for Vsghost {
             let band = ((k as i64 * NUM_BANDS as i64) / num_cols as i64).min(NUM_BANDS as i64 - 1) as usize;
             let level_i = if d.levels[band].is_finite() { d.levels[band].clamp(0.0, 1.0) } else { 0.0 };
             let target = (level_i * FILL_GAIN * t.sensitivity.max(0.0)).clamp(0.0, 1.0);
-            let cur = self.fill[band];
-            let kf = if target > cur { attack } else { decay };
-            let mut f = cur + (target - cur) * kf;
-            if !f.is_finite() {
-                f = 0.0;
-            }
+            // `d.levels` has already been through `Smoother::new(theme.ballistics)`
+            // upstream in `Ticker::tick` - re-smoothing it here with the SAME ballistics was a
+            // second low-pass pass, not a second effect. The fill tracks the already-smoothed level
+            // directly; the peak hold below is unaffected (it decays a running max, not a re-smooth).
+            let f = if target.is_finite() { target } else { 0.0 };
             self.fill[band] = f;
             // Peak hold, decaying slowly.
             let mut pk = (self.peak_ticks[band] - peak_fall).max(f);

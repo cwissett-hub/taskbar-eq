@@ -455,11 +455,11 @@ impl Family for Vsorb {
         }
         bass /= 8.0;
         let target = h as f32 * (RADIUS_MIN + RADIUS_GAIN * bass);
-        let attack = t.ballistics.attack.clamp(0.0, 1.0);
-        let decay = t.ballistics.decay.clamp(0.0, 1.0);
-        let k = if target > self.radius { attack } else { decay };
-        self.radius += (target - self.radius) * k;
-        if !self.radius.is_finite() {
+        // `d.levels` has already been through `Smoother::new(theme.ballistics)`
+        // upstream in `Ticker::tick` - re-smoothing the same bands with the SAME ballistics here is
+        // a second low-pass pass, not a second effect. The radius tracks the already-smoothed bass
+        // directly.
+        if target.is_finite() {
             self.radius = target;
         }
 
@@ -532,11 +532,9 @@ impl Family for Vsorb {
             }
             lvl = if n > 0 { lvl / n as f32 } else { 0.0 };
             let tgt = SPIKE_BASE + lvl * spike_span;
-            let ks = if tgt > self.spike_len[k] { attack } else { decay };
-            self.spike_len[k] += (tgt - self.spike_len[k]) * ks;
-            if !self.spike_len[k].is_finite() {
-                self.spike_len[k] = SPIKE_BASE;
-            }
+            // same double-smoothing as the radius above - `d.levels` is already
+            // smoothed with `t.ballistics` upstream.
+            self.spike_len[k] = if tgt.is_finite() { tgt } else { SPIKE_BASE };
 
             let ang = k as f32 * (std::f32::consts::TAU / SPIKES as f32);
             let (si, co) = ang.sin_cos();

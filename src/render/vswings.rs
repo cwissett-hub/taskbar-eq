@@ -378,8 +378,6 @@ impl Family for Vswings {
         //
         // The same fan, mirrored across the centre: `side = +1` is the right wing, `-1` the left, so the
         // display is symmetric by construction and `wings_are_mirrored_about_the_centre` holds.
-        let attack = t.ballistics.attack.clamp(0.0, 1.0);
-        let decay = t.ballistics.decay.clamp(0.0, 1.0);
 
         // A light layer for the bright, BLOOMING marks - the hot tips, the peak dots and the flare. The
         // crisp wing BODIES stay on the main canvas and carry the meter's reading; only the accents glow.
@@ -401,11 +399,11 @@ impl Family for Vswings {
             let band = (i * 2).min(NUM_BANDS - 1);
             let level_i = if d.levels[band].is_finite() { d.levels[band].clamp(0.0, 1.0) } else { 0.0 };
             let peak_i = if d.peaks[band].is_finite() { d.peaks[band].clamp(0.0, 1.0) } else { 0.0 };
-            // Smooth the length like a bar's ballistics: quick to rise, slow to fall.
+            // `d.levels` has already been through `Smoother::new(theme.ballistics)`
+            // upstream in `Ticker::tick` - re-smoothing it here with the SAME ballistics is a second
+            // low-pass pass, not a second effect. Length tracks the already-smoothed level directly.
             let target = LEN_BASE + level_i * (w as f32 * LEN_SPAN_FRAC);
-            let cur = self.feather_len[i];
-            let k = if target > cur { attack } else { decay };
-            let mut smoothed = cur + (target - cur) * k;
+            let mut smoothed = target;
             if !smoothed.is_finite() {
                 smoothed = LEN_BASE;
             }
