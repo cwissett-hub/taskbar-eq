@@ -3,7 +3,7 @@
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); dates are release dates,
 not commit dates.
 
-## [Unreleased]
+## [0.3.2] — 2026-09-30
 
 - `term` — readability pass on user feedback ("outputs get covered up almost immediately", "typing
   is too slow"):
@@ -30,6 +30,13 @@ not commit dates.
   `filename_never_overlaps_the_readouts`. The marquee no longer scrolls continuously: it now
   pauses 1.5s on the title, scrolls once to the end, and pauses 1.5s on the suffix joke before
   resetting, so the punchline is actually readable rather than a blur.
+- Fidelity pass 1: `brutal` (lit tops, shadow sides, formwork, aggregate, cracks, rebar peaks,
+  slam + dust; new `brutal-sodium`), `pipes` (fat shaded pipes, three at once, joints, teapot
+  flourish), `mesh` (perspective floor, shadows, fog, specular tops, camera yaw, falling ghosts),
+  `orbit` (sun with corona, visible orbits, comet tails, alignment flourish).
+- Virtual Self families retuned for 150-170 BPM (attack 0.9 / decay 0.35 / peak_fall 0.03, onset
+  refractory 120 ms), verified against a 160 BPM fixture.
+- Performance: pipes and mesh skip bloom on opaque panels (1+ ms saved, byte-identical).
 
 ## [0.3.1] — 2026-09-29
 

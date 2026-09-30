@@ -3,7 +3,25 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** v0.3.1 — TERM FAMILY SHIPS, PLUS A SESH REWORK. `term` (the user's own VSCode
+**Last updated:** v0.3.2 — FIDELITY PASS 1: FOUR FAMILIES REWORKED, PLUS THE VIRTUAL SELF RETUNE.
+`brutal` (lit tops, shadow sides, formwork, aggregate, cracks, rebar peaks, a slam + dust
+flourish; new `brutal-sodium` colourway), `pipes` (fat shaded pipes, three at once, joints, a
+teapot flourish) and `mesh` (perspective floor, shadows, fog, specular tops, camera yaw, falling
+ghosts on the flourish) and `orbit` (sun with corona, visible orbits, comet tails, an alignment
+flourish) all got a visual-fidelity pass from their original dumps. `pipes` and `mesh` also skip
+bloom entirely on opaque panels (1+ ms saved, byte-identical output) since the bloom composite is
+a no-op there. Separately, all three Virtual Self families (`vswings`, `vsghost`, `vsorb`) are
+retuned for 150-170 BPM material: `ballistics` attack/decay/peak_fall 0.9/0.35/0.03 (all three
+bases, were 0.55/0.12/0.01, 0.8/0.25/0.02, 0.5/0.1/0.01) and onset refractory 120 ms (was 200 ms),
+verified against a new synthetic 160 BPM fixture (`tests/fixtures/high-bpm-bands.csv`,
+`slow_vs_high_bpm_response`) whose autocorrelation and per-beat modulation-depth checks fail on
+the old numbers for `vswings`/`vsorb` and pass on the new ones for all three — see that test's
+doc comment for the measured numbers. All timed families still measure comfortably under budget
+(`slow_vs_timing`): vswings 0.72 ms, vsghost 0.06 ms, vsorb 0.80 ms, sesh 0.27 ms, night 0.20 ms,
+term 0.04 ms. The user judges the four reworked families and the VS retune on the review sheet —
+see Waiting on you below.
+
+Earlier: v0.3.1 — TERM FAMILY SHIPS, PLUS A SESH REWORK. `term` (the user's own VSCode
 2077 theme as a live terminal — output lines are the meter, a prompt types session-specific
 commands on onsets across dev / network / git / sysadmin / build, a red `panic!` stack-trace
 flourish; 5 colourways) joins two reworks landed alongside it: `sesh` now ships seven
@@ -60,31 +78,34 @@ Earlier still: 150 colourways across 22 families, every one with a flourish. See
 
 Nothing right now. Queued, in order:
 
-1. **A fidelity pass over eight families**, brainstormed from their current dumps side by side:
-   `brutal`, `pipes`, `mesh` (3D spectrum), `orbit`, `dolphin` — "really lacking in visual
-   fidelity and flair, very basic, not cohesive with blossom or vaporwave, I want them to pop
-   more"; `rave` — "very bland, literally just lasers, needs something else"; `vswings` — "lots
-   of space on the sides that goes unused"; `vsghost` — a RETHINK of the execution keeping the
-   vibe: "just looks like bars over a mostly invisible graphic; I like the vibe but the
-   execution needs work". ALL THREE Virtual Self families: "not really responsive enough to
-   high-BPM music such as VS" — retune `ballistics` (attack/decay/peak_fall) and the onset
-   refractory against a REAL 150-170 BPM loopback capture (Virtual Self through Spotify), not the
-   synthetic fixture; the kick lands every ~350-400 ms and the current settings smear it.
-2. **The live `--levels` check** of the two-FFT bass path against real music — needs Spotify
+1. **BATCH 2 of the fidelity pass**, brainstormed from their current dumps side by side:
+   `dolphin` — "really lacking in visual fidelity and flair, very basic, not cohesive with
+   blossom or vaporwave, I want them to pop more"; `rave` — "very bland, literally just lasers,
+   needs something else"; `vswings` — "lots of space on the sides that goes unused"; `vsghost` —
+   a RETHINK of the execution keeping the vibe: "just looks like bars over a mostly invisible
+   graphic; I like the vibe but the execution needs work".
+2. **Recapture the high-BPM fixture from a real VS track.** `tests/fixtures/high-bpm-bands.csv`
+   is synthetic (160 BPM, kick + off-beat hats) because a live loopback capture needs Spotify
+   playing through this machine, which an agent session can't rely on — see the fixture's own
+   header. Replace it with a real 150-170 BPM Virtual Self capture via `--levels` when one can be
+   made, and rerun `slow_vs_high_bpm_response`.
+3. **The live `--levels` check** of the two-FFT bass path against real music — needs Spotify
    playing; note it overwrites `tests/fixtures/real-music-bands.csv`.
 
 ## Waiting on you
 
-- [ ] **Judge sections 18-20 on `docs/review/index.html`: keep, tune or drop each colourway
-      (v0.3.0/v0.3.1).** `sesh` — now seven colourways (the two *Blunts From The Graveyard*
-      additions `sesh-graveyard`/`sesh-nightvision` plus the recoloured `sesh-vhs`) and the new
-      bass-hit slam flourish: does the blackletter read as gothic at 9 px or as a bold pixel font
-      (Task 1 reviewer's honest take: gothic-leaning bold pixel, softer than true blackletter); is
-      the one red enough on `sesh-red`; is `sesh-bleached` a keep; does the slam read as a
-      deliberate hit rather than a glitch. `night` — is `night-corpo` a keep; is the scanner line
-      distinct enough on loud frames; do the readouts earn their 34 px. `term` — does it read as
-      YOUR terminal; are the bars a meter at a glance; is the `panic!` funny or annoying; which
-      sessions (`term-2077`, `-cyan`, `-hot`, `-matrix`, `-editor`) to keep.
+- [ ] **Judge sections 20-22 on `docs/review/index.html`: keep, tune or drop each colourway
+      (v0.3.2).** Section 20, `term`'s filename/output readability fix: does the status bar's
+      right-aligned group (`▮NN%  UTF-8  LF`) still leave the filename slot legible; does the
+      3 s output dwell and the pause-scroll-pause marquee actually read better than before.
+      Sections 21-22, `brutal`+`pipes` and `mesh`+`orbit`: do the fidelity-pass reworks (lit tops
+      and rebar on `brutal`, the teapot flourish on `pipes`, the perspective floor and falling
+      ghosts on `mesh`, the corona and comet tails on `orbit`) actually read as more cohesive with
+      `blossom`/`vaporwave`, per the brief that started this pass; is `brutal-sodium` a keep. And
+      separately: do the three Virtual Self families now keep up on a REAL 150-170 BPM Virtual
+      Self track, not just the synthetic 160 BPM fixture `slow_vs_high_bpm_response` checks
+      against — if the retune still reads slow or smeared by ear, the ballistics numbers are one
+      line each to move further.
 - [ ] **Judge the three Virtual Self families in `docs/review/index.html` (sections 15-17): keep,
       tune or drop each (v0.2.2).** Specific eye questions the implementers flagged: `vswings`'s
       tip-vs-body contrast on the ice (`particle-arts`) and pink (`angel-voices`) panels; `vsghost`'s
