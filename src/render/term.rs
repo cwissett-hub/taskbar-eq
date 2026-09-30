@@ -134,8 +134,16 @@ const NAME_SLOT_W: i32 = 200;
 const NAME_REFRESH_MS: f32 = 500.0;
 /// Marquee scroll rate for a filename longer than its slot, ms per pixel.
 const NAME_SCROLL_MS: f32 = 80.0;
-/// Gap, in px, between the end of one marquee loop and the start of the next.
-const NAME_SCROLL_GAP: i32 = 8;
+/// How long the marquee holds still at the START (showing the title) and at the END (showing the
+/// suffix - the actual joke) before moving again, ms. A continuous wraparound scroll never let
+/// either end sit still long enough to read; this is a there-pause-back-pause reveal instead.
+const NAME_PAUSE_MS: f32 = 1500.0;
+/// The gap, in px, kept clear between the filename's slot and the status bar's right-hand group
+/// (`▮NN%  UTF-8  LF`) - see `build_status_group`. The filename is HARD clipped to stop this far
+/// short of the group, whole glyphs only, so the two can never visually run into each other
+/// regardless of how the group's own width changes (e.g. a 3-digit-would-be percent, though the
+/// percent is always clamped to 2 digits today).
+const NAME_GROUP_GAP: i32 = 6;
 
 /// Line highlight and selection, from the theme JSON - drawn behind the loudest / clipping rows.
 const LINE_HIGHLIGHT: &str = "#1c1347";
@@ -329,9 +337,13 @@ pub struct Term {
     name_len: usize,
     name_seq: u64,
     name_refresh_ms: f32,
-    /// Marquee state for a filename wider than its slot.
+    /// Marquee state for a filename wider than its slot: `name_phase` 0 = paused showing the
+    /// start, 1 = scrolling, 2 = paused showing the end (the suffix joke); `name_scroll_px` is the
+    /// current scroll offset, clamped to `[0, name_w - slot]`.
     name_scroll_ms: f32,
     name_scroll_px: i32,
+    name_phase: u8,
+    name_phase_ms: f32,
     /// Set by `set_track_for_test` so tests can drive the filename deterministically without ever
     /// touching the process-global `NOW_PLAYING` static.
     #[cfg(test)]
@@ -370,6 +382,8 @@ impl Default for Term {
             name_refresh_ms: NAME_REFRESH_MS,
             name_scroll_ms: 0.0,
             name_scroll_px: 0,
+            name_phase: 0,
+            name_phase_ms: 0.0,
             #[cfg(test)]
             test_track: None,
         }
@@ -422,6 +436,8 @@ impl Term {
         self.name_seq = seq;
         self.name_scroll_ms = 0.0;
         self.name_scroll_px = 0;
+        self.name_phase = 0;
+        self.name_phase_ms = 0.0;
     }
 
     /// Refreshes the cached filename from `now_playing` (or, in tests, from `test_track`).
@@ -557,6 +573,31 @@ fn draw_clipped(c: &mut Canvas, x: i32, clip_x0: i32, clip_x1: i32, y: i32, text
         }
         cx += 4;
     }
+}
+
+/// Builds the status bar's right-hand group - `▮NN%  UTF-8  LF` - into `buf`, returning the byte
+/// length written. Shared between `draw` (which right-aligns it at the status bar's right edge)
+/// and the tests (which need the identical layout to check the filename never runs into it),
+/// rather than either side guessing at the other's pixel offsets.
+fn build_status_group(pct: u32, buf: &mut [u8; 20]) -> usize {
+    let mut gi = 0;
+    let block = "▮".as_bytes();
+    buf[gi..gi + block.len()].copy_from_slice(block);
+    gi += block.len();
+    let mut pc = [0u8; 2];
+    fmt_2(pct, &mut pc);
+    buf[gi..gi + 2].copy_from_slice(&pc);
+    gi += 2;
+    buf[gi] = b'%';
+    gi += 1;
+    buf[gi] = b' ';
+    gi += 1;
+    buf[gi] = b' ';
+    gi += 1;
+    let right = STATUS_RIGHT.as_bytes();
+    buf[gi..gi + right.len()].copy_from_slice(right);
+    gi += right.len();
+    gi
 }
 
 impl Family for Term {
@@ -901,9 +942,25 @@ impl Family for Term {
                 let ex = ix0 + third + (third - font3x5::width(EXIT_LABEL)).max(0) / 2;
                 font3x5::draw(c, ex, sy, clip_label(EXIT_LABEL, third), Rgba::new(255, 255, 255, 255));
             } else {
-                // left: the now-playing title as a dodgy .mp3, marquee-scrolled if it doesn't fit.
+                // Right-hand group first, right-aligned - `▮NN%  UTF-8  LF` as one block, so its
+                // left edge (`group_x0`) is known before the filename slot is sized against it.
+                let rms = (((d.rms_l + d.rms_r) * 0.5).max(0.0)).min(1.0);
+                let rms = if rms.is_finite() { rms } else { 0.0 };
+                let pct = (rms * 100.0).round() as u32;
+                let mut group_buf = [0u8; 20];
+                let group_len = build_status_group(pct, &mut group_buf);
+                let group_str = std::str::from_utf8(&group_buf[..group_len]).unwrap_or("");
+                let group_w = font3x5::width(group_str);
+                let group_x0 = (ix1 - 2 - group_w).max(ix0 + 2);
+                font3x5::draw(c, group_x0, sy, group_str, text);
+
+                // left: the now-playing title as a dodgy .mp3. The slot runs from the interior's
+                // left edge to NAME_GROUP_GAP px short of the group above, and is HARD clipped
+                // there (whole glyphs only) so the two can never visually run into each other -
+                // see `filename_never_overlaps_the_readouts`.
                 let slotx0 = ix0 + 2;
-                let slot = (third - 2).max(0);
+                let slotx1 = (group_x0 - NAME_GROUP_GAP).max(slotx0);
+                let slot = slotx1 - slotx0;
                 // Copied out of `name_buf` first: the marquee below needs `&mut self`, which a
                 // borrow straight from the buffer would still be alive across.
                 let mut name_local = [0u8; 64];
@@ -912,39 +969,46 @@ impl Family for Term {
                 let name = std::str::from_utf8(&name_local[..name_local_len]).unwrap_or("");
                 let name_w = font3x5::width(name);
                 if name_w <= slot {
-                    draw_clipped(c, slotx0, slotx0, slotx0 + slot, sy, name, text);
-                } else if name_w > 0 {
-                    self.name_scroll_ms += dt;
-                    let total = (name_w + NAME_SCROLL_GAP).max(1);
-                    while self.name_scroll_ms >= NAME_SCROLL_MS {
-                        self.name_scroll_ms -= NAME_SCROLL_MS;
-                        self.name_scroll_px = (self.name_scroll_px + 1) % total;
+                    // Fits outright: static, no marquee state to advance.
+                    draw_clipped(c, slotx0, slotx0, slotx1, sy, name, text);
+                } else if name_w > 0 && slot > 0 {
+                    // A there-pause-back-pause reveal: sits on the START long enough to read the
+                    // title, scrolls once to the END, sits there long enough to read the suffix
+                    // joke, then resets - never a continuous wraparound that never settles.
+                    let max_scroll = name_w - slot;
+                    match self.name_phase {
+                        0 => {
+                            self.name_phase_ms += dt;
+                            self.name_scroll_px = 0;
+                            if self.name_phase_ms >= NAME_PAUSE_MS {
+                                self.name_phase = 1;
+                                self.name_phase_ms = 0.0;
+                            }
+                        }
+                        1 => {
+                            self.name_scroll_ms += dt;
+                            while self.name_scroll_ms >= NAME_SCROLL_MS && self.name_scroll_px < max_scroll {
+                                self.name_scroll_ms -= NAME_SCROLL_MS;
+                                self.name_scroll_px += 1;
+                            }
+                            if self.name_scroll_px >= max_scroll {
+                                self.name_scroll_px = max_scroll;
+                                self.name_phase = 2;
+                                self.name_phase_ms = 0.0;
+                            }
+                        }
+                        _ => {
+                            self.name_phase_ms += dt;
+                            self.name_scroll_px = max_scroll;
+                            if self.name_phase_ms >= NAME_PAUSE_MS {
+                                self.name_phase = 0;
+                                self.name_phase_ms = 0.0;
+                                self.name_scroll_px = 0;
+                            }
+                        }
                     }
-                    draw_clipped(c, slotx0 - self.name_scroll_px, slotx0, slotx0 + slot, sy, name, text);
-                    draw_clipped(
-                        c,
-                        slotx0 - self.name_scroll_px + total,
-                        slotx0,
-                        slotx0 + slot,
-                        sy,
-                        name,
-                        text,
-                    );
+                    draw_clipped(c, slotx0 - self.name_scroll_px, slotx0, slotx1, sy, name, text);
                 }
-                // centre: ▮ + rms percent + %
-                let rms = (((d.rms_l + d.rms_r) * 0.5).max(0.0)).min(1.0);
-                let rms = if rms.is_finite() { rms } else { 0.0 };
-                let mut pc = [0u8; 2];
-                fmt_2((rms * 100.0).round() as u32, &mut pc);
-                let mut cx = ix0 + third + 2;
-                cx += font3x5::draw(c, cx, sy, "▮", text) + 2;
-                if let Ok(s) = std::str::from_utf8(&pc) {
-                    cx += font3x5::draw(c, cx, sy, s, text) + 1;
-                }
-                font3x5::draw(c, cx, sy, "%", text);
-                // right: UTF-8  LF
-                let rx = ix1 - 2 - font3x5::width(STATUS_RIGHT);
-                font3x5::draw(c, rx.max(ix0 + 2 * third), sy, clip_label(STATUS_RIGHT, third), text);
             }
         }
 
@@ -1221,6 +1285,64 @@ mod tests {
             "{built:?} is {}px, wider than its {NAME_SLOT_W}px slot",
             font3x5::width(&built)
         );
+    }
+
+    #[test]
+    fn filename_never_overlaps_the_readouts() {
+        let t = theme("term-2077");
+        let (w, h) = (380, 60);
+        let d = FrameData { dt_ms: 16.7, rms_l: 0.3, rms_r: 0.3, ..FrameData::default() };
+
+        // Baseline: no track ever set, so the left slot draws nothing - what the right-hand
+        // group's own pixels look like completely on their own.
+        let mut base = Term::default();
+        let mut cb = Canvas::new(w, h);
+        base.draw(&mut cb, &t, &d);
+
+        // A long title, driven for long enough to pass through every marquee phase (pause-start,
+        // scroll, pause-end).
+        let mut fam = Term::default();
+        fam.set_track_for_test(&"a very long track title that overflows its slot ".repeat(3), 0);
+        let mut c = Canvas::new(w, h);
+        for _ in 0..300 {
+            fam.draw(&mut c, &t, &d);
+        }
+
+        // Recompute the group's left edge exactly as `draw` does, rather than hardcoding a pixel
+        // offset that would silently stop matching a real layout change.
+        let pct = (((d.rms_l + d.rms_r) * 0.5).clamp(0.0, 1.0) * 100.0).round() as u32;
+        let mut group_buf = [0u8; 20];
+        let group_len = build_status_group(pct, &mut group_buf);
+        let group_str = std::str::from_utf8(&group_buf[..group_len]).unwrap();
+        let group_w = font3x5::width(group_str);
+        let (ix0, ix1) = (3, w - 3);
+        let group_x0 = (ix1 - 2 - group_w).max(ix0 + 2);
+        let sy = (h - 4) - 7 + 1; // iy1 - STATUS_H + 1, matching `draw`'s `bottom + 1`
+
+        // The gap must be pure status-bar background - identical to the no-filename baseline,
+        // not merely "different from the panel" (the status bar's own background already differs
+        // from the panel, so that check would pass even with the filename bleeding into it).
+        for gx in (group_x0 - NAME_GROUP_GAP)..group_x0 {
+            for y in sy..(sy + 5) {
+                assert_eq!(
+                    c.get(gx, y),
+                    cb.get(gx, y),
+                    "pixel at the {NAME_GROUP_GAP}px gap x={gx} y={y} - the filename bled into the margin"
+                );
+            }
+        }
+
+        // The group's own pixels are untouched by there being a (long, marquee-scrolling)
+        // filename at all.
+        for gx in group_x0..(group_x0 + group_w) {
+            for y in sy..(sy + 5) {
+                assert_eq!(
+                    c.get(gx, y),
+                    cb.get(gx, y),
+                    "readout pixel differs at x={gx} y={y} with a filename showing"
+                );
+            }
+        }
     }
 
     #[test]

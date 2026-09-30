@@ -22,6 +22,14 @@ not commit dates.
     marquee-scrolled when it doesn't fit the slot. `media::with_now_playing` added so this reads
     the track without allocating a fresh `String` every refresh.
   - `font3x5` gained `+`, `[`, `]` for the new suffixes.
+- `term` — follow-up fix: the filename could run into the centre rms readout (`...NOT_A_▮51%`
+  overprinting). The status bar's right-hand `▮NN%  UTF-8  LF` is now built and right-aligned as
+  one group (`build_status_group`), and the filename's slot is sized against that group's actual
+  left edge minus a 6px gap, hard-clipped to whole glyphs — the two can no longer overlap
+  regardless of layout changes on either side. New guard
+  `filename_never_overlaps_the_readouts`. The marquee no longer scrolls continuously: it now
+  pauses 1.5s on the title, scrolls once to the end, and pauses 1.5s on the suffix joke before
+  resetting, so the punchline is actually readable rather than a blur.
 
 ## [0.3.1] — 2026-09-29
 
