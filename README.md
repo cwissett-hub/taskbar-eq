@@ -194,7 +194,7 @@ families** have one, and each is that instrument's characteristic fault or ritua
 | Dolphin LCD | The dolphin leaps clear of the display and lands, throwing a splash along the waterline |
 | 3D spectrum | The whole stack surges one depth step forward and settles back |
 | 3D Pipes | A surge: every pipe lays pipe three times as fast and warms toward hot, and a teapot rides the growing tip |
-| Orbit | The ring scatters outward and is drawn back in |
+| Orbit | An alignment: every planet eases onto one line from the sun, a white flash runs through them, and they scatter back |
 | Cherry blossom | A storm: lightning strikes the castle and a gust lets the branch go of a great deal at once |
 | Brutalist | The monolith: every block slams to full height and figure and ground invert |
 | Rave lasers | The rig blacks out, then every beam snaps to full spread at once |

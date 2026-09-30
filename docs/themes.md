@@ -26,9 +26,9 @@ split, and worth knowing before you go looking for one and only find it in the o
 | Pantone | Felipe Pantone's surface language — chromatic gradient, misregistration, halftone |
 | Flame organ | A Rubens' tube: a gas manifold whose flame height traces the wave |
 | Dolphin LCD | 1990s car head-unit dot-matrix display, a dolphin arcing over a spectrum |
-| 3D spectrum | Winamp/WMP bars in depth — five staggered rows, oblique (not perspective) |
+| 3D spectrum | Winamp/WMP bars in depth — five staggered rows of lit boxes, oblique (not perspective), on a perspective floor with shadows and fog; dropping bars shed falling ghost blocks |
 | 3D Pipes | The Windows screensaver, driven — real perspective projection; three fat shaded pipes grow at once with ball joints at every turn |
-| Orbit | Spheres circling in real 3D, pulsing to the music, occlusion as a depth cue |
+| Orbit | A sun and its planets in real 3D — each planet on its own visible orbit, lit toward the sun, with a comet tail whose length is the level |
 | Cherry blossom | Petals off a branch in the wind; a lightning storm strikes a castle on a bass hit |
 | Kaleidoscope | Frieze-group (not rosette) mirrored symmetry; radius is frequency |
 | Rave lasers | A sweeping laser fan that strobes on the kick, for frenchcore |
