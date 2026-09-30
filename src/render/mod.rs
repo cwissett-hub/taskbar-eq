@@ -47,6 +47,7 @@ pub mod sesh;
 pub mod night;
 pub mod term;
 pub mod bling;
+pub mod nos;
 
 use crate::dsp::bands::NUM_BANDS;
 use crate::themes::Theme;
@@ -137,10 +138,10 @@ pub fn tint(
 /// `segmented` for anything unrecognised, so a theme carrying a typo'd or unimplemented
 /// family name would silently render as the wrong meter instead of failing. This list is
 /// what lets that be asserted, and adding a family is a one-line change in one place.
-pub const KNOWN_FAMILIES: [&str; 29] = [
+pub const KNOWN_FAMILIES: [&str; 30] = [
     "segmented", "scope", "vu", "vapor", "tube", "nixie", "waterfall", "reel", "patchbay", "radar", "pantone", "chroma", "fluid",
     "flame", "dolphin", "mesh", "pipes", "orbit", "blossom", "kaleido", "rave", "brutal", "vswings", "vsghost", "vsorb", "sesh",
-    "night", "term", "bling",
+    "night", "term", "bling", "nos",
 ];
 
 pub fn family_for(id: &str) -> Box<dyn Family> {
@@ -173,6 +174,7 @@ pub fn family_for(id: &str) -> Box<dyn Family> {
         "night" => Box::new(night::Night::default()),
         "term" => Box::new(term::Term::default()),
         "bling" => Box::new(bling::Bling::default()),
+        "nos" => Box::new(nos::Nos::default()),
         "tube" => Box::new(tube::Tube::default()),
         "nixie" => Box::new(nixie::Nixie::default()),
         "waterfall" => Box::new(waterfall::Waterfall::default()),
@@ -519,7 +521,7 @@ mod opacity {
     #[test]
     #[ignore]
     fn slow_vs_timing() {
-        for id in ["vswings-particle-arts", "vsghost-white", "vsorb-chrome", "sesh-vhs", "night-yellow", "term-2077", "bling-pink"] {
+        for id in ["vswings-particle-arts", "vsghost-white", "vsorb-chrome", "sesh-vhs", "night-yellow", "term-2077", "bling-pink", "nos-2fast"] {
             let t = builtin::all().into_iter().find(|t| t.id == id).unwrap();
             let mut f = family_for(&t.family);
             let mut c = Canvas::new(380, 60);
@@ -532,7 +534,7 @@ mod opacity {
             let per = t0.elapsed().as_secs_f32() * 1000.0 / 300.0;
             eprintln!("{id}: {per:.2} ms/frame");
             assert!(per < 2.0, "{id} {per:.2} ms/frame");
-            if id == "sesh-vhs" || id == "night-yellow" || id == "term-2077" || id == "bling-pink" {
+            if id == "sesh-vhs" || id == "night-yellow" || id == "term-2077" || id == "bling-pink" || id == "nos-2fast" {
                 assert!(per < 1.0, "{id} {per:.2} ms/frame (expected < 1.0 ms)");
             }
         }

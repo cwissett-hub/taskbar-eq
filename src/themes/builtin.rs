@@ -1054,6 +1054,84 @@ pub fn bling_myspace() -> Theme {
     }
 }
 
+// Fast & Furious: NOS - a street-racing in-car dash (the early films, 2 Fast 2 Furious). See
+// `render::nos`. `lit` is the tacho LEDs and the backlit dial face (the brightest stop, so it carries
+// the contrast rule); `hot` the needle and the gear/speed digits; `edge` the needle hub; `ghost` the
+// unlit segments. The one zone's `lit` is the under-glow neon - the family reads only `zones[0]`.
+fn nos_base() -> Theme {
+    Theme {
+        family: "nos".into(),
+        texture: Texture::None_,
+        panel_alpha: 1.0,
+        bloom: 0.0,
+        glow_strength: 0.0,
+        edge_alpha: 1.0,
+        // Nothing here is read by the family: the levels arrive already smoothed.
+        ballistics: Ballistics { attack: 0.8, decay: 0.25, peak_fall: 0.012 },
+        ..Theme::default()
+    }
+}
+
+/// 2 Fast: blue LEDs, purple under-glow.
+pub fn nos_2fast() -> Theme {
+    Theme {
+        id: "nos-2fast".into(),
+        name: "NOS 2 Fast".into(),
+        lit: "#39c0ff".into(),
+        hot: "#ffffff".into(),
+        panel: "#07060c".into(),
+        edge: "#2a2a3a".into(),
+        ghost: 0.10,
+        zones: vec![Zone { upto: 1.0, lit: "#b43aff".into(), hot: "#b43aff".into() }],
+        ..nos_base()
+    }
+}
+
+/// 2001 LA: orange LEDs, green under-glow.
+pub fn nos_original() -> Theme {
+    Theme {
+        id: "nos-original".into(),
+        name: "NOS Original".into(),
+        lit: "#ff9a1a".into(),
+        hot: "#ffffff".into(),
+        panel: "#0a0806".into(),
+        edge: "#3a2a1a".into(),
+        ghost: 0.10,
+        zones: vec![Zone { upto: 1.0, lit: "#3aff5a".into(), hot: "#3aff5a".into() }],
+        ..nos_base()
+    }
+}
+
+/// A quarter mile at a time: white LEDs, red needle and digits, blue under-glow.
+pub fn nos_quarter() -> Theme {
+    Theme {
+        id: "nos-quarter".into(),
+        name: "NOS Quarter Mile".into(),
+        lit: "#e6e6e6".into(),
+        hot: "#ff2a2a".into(),
+        panel: "#050505".into(),
+        edge: "#303030".into(),
+        ghost: 0.08,
+        zones: vec![Zone { upto: 1.0, lit: "#39c0ff".into(), hot: "#39c0ff".into() }],
+        ..nos_base()
+    }
+}
+
+/// Miami neon: pink and lime, aqua under-glow.
+pub fn nos_miami() -> Theme {
+    Theme {
+        id: "nos-miami".into(),
+        name: "NOS Miami".into(),
+        lit: "#ff5fc8".into(),
+        hot: "#b6ff3a".into(),
+        panel: "#0c0414".into(),
+        edge: "#2a1a3a".into(),
+        ghost: 0.12,
+        zones: vec![Zone { upto: 1.0, lit: "#39ffe0".into(), hot: "#39ffe0".into() }],
+        ..nos_base()
+    }
+}
+
 pub fn all() -> Vec<Theme> {
     vec![
         vfd_ice(),
@@ -1241,6 +1319,10 @@ pub fn all() -> Vec<Theme> {
         bling_gold(),
         bling_ice(),
         bling_myspace(),
+        nos_2fast(),
+        nos_original(),
+        nos_quarter(),
+        nos_miami(),
     ]
 }
 
