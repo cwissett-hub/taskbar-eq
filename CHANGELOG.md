@@ -3,6 +3,32 @@
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); dates are release dates,
 not commit dates.
 
+## [0.4.1] — 2026-10-01
+
+- `rave` — a room for the lasers: haze (two scrolling value-noise fog bands plus a floor glow),
+  beam cones that widen with the fog density, a truss lattice with the heads hanging off it and a
+  two-row crowd silhouette that raises an arm on strong onsets, floor splash under the beams, and
+  a moving-head sweep flourish. Dropping the per-frame bloom allocation and sharpening the strobe
+  tail took it from 1.45 ms to 0.71 ms/frame.
+- `dolphin` — a 2x hero leap on a bass-following arc, splash droplets and a ring on re-entry, a
+  setting sun or crescent moon with a glittering sea reflection and twinkling stars, and travelling
+  crest dots. Removing the per-frame bloom and the double in-draw smoothing took it from 1.40 ms to
+  0.06 ms/frame.
+- `vswings` — the fan now spans 80% of the panel width, a lagging 100 ms echo pair reads off a
+  ring buffer, the floor reaches both side edges, and sparks fly from the wing tips on strong
+  onsets. The accent layer's per-frame bloom (CI measured 1.97 ms against the 2 ms gate) is
+  replaced by a 1-px halo: 0.73 ms to 0.09 ms/frame. High-BPM depth 0.49 → 0.75.
+- `vsghost` — rethought: a big glitching kaomoji face whose eyes and mouth react to bass/mids, a
+  crawling phrase ticker and ticker-bar meter, and faint margin "voices"; 0.04 ms/frame. High-BPM
+  depth 0.43 → 0.67.
+- `Canvas::fill_poly` no longer allocates for polygons of 16 points or fewer (identical output),
+  keeping scan-line crossings on the stack.
+- The stricter < 1 ms/frame timing target for the newer families is now a dev-machine-only check
+  (CI sets `CI=true` to skip it); CI still enforces the 2 ms gate for every family. The
+  windows-latest runner measures 1.5-2.2x slower than the dev laptop, which turned prism's 0.57 ms
+  into 1.19 ms and failed the v0.4.0 tag build on CI — that release's exe was attached to the
+  GitHub release manually.
+
 ## [0.4.0] — 2026-10-01
 
 - `bling` — a Blingee GIF panel: rhinestone gem columns, glitter text and sparkle / `$` / crown /

@@ -3,7 +3,22 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** v0.4.0 — FOUR FAMILIES SHIP, PLUS A NOW-PLAYING CLICK. `bling` (a Blingee GIF
+**Last updated:** v0.4.1 — FIDELITY PASS 2: FOUR MORE FAMILIES REWORKED. `rave` (a room for the
+lasers — haze, beam cones, a truss and a crowd that raises an arm on strong onsets, floor splash, a
+moving-head sweep flourish; per-frame bloom removed, 1.45 → 0.71 ms), `dolphin` (a 2x hero on a
+bass-following leap arc, splash, a sun/moon with a sea reflection, stars, travelling crests;
+per-frame bloom AND double in-draw smoothing removed, 1.40 → 0.06 ms), `vswings` (80% span, a
+lagging echo pair, floor reaching both edges, sparks on strong onsets; the accent layer's bloom —
+1.97 ms on the CI runner, over the 2 ms gate — replaced by a 1-px halo, 0.73 → 0.09 ms;
+`Canvas::fill_poly` no longer allocates for polygons of ≤ 16 points) and `vsghost` (rethought: a
+big glitching kaomoji face reacting to bass/mids, a crawling phrase ticker and ticker-bar meter,
+margin "voices"; 0.04 ms). High-BPM depth: vswings 0.49 → 0.75, vsghost 0.43 → 0.67. Also: the
+< 1 ms/frame timing target for the newer families is now dev-machine-only (CI keeps the 2 ms gate
+for every family) — the windows-latest runner measures 1.5-2.2x slower than the dev laptop, which
+failed the v0.4.0 tag build on CI; that release's exe was attached to the GitHub release manually.
+The user judges the four reworked families on the review sheet — see Waiting on you below.
+
+Earlier: v0.4.0 — FOUR FAMILIES SHIP, PLUS A NOW-PLAYING CLICK. `bling` (a Blingee GIF
 panel — rhinestone gem columns, glitter text and sparkle / `$` / crown / heart stamps, a bass-hit
 flash flourish; four colourways), `nos` (a 2 Fast 2 Furious dash — LED tacho arc, shift lights, gear/MPH, under-glow,
 the `DANGER TO MANIFOLD` flourish plus a speed-line purge; four colourways), `drift` (a Tokyo Drift
@@ -110,25 +125,28 @@ Earlier still: 150 colourways across 22 families, every one with a flourish. See
 
 Nothing right now. Queued, in order:
 
-1. **BATCH 2 of the fidelity pass**, brainstormed from their current dumps side by side:
-   `rave` — "very bland, literally just lasers, needs something else"; `dolphin` — "really lacking
-   in visual fidelity and flair, very basic, not cohesive with blossom or vaporwave, I want them to
-   pop more"; `vswings` — "lots of space on the sides that goes unused"; `vsghost` — a RETHINK of
-   the execution keeping the vibe: "just looks like bars over a mostly invisible graphic; I like
-   the vibe but the execution needs work". Also for `vsghost`: the 120 ms onset refractory (from
-   the VS retune, v0.3.2) lets 160 BPM off-beat hats trigger the score's scroll the same as the
-   kick does — the scroll (and `vsorb`'s spin) may now read busier on a real track than intended;
-   ask the user whether that's welcome or needs its own, looser refractory.
-2. **Recapture the high-BPM fixture from a real VS track.** `tests/fixtures/high-bpm-bands.csv`
+1. **Recapture the high-BPM fixture from a real VS track.** `tests/fixtures/high-bpm-bands.csv`
    is synthetic (160 BPM, kick + off-beat hats) because a live loopback capture needs Spotify
    playing through this machine, which an agent session can't rely on — see the fixture's own
    header. Replace it with a real 150-170 BPM Virtual Self capture via `--levels` when one can be
    made, and rerun `slow_vs_high_bpm_response`.
-3. **The live `--levels` check** of the two-FFT bass path against real music — needs Spotify
+2. **The live `--levels` check** of the two-FFT bass path against real music — needs Spotify
    playing; note it overwrites `tests/fixtures/real-music-bands.csv`.
+3. **Check the other older families for in-draw double smoothing and per-frame bloom** —
+   `dolphin` and `rave` both had them (fidelity pass 2 found and removed both; see CHANGELOG
+   0.4.1), so the remaining families that predate that pass are worth a sweep for the same two
+   patterns.
 
 ## Waiting on you
 
+- [ ] **Judge sections 23-30 on `docs/review/index.html`: keep, tune or drop each colourway
+      (v0.4.0 + v0.4.1), with the implementers' open questions.** `rave`: are the arms too busy
+      at 1:1; is the sharpened strobe tail OK? `dolphin`: is the 2x hero hidden by a loud sea at
+      128x44 (`HERO_MIN_ROWS`)? `vswings`: is the echo only visible after beats; do the feather
+      shafts look like dashes? `vsghost`: do the eyes read as `0` rather than `O`; the slices
+      re-roll every frame — does that read as jittery in motion? Separately: please delete the
+      leftover folder `C:\Users\cwisset\Documents\projects\te-v040` — a throwaway checkout the
+      assistant could not remove itself.
 - [ ] **Judge sections 23-26 on `docs/review/index.html`: keep, tune or drop each colourway
       (v0.4.0), and try the now-playing click/tray/hotkey.** Section 23, `bling`: busy at 1:1?
       are the gold gems meant to read as diamond-cut or gold? Section 24, `nos`: is the backlit
