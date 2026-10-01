@@ -99,6 +99,7 @@ pub fn family_label(family: &str) -> String {
         "bling" => "Blingee: bling bling".into(),
         "nos" => "Fast & Furious: NOS".into(),
         "drift" => "Fast & Furious: Tokyo Drift".into(),
+        "prism" => "Prism: light bloom".into(),
         other => {
             let mut c = other.chars();
             match c.next() {

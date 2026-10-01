@@ -1,9 +1,9 @@
 # Themes
 
-**193 colourways across 31 families.** A *family* is a renderer with fixed geometry — code. A
+**197 colourways across 32 families.** A *family* is a renderer with fixed geometry — code. A
 *colourway* is data. That split is the extensibility seam: new colourways need no rebuild.
 
-## All 31 families
+## All 32 families
 
 Six are written up in full below (Segmented VFD, Oscilloscope, VU dials, Vaporwave grid, Valve
 row, Fluid). The other nineteen shipped later and their full write-ups still live in
@@ -43,6 +43,7 @@ split, and worth knowing before you go looking for one and only find it in the o
 | Blingee: bling bling | A Blingee GIF, circa 2007 — 24 columns of faceted rhinestone gems rising with the spectrum (a white glint running up each lit column, a hot peak gem), over twinkling per-pixel glitter, a glittery outlined phrase (`font3x5` at 2x) and our own sparkle / `$` / crown / heart stamps popping on strong onsets; the flourish is a white flash then diamond gems under a chrome sweep and a spinning sparkle star |
 | Fast & Furious: NOS | A street-racing in-car dash from the early films / 2 Fast 2 Furious — a carbon-fibre panel with a backlit dial face, a 48-LED tacho arc that sweeps with the spectrum (lit, then amber, then red toward the redline) under a needle on rms, 10 shift lights that all flash blue at the redline, the gear and MPH (`font3x5` at 2x) and a neon under-glow on bass hits; the flourish is the NOS hit — a blinking green-on-black `DANGER TO MANIFOLD` warning screen, then a purge of white speed lines with the tacho pinned |
 | Fast & Furious: Tokyo Drift | Tokyo Drift — a night skyline (hazy far towers, black near blocks with lit windows, a neon-washed horizon) with flickering neon signs, and our own generic coupe drifting along the ground line on a pendulum that swings with rms; its tyre-smoke trail is the meter — 64 puffs, one per band from the car backwards, each a soft disc of radius `1 + level * 7`, so the smoke billows at the car on bass; a steering gauge with `ANGLE NN` (`font3x5`) top right; the flourish is the drift — the car whips across the full width laying a wall of `hot`-tinted smoke, the neon flashes and `DRIFT!` slams in |
+| Prism: light bloom | The user's own image at taskbar scale — a soft, luminous spectral arc over a dark rim-lit horizon on a plum-to-black sky with faint translucent sheets in the top corners; the arc is the meter: 64 samples left to right (bass to treble), its hue running through the colourway's spectral stops in linear light, each column `2 + level * 10` px thick at `0.35 + 0.65 * level` brightness with a 2 px and a 4 px alpha halo (no `bloom`), so the band swells where the music is; a 1 px `hot` rim-light along the horizon follows the glow above it; the arc breathes ±2 px over 8 s and its hues drift ±4 % with rms; the flourish is a flare — the core whitens outward from the loudest point, the rim flares full width and a soft lens flare blooms at the apex |
 
 The Virtual Self: wings colourways are `vswings-particle-arts` (ice panel, cobalt-to-electric
 wings, cobalt floor), `vswings-eon-break` (black panel, cobalt-to-electric wings, white floor),
@@ -99,6 +100,12 @@ lights and signs, a pale car), `drift-orange` (the orange-and-black livery: an o
 neon, white signs) and `drift-night` (a cold blue night: blue neon, a pale-blue car, white signs).
 The flourish is the drift: the car whips out past the right edge and back in from the left, pinned
 at full angle, with the smoke at maximum radius tinted `hot`, the neon flashing and `DRIFT!` at 2x.
+
+The Prism: light bloom colourways are `prism-sunset` (the image: orange, hot pink, yellow, green, cyan
+and blue on plum, a peach rim, pink sheets), `prism-aurora` (green through cyan and blue to violet on a deep
+teal night, mint rim and sheets), `prism-mono` (a silver bloom: silver, white, silver on near-black, a white
+rim) and `prism-dawn` (orange, amber, gold and cream on a warm near-black, amber sheets). The flourish is a
+flare: the core whitens from the loudest point outward, the rim-light flares and a lens flare blooms at the apex.
 
 **Five families reuse the `[tube]` table for their own hardware materials**, even though only
 one of them is the Valve row (`tube`) family itself: **Cherry blossom**, **Flame organ**,
@@ -212,7 +219,7 @@ Drop a `.toml` file (any filename — the `id` inside is what matters) into
 watched, so saving the file updates the live overlay without a restart — edit a colour, hit
 save, and watch the taskbar change.
 
-A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 193
+A file whose `id` matches a built-in **replaces** it; any other `id` is added alongside the 197
 built-ins, which are always embedded in the exe regardless of whether that folder exists.
 
 Failure modes are all deliberately soft, because these files are hand-authored:

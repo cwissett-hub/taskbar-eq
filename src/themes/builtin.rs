@@ -1210,6 +1210,80 @@ pub fn drift_night() -> Theme {
     }
 }
 
+// Prism: light bloom - the user's own image: a spectral arc over a dark rim-lit horizon on plum. See
+// `render::prism`. The spectral stops live in the family (matched on the id); `lit` is the brightest
+// of them, so it carries the contrast rule. `hot` is the rim-light and the lens flare, `edge` the
+// corner sheets, `ghost` the rim's sheen on the dark ground.
+fn prism_base() -> Theme {
+    Theme {
+        family: "prism".into(),
+        texture: Texture::None_,
+        panel_alpha: 1.0,
+        bloom: 0.0,
+        glow_strength: 0.0,
+        edge_alpha: 1.0,
+        // Nothing here is read by the family: the levels arrive already smoothed.
+        ballistics: Ballistics { attack: 0.8, decay: 0.25, peak_fall: 0.012 },
+        ..Theme::default()
+    }
+}
+
+/// The image: orange, pink, yellow, green, cyan, blue on plum.
+pub fn prism_sunset() -> Theme {
+    Theme {
+        id: "prism-sunset".into(),
+        name: "Prism Sunset".into(),
+        lit: "#5aff7a".into(),
+        hot: "#ffd0b0".into(),
+        panel: "#1a0616".into(),
+        edge: "#ff4fa0".into(),
+        ghost: 0.10,
+        ..prism_base()
+    }
+}
+
+/// Green to violet on a deep teal night.
+pub fn prism_aurora() -> Theme {
+    Theme {
+        id: "prism-aurora".into(),
+        name: "Prism Aurora".into(),
+        lit: "#3affe0".into(),
+        hot: "#c0fff0".into(),
+        panel: "#04121a".into(),
+        edge: "#3affc0".into(),
+        ghost: 0.10,
+        ..prism_base()
+    }
+}
+
+/// A silver bloom.
+pub fn prism_mono() -> Theme {
+    Theme {
+        id: "prism-mono".into(),
+        name: "Prism Mono".into(),
+        lit: "#ffffff".into(),
+        hot: "#ffffff".into(),
+        panel: "#0a0a0e".into(),
+        edge: "#8a8a9a".into(),
+        ghost: 0.08,
+        ..prism_base()
+    }
+}
+
+/// Orange to cream: first light.
+pub fn prism_dawn() -> Theme {
+    Theme {
+        id: "prism-dawn".into(),
+        name: "Prism Dawn".into(),
+        lit: "#fff2d0".into(),
+        hot: "#fff0c0".into(),
+        panel: "#140a04".into(),
+        edge: "#ffb05a".into(),
+        ghost: 0.10,
+        ..prism_base()
+    }
+}
+
 pub fn all() -> Vec<Theme> {
     vec![
         vfd_ice(),
@@ -1405,6 +1479,10 @@ pub fn all() -> Vec<Theme> {
         drift_touge(),
         drift_orange(),
         drift_night(),
+        prism_sunset(),
+        prism_aurora(),
+        prism_mono(),
+        prism_dawn(),
     ]
 }
 

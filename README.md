@@ -362,16 +362,16 @@ colourway files, which hot-reload on save and can replace a built-in by reusing 
 
 ## More
 
-**193 colourways across 31 families**: Segmented VFD, Oscilloscope, VU dials, Vaporwave grid,
+**197 colourways across 32 families**: Segmented VFD, Oscilloscope, VU dials, Vaporwave grid,
 Valve row, Fluid, Nixie tubes, Spectrogram, Reel-to-reel, Patchbay, Radar, Pantone, Flame organ,
 Dolphin LCD, 3D spectrum, 3D Pipes, Orbit, Cherry blossom, Kaleidoscope, Rave lasers, Brutalist,
 Chroma field, Virtual Self: wings, Virtual Self: ghost voices, Virtual Self: orb, Bones / TeamSESH: VHS,
 Cyberpunk 2077: HUD, Terminal: 2077, Blingee: bling bling, Fast & Furious: NOS,
-Fast & Furious: Tokyo Drift.
+Fast & Furious: Tokyo Drift, Prism: light bloom.
 The full catalogue, with a screenshot and one-liner per family, moved out of this README to keep it
 a reasonable length:
 
-- [docs/themes.md](docs/themes.md) — the full colourway catalogue, all 31 families, and the
+- [docs/themes.md](docs/themes.md) — the full colourway catalogue, all 32 families, and the
   external-theme file format
 - [docs/theme-prompt.md](docs/theme-prompt.md) — a self-contained prompt for having a coding
   agent author new colourways
