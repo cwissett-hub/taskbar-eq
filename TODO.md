@@ -3,7 +3,17 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** v0.4.1 — FIDELITY PASS 2: FOUR MORE FAMILIES REWORKED. `rave` (a room for the
+**Last updated:** (Unreleased, on main) — TOKYO DRIFT REWORKED INTO AN ISO STREET, at the user's
+request ("the car sprite is completely 2d and just goes left and right, doesn't look like drifting,
+find a way to make it a more iso view"). `drift` now draws in an oblique iso projection: iso-box
+skyline with roofs and side faces, slanted sidewalk seams, zebra crossings, neon streaking the wet
+road. The car is a low-poly 3D coupe (body, cabin, wing, four wheels, counter-steering fronts),
+projected and flat-shaded every frame, so it turns. It weaves across the road holding up to 40
+degrees of slip and flicks to the opposite lock on bass kicks, laying skid marks; the smoke meter
+follows its path; the flourish adds a 360 spin. 0.19 ms/frame steady, unchanged. The user judges it
+on review sheet section 31 — see Waiting on you below.
+
+Earlier: v0.4.1 — FIDELITY PASS 2: FOUR MORE FAMILIES REWORKED. `rave` (a room for the
 lasers — haze, beam cones, a truss and a crowd that raises an arm on strong onsets, floor splash, a
 moving-head sweep flourish; per-frame bloom removed, 1.45 → 0.71 ms), `dolphin` (a 2x hero on a
 bass-following leap arc, splash, a sun/moon with a sea reflection, stars, travelling crests;
@@ -140,6 +150,14 @@ Nothing right now. Queued, in order:
 
 ## Waiting on you
 
+- [ ] **Judge section 31 on `docs/review/index.html`: the reworked Tokyo Drift (iso street, 3D
+      car, flicks on the kick, skid marks, 360 flourish).** It is running on your taskbar now
+      (pick any `drift-*` colourway). Open questions: the oblique view makes the car look long
+      when its nose points at the far kerb and properly sideways when it points at you; smaller
+      depth lean evens that out but looks less iso. Is one flick every other kick right (one
+      setting, `MIN_FLIP_MS`)? Are 1 px skid marks visible enough at 1:1? Keep the headlight
+      beam? The neon in the glass reads as a pink band on the white Shibuya car; keep or darken?
+      Is the car big enough at ~26x14 px? Does the 360 spin in the flourish land or feel silly?
 - [ ] **Judge sections 23-30 on `docs/review/index.html`: keep, tune or drop each colourway
       (v0.4.0 + v0.4.1), with the implementers' open questions, and try the now-playing
       click/tray/hotkey.** Section 23, `bling`: busy at 1:1? are the gold gems meant to read as

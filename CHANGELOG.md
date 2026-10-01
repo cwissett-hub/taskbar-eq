@@ -3,6 +3,20 @@
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); dates are release dates,
 not commit dates.
 
+## [Unreleased]
+
+- `drift` — reworked into an oblique "iso" street at the user's request (the old car was a flat
+  14x6 side-on bitmap that only slid left and right). The road stays horizontal but depth now runs
+  up and to the right, so the skyline's blocks show roofs and side faces, the sidewalk has slanted
+  seams and zebra crossings scroll past. The car is a low-poly 3D model (body, cabin, rear wing,
+  four wheels with counter-steering fronts) projected and flat-shaded every frame at its real
+  heading. It weaves across the road on a damped spring, holds a slip angle up to 40 degrees into
+  the turn and flicks to the opposite lock on bass kicks (at most every 650 ms, on its own after
+  2.2 s without one). Skid marks trail from the rear wheels while they slide, the headlights throw
+  a beam that sweeps the asphalt, and the neon streaks the wet road. The smoke meter now follows
+  the car's curving path. The flourish adds a full 360 spin to the sweep. 0.19 ms/frame steady,
+  0.61 ms in the flourish, at 380x60 — the same as before.
+
 ## [0.4.1] — 2026-10-01
 
 - `rave` — a room for the lasers: haze (two scrolling value-noise fog bands plus a floor glow),
