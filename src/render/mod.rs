@@ -538,8 +538,13 @@ mod opacity {
             let per = t0.elapsed().as_secs_f32() * 1000.0 / 300.0;
             eprintln!("{id}: {per:.2} ms/frame");
             assert!(per < 2.0, "{id} {per:.2} ms/frame");
-            if id == "sesh-vhs" || id == "night-yellow" || id == "term-2077" || id == "bling-pink" || id == "nos-2fast" || id == "drift-shibuya" || id == "prism-sunset" {
-                assert!(per < 1.0, "{id} {per:.2} ms/frame (expected < 1.0 ms)");
+            // The < 1 ms target for the newer families is a DEV-MACHINE goal, not a CI gate: the
+            // GitHub windows-latest runner has measured 1.5-2.2x slower than the dev laptop, which
+            // turned prism's 0.57 ms into 1.19 ms and failed the v0.4.0 tag build. CI keeps the 2 ms
+            // gate above for every family; the stricter check runs only off CI (GitHub sets CI=true).
+            let on_ci = std::env::var("CI").is_ok();
+            if !on_ci && (id == "sesh-vhs" || id == "night-yellow" || id == "term-2077" || id == "bling-pink" || id == "nos-2fast" || id == "drift-shibuya" || id == "prism-sunset") {
+                assert!(per < 1.0, "{id} {per:.2} ms/frame (expected < 1.0 ms on the dev machine)");
             }
         }
     }
