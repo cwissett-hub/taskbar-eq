@@ -5,17 +5,16 @@ not commit dates.
 
 ## [Unreleased]
 
-- `drift` — reworked into an oblique "iso" street at the user's request (the old car was a flat
-  14x6 side-on bitmap that only slid left and right). The road stays horizontal but depth now runs
-  up and to the right, so the skyline's blocks show roofs and side faces, the sidewalk has slanted
-  seams and zebra crossings scroll past. The car is a low-poly 3D model (body, cabin, rear wing,
-  four wheels with counter-steering fronts) projected and flat-shaded every frame at its real
-  heading. It weaves across the road on a damped spring, holds a slip angle up to 40 degrees into
-  the turn and flicks to the opposite lock on bass kicks (at most every 650 ms, on its own after
-  2.2 s without one). Skid marks trail from the rear wheels while they slide, the headlights throw
-  a beam that sweeps the asphalt, and the neon streaks the wet road. The smoke meter now follows
-  the car's curving path. The flourish adds a full 360 spin to the sweep. 0.19 ms/frame steady,
-  0.61 ms in the flourish, at 380x60 — the same as before.
+- `drift` — reworked as a chase camera down a touge at the user's request ("a view from behind
+  the car going along a touge road"; an interim oblique "iso" street the same day read as "a car
+  vaguely bouncing off walls"). A pseudo-3D racer road (one depth per ground row, curvature
+  integrated forward, haze to the horizon) winds across the panel past a pine-dark mountainside, a
+  guardrail on reflector posts and a valley full of the colourway's city lights, under ridges that
+  shift as the car corners. The car is a low-poly 3D model with the rear of an R34 Skyline (the
+  user's ask): four round tail lamps, a tall wing, neon underglow, counter-steering fronts. It
+  drifts because of the bends — slip into the corner up to 38 degrees, swapping lock through
+  S-bends — and a bass kick is a clutch kick with an exhaust pop. The smoke meter rolls back toward
+  the camera; the flourish is a 360 spin. 0.23 ms/frame steady at 380x60.
 
 ## [0.4.1] — 2026-10-01
 

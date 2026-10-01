@@ -1,64 +1,57 @@
-//! The drift family: Tokyo Drift. A night street seen from above at an angle - a neon skyline behind,
-//! a road in front - and a car drifting down it whose tyre-smoke trail IS the meter.
+//! The drift family: Tokyo Drift on a touge. A chase camera behind a car drifting down a winding
+//! mountain road at night - the city's neon in the valley below - whose tyre smoke IS the meter.
 //!
 //! # The view
 //!
-//! An oblique parallel projection, the pixel-art "iso" look that still fits a 60 px panel: world `x`
-//! (along the road) is screen x; depth `z` (across the road, away from the viewer) goes up and to the
-//! right, `ZX` px across and `ZY` px up per unit; height `y` goes straight up, `YY` px per unit. The
-//! road stays horizontal - a true isometric road would climb ~190 px across a 380 px panel - and
-//! everything with depth still shows a top and a side: the buildings' roofs and side faces, the
-//! sidewalk's slanted seams, the zebra crossings, and the car.
+//! A pseudo-3D racer road (the OutRun technique): every ground row below the horizon is a depth
+//! `z = CAM_H * f / (row - horizon)`, and the road's centre at that depth comes from integrating the
+//! course's curvature forward from the camera, so bends sweep across the wide panel and the road
+//! narrows to the horizon. The camera is turned to the road's heading at the car (`ROT`) and follows
+//! the car sideways (`CAM_FOLLOW`), so the car stays near the bottom centre while the road swings under
+//! it. Everything with a position on the road - the car, its smoke, the posts and the trees - is
+//! projected through the same perspective camera.
 //!
 //! # The scene
 //!
-//! - **Skyline (baked once per size and colours into `bg`).** A night sky shading from `panel` at the
-//!   top toward `edge` and a wash of the neon at the horizon; a far row of hazy towers and a near row
-//!   of black blocks standing on the back of the sidewalk, each an iso box (a roof and a right-hand
-//!   side face as parallelograms) with hashed widths and heights, the near ones carrying a scatter of
-//!   lit windows. Drawn left to right, so a block's side face shows only above a lower neighbour.
-//! - **Neon signs.** Vertical blades on the near blocks' fronts and bars on their roofs in the neon
-//!   (`zones[0].lit`) with a few in `hot`. The unlit tubes are baked; the lit tube, a 1 px halo
-//!   (brighter on the bass) and a faint streak of reflection on the wet road are drawn each frame, so
-//!   a third of them can flicker at 1-2 Hz the way a failing neon does - reflection and all.
-//! - **The street.** A sidewalk with slanted seams, a bright far kerb, the asphalt, a centre line, the
-//!   near kerb, and every `CROSSING` units a zebra crossing of slanted stripes (Shibuya) - all
-//!   scrolling with the world.
-//! - **The car.** Our own low-poly coupe - no model, no badge: an octagonal body prism, a cabin
-//!   frustum with glass in the neon, a rear wing on struts, and four wheels, the front pair
-//!   counter-steering. It is projected and flat-shaded every frame at its real heading (faces culled
-//!   by their projected winding, parts drawn in painter's order, a 1 px dark outline under all of it),
-//!   so it TURNS on the road. Head and tail lamps sit on the front and rear faces; the headlights throw
-//!   a beam on the asphalt that sweeps as the car swings; a soft shadow sits under it.
-//! - **The drift.** The car weaves across the road (a critically damped spring toward one side or the
-//!   other, its reach growing with rms) while the body holds a slip angle into the turn - up to
-//!   `SLIP_MAX` at full rms - and FLICKS to the opposite lock on a bass kick (at most once every
-//!   `MIN_FLIP_MS`, and on its own after `MAX_FLIP_MS` without one). The flick is quick (`FLICK_MS`)
-//!   and the path follows slowly, so the body swings first and then the car arcs the other way, which
-//!   is what a drift transition looks like. Silence: the car straightens and cruises down the centre.
-//! - **Skid marks.** A fixed ring of each rear wheel's last `MARKS` road positions, scrolled with the
-//!   world and drawn as dark lines fading with age, laid only while the tyres slide.
-//! - **The meter - the tyre smoke.** A fixed ring of the rear axle's last 64 road positions, scrolled
-//!   with the world, so the trail follows the car's curving path and rises as it ages. Puff `k` (band
-//!   `k`, bass at the car) is a filled circle of radius `1 + level * 7` px (scaled on a short panel) in
-//!   white at `ghost` alpha with a 2-step rim: the smoke billows at the car on a bass-heavy passage and
-//!   thins to a wisp on treble. `FrameData.levels` arrive already smoothed by main's `Smoother`; the
-//!   puffs read them directly - no second attack/decay here.
+//! - **Sky (baked).** A night gradient toward `edge` with a wash of the neon at the horizon (the city's
+//!   light pollution) and a scatter of stars.
+//! - **Ridges.** Two mountain silhouettes on the horizon (a hazy far one, a black near one with a lit
+//!   rim), shifting sideways as the car corners - the far one at half the rate.
+//! - **The road.** Asphalt in alternating bands, red-and-white kerbs and a dashed centre line, all of
+//!   which stream toward the camera; fogged toward the horizon.
+//! - **The touge.** On the left the mountainside (dark slope, pine silhouettes); on the right a
+//!   guardrail on reflector posts and beyond it the valley, where the city's lights glitter - the
+//!   colourway's neon with a few warm and `hot` ones, some twinkling.
+//! - **The car.** A low-poly coupe modelled on the rear of an R34 Skyline (the user's ask) - no badge:
+//!   a squared-off tail with FOUR ROUND TAIL LAMPS (a `hot` ring with a darker centre, two each side),
+//!   a tall rear wing on struts, a cabin with dark glass that catches the neon, four wheels, the
+//!   fronts counter-steering.
+//!   Projected and flat-shaded each frame (faces culled by projected winding, parts in painter's
+//!   order, a 1 px dark outline under it all). Seen from behind: tail lamps and their glow, neon
+//!   underglow on the road under it, the headlights' beam on the road ahead.
+//! - **The drift.** It comes from the road. In a bend the car slides to the outside and holds a slip
+//!   angle into the corner (up to `SLIP_MAX` at full rms); through an S-bend it swaps lock, quickly
+//!   (`FLICK_MS`). A bass kick is a clutch kick: `KICK_SLIP` more angle that decays, and a pop of
+//!   flame from the exhaust. Silence: the car drives the bends on grip, nearly straight.
+//! - **The meter - the tyre smoke.** A fixed ring of the last 64 puffs, laid alternately at the two
+//!   rear tyres and then left in the air: they drag behind the car, rise and spread toward the outside
+//!   of the corner, so the smoke rolls back up toward the camera. Puff `k` (band `k`, bass at the
+//!   tyres) has a radius of `PUFF_R0 + level * PUFF_GAIN` world units, swelling with age, in white at
+//!   `ghost` alpha. `FrameData.levels` arrive already smoothed by main's `Smoother`; no second
+//!   attack/decay here.
 //! - **Steering gauge.** Top right, a radius-8 semicircle with a needle at the slip angle and
 //!   `ANGLE NN` (`[u8; 2]`). Dropped below 200 px wide.
 //!
 //! # The flourish - the drift
 //!
-//! 900 ms, fired only on a bass hit. The car whips across the full width in one sweep (out past the
-//! right edge and back in from the left to where the wander has it), pinned at full lock and spinning
-//! a full 360 on the way; the smoke goes to max radius tinted `hot`, so the sweep lays a wall of it
-//! across the panel; the neon flashes; and `DRIFT!` (2x `font3x5`, `hot`, 1 px dark outline) slams in
-//! centred in the sky for 400 ms (one frame at 3x, then 2x with a 1 px shake). No Japanese glyphs.
+//! 900 ms, fired only on a bass hit: the car spins a full 360 on the road, the smoke goes to full
+//! radius tinted `hot`, the reflectors and the valley flash, and `DRIFT!` (2x `font3x5`, `hot`, 1 px
+//! dark outline) slams in centred in the sky for 400 ms (one frame at 3x, then 2x with a 1 px shake).
 //!
 //! The panel is opaque (painted first) and the clip to the rounded rect runs last on every path.
-//! `draw` allocates nothing after the first frame at a size: the background canvas and the geometry
-//! are rebuilt only on a size (or colour) change, the trail and the marks are fixed rings, the car's
-//! polygons a fixed array on the stack, and the angle readout `[u8; 2]`.
+//! `draw` allocates nothing after the first frame at a size: the sky canvas and the layout are rebuilt
+//! only on a size (or colour) change; the road table, the row tables, the smoke ring and the car's
+//! polygons are fixed arrays.
 
 use std::f32::consts::TAU;
 
@@ -70,65 +63,72 @@ use crate::render::font3x5;
 use crate::render::{Family, FrameData};
 use crate::themes::Theme;
 
-// ---- the projection ----
+// ---- the camera ----
 
-/// Screen px per unit of depth, across (right) and up.
-const ZX: f32 = 0.60;
-const ZY: f32 = 0.55;
-/// Screen px per unit of height, up.
-const YY: f32 = 0.85;
-/// The light, in world (x, y, z): from above, a little to the right and toward the viewer.
-const LIGHT: (f32, f32, f32) = (0.35, 0.85, -0.40);
+/// The horizon's share of the interior height from the top.
+const HZ_FRAC: f32 = 0.40;
+/// Focal length in px on a full-height panel; camera height and the car's distance, world units.
+const FOCAL: f32 = 100.0;
+const CAM_H: f32 = 11.0;
+const CAR_Z: f32 = 46.0;
+/// Nothing nearer than this is projected.
+const NEAR: f32 = 2.0;
+/// How much of the road's heading at the car the camera turns to, and how much of the car's sideways
+/// position it follows.
+const ROT: f32 = 0.85;
+const CAM_FOLLOW: f32 = 0.75;
+/// The light, in world (x right, y up, z ahead): from above, a little left and behind.
+const LIGHT: (f32, f32, f32) = (-0.35, 0.85, -0.40);
 
-// ---- the street ----
+// ---- the road ----
 
-/// The road's share of the interior height on screen.
-const ROAD_FRAC: f32 = 0.38;
-/// Scrolling street features' periods, in world units at full scale, and a common multiple of them to
-/// wrap the scroll at so none of them jumps.
-const SEAM: f32 = 8.0;
-const DASH: f32 = 14.0;
-const DASH_ON: f32 = 6.0;
-const CROSSING: f32 = 300.0;
-const STRIPES: i32 = 6;
-const STRIPE_W: f32 = 2.5;
-const SCROLL_WRAP: f32 = 4200.0;
+/// The road's half width, its kerbs' width and the centre line's, world units.
+const HALF_W: f32 = 19.0;
+const KERB_W: f32 = 1.6;
+const LINE_W: f32 = 0.5;
+/// Lengths of the alternating asphalt bands and the centre dashes.
+const SEG: f32 = 6.0;
+const DASH: f32 = 10.0;
+/// The road table: depth `Z_FAR` in `DZ` steps.
+const Z_FAR: f32 = 320.0;
+const DZ: f32 = 2.0;
+const ROAD_N: usize = 161;
+/// The course repeats every `COURSE` units (a multiple of every roadside period, so nothing jumps
+/// at the wrap); its curvature reaches `C_MAX` per unit in the tightest bends.
+const COURSE: f32 = 7200.0;
+const C_MAX: f32 = 0.012;
+/// Roadside: reflector posts, the guardrail's height, pines.
+const POST_GAP: f32 = 12.0;
+const POST_H: f32 = 2.2;
+const RAIL_H: f32 = 1.5;
+const TREE_GAP: f32 = 18.0;
+/// Fog: full haze at this depth.
+const FOG_Z: f32 = 520.0;
+/// Per-row tables are this long (taller panels clamp).
+const ROWS: usize = 256;
+/// Ridges: a periodic height table this wide; city lights in a virtual strip twice that.
+const RIDGE_W: usize = 1024;
+const LIGHTS: usize = 220;
 
-// ---- the meter and the marks ----
+// ---- the motion ----
 
-/// The trail: one puff per band, and the ring of past positions they sit on.
-const TRAIL: usize = NUM_BANDS;
-/// Puff radius `1 + level * PUFF_GAIN` px on a full-height panel.
-const PUFF_GAIN: f32 = 7.0;
-/// Skid marks: this many past positions per rear wheel.
-const MARKS: usize = 120;
-/// Marks start at this slip (degrees) and are at full strength this far past it.
-const MARK_FROM: f32 = 6.0;
-const MARK_SPAN: f32 = 22.0;
-
-// ---- the car's motion ----
-
-/// The car's centre wanders across the screen between 32 % and 68 % of the width, one swing every
-/// `SWING_S` at full rms.
-const SWING_FRAC: f32 = 0.18;
-const SWING_S: f32 = 9.0;
+/// Speed, units per second, plus more with rms.
+const V_BASE: f32 = 60.0;
+const V_RMS: f32 = 70.0;
 /// How fast the motion's amplitude follows rms (a motion ease, not a level smoother).
-const SWING_EASE_MS: f32 = 600.0;
-/// The world scrolls at this fraction of the interior width per second, plus more with rms.
-const SCROLL_BASE: f32 = 0.20;
-const SCROLL_RMS: f32 = 0.16;
-/// The slip angle at full rms, degrees, and how fast the body flicks to a new one.
-const SLIP_MAX: f32 = 40.0;
-const FLICK_MS: f32 = 140.0;
-/// The lateral spring (rad/s) and how far either side of the road's centre it reaches at full rms,
-/// as a fraction of the road's depth.
-const LAT_OMEGA: f32 = 5.0;
-const Z_SWING: f32 = 0.28;
-/// A bass kick flicks the car to the other lock at most this often; with no kick it flicks anyway
-/// after `MAX_FLIP_MS`. Below `FLIP_AMP` of motion it does not flick at all.
-const MIN_FLIP_MS: f32 = 650.0;
-const MAX_FLIP_MS: f32 = 2200.0;
-const FLIP_AMP: f32 = 0.08;
+const AMP_EASE_MS: f32 = 600.0;
+/// The slip angle at full rms in the tightest bend, degrees, and how fast the body swaps lock.
+const SLIP_MAX: f32 = 38.0;
+const FLICK_MS: f32 = 160.0;
+/// The slide toward the outside of a bend, world units at full rms, and its spring (rad/s).
+const LAT_SLIDE: f32 = 6.0;
+const LAT_OMEGA: f32 = 4.0;
+/// A clutch kick: extra slip and how fast it decays; the exhaust pop's length.
+const KICK_SLIP: f32 = 14.0;
+const KICK_DECAY_MS: f32 = 300.0;
+const FLAME_MS: f32 = 90.0;
+/// Below this much motion there is no clutch kick.
+const KICK_AMP: f32 = 0.08;
 /// A kick: an onset (the `bling` net) with the low bands over this.
 const KICK_BASS: f32 = 0.45;
 const ONSET_RATIO: f32 = 2.8;
@@ -136,44 +136,61 @@ const ONSET_REFRACTORY_MS: f32 = 200.0;
 /// The front wheels counter-steer up to this, degrees.
 const COUNTER_MAX: f32 = 30.0;
 
-// ---- the car's model: `u` forward, `v` to its left, `y` up, world units at full scale ----
+// ---- the smoke ----
+
+/// The trail: one puff per band.
+const TRAIL: usize = NUM_BANDS;
+/// Puff radius `PUFF_R0 + level * PUFF_GAIN` world units, swelling by `PUFF_GROW` over its life.
+const PUFF_R0: f32 = 0.35;
+const PUFF_GAIN: f32 = 2.0;
+const PUFF_GROW: f32 = 0.8;
+/// A puff moves at this fraction of the car's speed (so it falls back toward the camera), rises and
+/// spreads to the outside of the corner, units per second; no puff is drawn bigger than this, px.
+const DRAG: f32 = 0.6;
+const RISE: f32 = 8.0;
+const SPREAD: f32 = 5.0;
+const PUFF_MAX_PX: f32 = 12.0;
+
+// ---- the car's model: `u` forward, `v` to its left, `y` up, world units ----
 
 /// The body: an octagonal prism, nose and tail chamfered, counter-clockwise seen from above. Edge 0
 /// is the front face, edge 4 the rear.
 const BODY: [(f32, f32); 8] =
-    [(11.0, -3.6), (11.0, 3.6), (9.2, 5.0), (-9.6, 5.0), (-11.0, 4.0), (-11.0, -4.0), (-9.6, -5.0), (9.2, -5.0)];
+    [(11.0, -3.6), (11.0, 3.6), (9.2, 5.0), (-10.4, 5.0), (-11.0, 4.5), (-11.0, -4.5), (-10.4, -5.0), (9.2, -5.0)];
 const BODY_Y: (f32, f32) = (1.2, 4.0);
 /// The cabin: a frustum from the body's top to the roof; its faces are front, left, rear, right.
 const CABIN_LO: [(f32, f32); 4] = [(4.0, -4.3), (4.0, 4.3), (-6.6, 4.3), (-6.6, -4.3)];
 const CABIN_HI: [(f32, f32); 4] = [(0.4, -3.5), (0.4, 3.5), (-4.6, 3.5), (-4.6, -3.5)];
 const CABIN_Y: (f32, f32) = (4.0, 6.9);
 /// The rear wing: a thin plate on two struts.
-const WING: [(f32, f32); 4] = [(-9.4, -5.0), (-9.4, 5.0), (-11.6, 5.0), (-11.6, -5.0)];
-const WING_Y: (f32, f32) = (6.0, 6.6);
+const WING: [(f32, f32); 4] = [(-9.6, -5.2), (-9.6, 5.2), (-11.8, 5.2), (-11.8, -5.2)];
+const WING_Y: (f32, f32) = (6.4, 7.0);
 const STRUT: (f32, f32) = (-10.5, 2.8);
 /// Wheels: the axles, the track's half width, and a wheel's half length, half width and height.
 const AXLE_F: f32 = 7.2;
 const AXLE_R: f32 = -7.0;
 const TRACK: f32 = 4.4;
 const WHEEL: (f32, f32, f32) = (2.3, 0.9, 3.4);
-/// Lamps: each one's `v` span out from the centre line and its `y` span, on the end faces.
+/// Headlamps: each one's `v` span out from the centre line and its `y` span, on the front face.
 const LAMP_V: (f32, f32) = (1.7, 3.5);
 const LAMP_Y: (f32, f32) = (2.3, 3.7);
-/// A turned car's reach from its centre on screen, for the sweep's off-screen margin.
-const REACH: f32 = 16.0;
-/// The car is drawn this much larger than the street's scale, so it reads at 1:1 on the taskbar.
-const CAR_SCALE: f32 = 1.2;
+/// The R34-style tail: four round lamps on the rear face, two each side - centres out from the
+/// centre line, their height, the ring's radius and the darker centre's.
+const TAIL_V: [f32; 2] = [1.75, 3.45];
+const TAIL_Y: f32 = 3.0;
+const TAIL_R: f32 = 0.82;
+const TAIL_CORE: f32 = 0.42;
+/// The exhaust, on the rear face.
+const EXHAUST: (f32, f32, f32) = (-11.2, -2.6, 1.6);
 
-// ---- the gauge, the signs, the drift ----
+// ---- the gauge, the drift ----
 
 /// Below this width the steering gauge is dropped.
 const GAUGE_MIN_W: i32 = 200;
 const GAUGE_R: i32 = 8;
-/// Neon: a flickering sign is off for a stutter each cycle, at 1-2 Hz.
-const SIGNS: usize = 40;
-/// The drift: total length, the sweep's share, `DRIFT!`'s window, the sign flash.
+/// The drift: total length, the spin's share, `DRIFT!`'s window, the flash.
 const DRIFT_MS: f32 = 900.0;
-const SWEEP_MS: f32 = 720.0;
+const SPIN_MS: f32 = 720.0;
 const TEXT_FROM_MS: f32 = 120.0;
 const TEXT_MS: f32 = 400.0;
 const FLASH_MS: f32 = 600.0;
@@ -185,55 +202,37 @@ const WHITE: Rgba = Rgba { r: 255, g: 255, b: 255, a: 255 };
 const BLACK: Rgba = Rgba { r: 0, g: 0, b: 0, a: 255 };
 const TYRE: Rgba = Rgba { r: 0x0a, g: 0x0a, b: 0x0c, a: 255 };
 const TYRE_HI: Rgba = Rgba { r: 0x34, g: 0x34, b: 0x3a, a: 255 };
-const WARM_WINDOW: Rgba = Rgba { r: 0xff, g: 0xc8, b: 0x7a, a: 255 };
+const WARM: Rgba = Rgba { r: 0xff, g: 0xc8, b: 0x7a, a: 255 };
+const ASPHALT: Rgba = Rgba { r: 0x4a, g: 0x4a, b: 0x52, a: 255 };
+const KERB_RED: Rgba = Rgba { r: 0xc8, g: 0x1e, b: 0x2a, a: 255 };
+const FLAME: Rgba = Rgba { r: 0xff, g: 0x8a, b: 0x1e, a: 255 };
 /// `DRIFT!`'s outline and the car's.
 const OUTLINE: Rgba = Rgba { r: 0x05, g: 0x03, b: 0x08, a: 255 };
 
-/// A building block in the skyline: its front face's left column, width and height.
+/// A city light in the valley: a column in the virtual strip, a row, its colour, and its twinkle.
 #[derive(Clone, Copy, Default)]
-struct Block {
-    x: i32,
-    w: i32,
-    h: i32,
-}
-
-/// A neon sign: a bar, whether it flickers and at what rate/phase, and whether it is in `hot`.
-#[derive(Clone, Copy, Default)]
-struct Sign {
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-    flicker: bool,
+struct Light {
+    vx: f32,
+    row: i32,
+    kind: u8,
+    twinkle: bool,
     rate: f32,
     phase: f32,
-    hot: bool,
 }
 
 /// Everything positional, for a panel size. Shared by `draw`, the bake and the tests.
 #[derive(Clone, Copy)]
 struct Layout {
-    /// World scale: 1 on a full-height panel.
+    /// World scale: 1 on a full-height panel; the focal length; the horizon line and the first
+    /// ground row.
     s: f32,
-    /// The screen row of depth 0 (the near kerb), as f32 so the projection is sub-pixel.
-    y0: f32,
-    /// The road's and the far sidewalk's depth, world units.
-    road_d: f32,
-    walk_d: f32,
-    /// The far kerb's row, and the row the buildings stand on (the back of the sidewalk).
-    kerb: i32,
-    base: i32,
-    /// A building's depth on screen: its roof's rows and its side face's columns.
-    roof_dy: f32,
-    roof_dx: f32,
-    far: [Block; 64],
-    far_n: usize,
-    near: [Block; 64],
-    near_n: usize,
-    signs: [Sign; SIGNS],
-    signs_n: usize,
-    /// How far the trail rises over its length, px.
-    rise: f32,
+    f: f32,
+    hz: f32,
+    hz_row: i32,
+    ridge_far: [u8; RIDGE_W],
+    ridge_near: [u8; RIDGE_W],
+    lights: [Light; LIGHTS],
+    lights_n: usize,
     show_gauge: bool,
     gauge: (i32, i32),
     angle_text: (i32, i32),
@@ -245,20 +244,13 @@ impl Default for Layout {
     fn default() -> Self {
         Layout {
             s: 1.0,
-            y0: 0.0,
-            road_d: 1.0,
-            walk_d: 1.0,
-            kerb: 0,
-            base: 0,
-            roof_dy: 0.0,
-            roof_dx: 0.0,
-            far: [Block::default(); 64],
-            far_n: 0,
-            near: [Block::default(); 64],
-            near_n: 0,
-            signs: [Sign::default(); SIGNS],
-            signs_n: 0,
-            rise: 0.0,
+            f: FOCAL,
+            hz: 0.0,
+            hz_row: 0,
+            ridge_far: [0; RIDGE_W],
+            ridge_near: [0; RIDGE_W],
+            lights: [Light::default(); LIGHTS],
+            lights_n: 0,
             show_gauge: false,
             gauge: (0, 0),
             angle_text: (0, 0),
@@ -286,83 +278,68 @@ fn unit(s: &mut u64) -> f32 {
     (splitmix(s) >> 40) as f32 / (1u64 << 24) as f32
 }
 
+/// A uniform 0..1 hashed from an integer, for roadside objects keyed by their slot on the course.
+fn hash01(k: i64) -> f32 {
+    let mut s = (k as u64).wrapping_mul(0x2545_F491_4F6C_DD1D) ^ 0x1234_5678;
+    unit(&mut s)
+}
+
+/// A periodic ridge: a few sines with hashed phases, scaled into `lo..hi` of `span` rows.
+fn ridge(out: &mut [u8; RIDGE_W], seed: u64, span: f32, lo: f32, hi: f32) {
+    let mut s = seed;
+    let waves: [(f32, f32, f32); 5] = [
+        (3.0, 1.0, unit(&mut s)),
+        (7.0, 0.55, unit(&mut s)),
+        (13.0, 0.3, unit(&mut s)),
+        (29.0, 0.14, unit(&mut s)),
+        (61.0, 0.06, unit(&mut s)),
+    ];
+    let total: f32 = waves.iter().map(|w| w.1).sum();
+    for (i, h) in out.iter_mut().enumerate() {
+        let x = i as f32 / RIDGE_W as f32;
+        let mut v = 0.0;
+        for &(k, a, ph) in &waves {
+            v += a * (TAU * (k * x + ph)).sin();
+        }
+        let n = (v / total) * 0.5 + 0.5;
+        *h = (span * (lo + (hi - lo) * n)).round().clamp(0.0, 255.0) as u8;
+    }
+}
+
 fn layout(w: i32, h: i32) -> Layout {
     let (ix0, iy0, ix1, iy1) = (3, 4, w - 3, h - 4);
     let (iw, ih) = (ix1 - ix0, iy1 - iy0);
     let mut l = Layout::default();
-    let small = h < 48;
     l.s = (ih as f32 / 52.0).clamp(0.6, 1.0);
-    // The street, from the bottom up: a 2-row near kerb, the road, the sidewalk.
-    l.y0 = (iy1 - 2) as f32;
-    let road_px = (ih as f32 * ROAD_FRAC).round();
-    let walk_px = if small { 2.0 } else { 3.0 };
-    l.road_d = road_px / ZY;
-    l.walk_d = walk_px / ZY;
-    l.kerb = (l.y0 - road_px).round() as i32;
-    l.base = (l.y0 - road_px - walk_px).round() as i32;
-    l.roof_dy = if small { 2.0 } else { 3.0 };
-    l.roof_dx = l.roof_dy / ZY * ZX;
-    let sky_h = (l.base - iy0).max(1);
-    l.rise = ih as f32 * 0.24;
+    l.f = FOCAL * l.s;
+    l.hz_row = iy0 + (ih as f32 * HZ_FRAC).round() as i32;
+    l.hz = l.hz_row as f32;
+    let sky_h = (l.hz_row - iy0).max(1) as f32;
+    ridge(&mut l.ridge_far, 0x7261_6467_6566_6172, sky_h, 0.18, 0.62);
+    ridge(&mut l.ridge_near, 0x6e65_6172_7269_6467, sky_h, 0.04, 0.34);
 
-    // ---- the skyline: a constant seed, so the city is the same every run ----
-    let mut s: u64 = 0x5eed_d71f_7000_0001;
-    // Far: tall hazy towers, packed edge to edge.
-    let mut x = ix0 - 6;
-    while x < ix1 && l.far_n < l.far.len() {
-        let bw = 5 + (splitmix(&mut s) % 9) as i32;
-        let bh = (sky_h as f32 * (0.40 + 0.38 * unit(&mut s))).round() as i32;
-        l.far[l.far_n] = Block { x, w: bw, h: bh };
-        l.far_n += 1;
-        x += bw;
-    }
-    // Near: lower black blocks, with the odd gap to the far row behind.
-    let mut x = ix0 - 4;
-    while x < ix1 && l.near_n < l.near.len() {
-        let bw = 7 + (splitmix(&mut s) % 12) as i32;
-        let bh = (sky_h as f32 * (0.20 + 0.36 * unit(&mut s))).round() as i32;
-        l.near[l.near_n] = Block { x, w: bw, h: bh };
-        l.near_n += 1;
-        x += bw + if splitmix(&mut s).is_multiple_of(4) { 2 + (splitmix(&mut s) % 4) as i32 } else { 0 };
-    }
-    // Signs on the near blocks: a vertical blade down one side of the front, or a bar on the roof.
-    for i in 0..l.near_n {
-        if l.signs_n >= SIGNS {
-            break;
-        }
-        let b = l.near[i];
+    // The valley's lights: denser toward the horizon (the far city).
+    let ground = (iy1 - l.hz_row).max(1) as f32;
+    let mut s: u64 = 0x5eed_d71f_7000_0002;
+    for i in 0..LIGHTS {
         let r = unit(&mut s);
-        if r > 0.62 || b.h < 6 {
-            continue;
-        }
-        let top = l.base - b.h;
-        let (sx, sy, sw, sh) = if r < 0.34 {
-            // A blade: 2 px wide, 3-6 tall, hanging off one side just under the roof.
-            let tall = 3 + (splitmix(&mut s) % 4) as i32;
-            let tall = tall.min(b.h - 3).max(2);
-            let side = if splitmix(&mut s).is_multiple_of(2) { b.x + 1 } else { b.x + b.w - 3 };
-            (side, top + 2, 2, tall)
-        } else {
-            // A roof bar: 2 tall, 3-8 wide, standing on the roof's middle (up and right of the front).
-            let bw = (3 + (splitmix(&mut s) % 6) as i32).min(b.w - 2).max(2);
-            let back = (l.roof_dy * 0.5).round() as i32;
-            let shift = (l.roof_dx * 0.5).round() as i32;
-            (b.x + 1 + shift + (splitmix(&mut s) % (b.w - bw - 1).max(1) as u64) as i32, top - back - 2, bw, 2)
-        };
-        if sy < iy0 + 1 {
-            continue;
-        }
-        l.signs[l.signs_n] = Sign {
-            x: sx,
-            y: sy,
-            w: sw,
-            h: sh,
-            flicker: splitmix(&mut s).is_multiple_of(3),
-            rate: 1.0 + unit(&mut s),
+        let row = l.hz_row + 1 + (r * r * ground * 0.32) as i32;
+        let k = unit(&mut s);
+        l.lights[i] = Light {
+            vx: unit(&mut s) * 2.0 * RIDGE_W as f32,
+            row,
+            kind: if k < 0.68 {
+                0
+            } else if k < 0.9 {
+                1
+            } else {
+                2
+            },
+            twinkle: splitmix(&mut s).is_multiple_of(3),
+            rate: 0.7 + unit(&mut s) * 1.3,
             phase: unit(&mut s),
-            hot: splitmix(&mut s).is_multiple_of(4),
         };
-        l.signs_n += 1;
+        l.lights_n += 1;
     }
 
     // ---- the gauge (top right) and its readout ----
@@ -372,13 +349,42 @@ fn layout(w: i32, h: i32) -> Layout {
 
     // ---- DRIFT!, centred in the sky ----
     let tw = text_w("DRIFT!", 2);
-    l.drift_text = (ix0 + (iw - tw) / 2, iy0 + (sky_h - 10) / 2);
+    l.drift_text = (ix0 + (iw - tw) / 2, iy0 + (sky_h as i32 - 10) / 2);
     l
 }
 
-/// World (x, y, z) to screen, with depth 0 on row `y0`.
-fn project(x: f32, y: f32, z: f32, y0: f32) -> (f32, f32) {
-    (x + z * ZX, y0 - z * ZY - y * YY)
+/// The course's curvature at distance `s` (wrapped): bends that alternate left and right with short
+/// straights between, some tighter than others. Positive bends to the right.
+fn curve(s: f32) -> f32 {
+    let p = TAU * s.rem_euclid(COURSE) / COURSE;
+    let shape = 1.5 * (8.0 * p).sin() * (0.75 + 0.25 * (3.0 * p).sin()) + 0.3 * (5.0 * p).sin();
+    C_MAX * shape.clamp(-1.0, 1.0)
+}
+
+/// A twinkling light is off for a stutter each cycle.
+fn light_on(l: &Light, e: f32) -> bool {
+    if !l.twinkle {
+        return true;
+    }
+    let f = (e * l.rate + l.phase).fract();
+    !(0.0..0.18).contains(&f)
+}
+
+/// The perspective camera: screen centre column, horizon line, focal length, and its sideways
+/// position in the road's frame.
+#[derive(Clone, Copy)]
+struct Cam {
+    cx: f32,
+    hz: f32,
+    f: f32,
+    x: f32,
+}
+
+impl Cam {
+    fn project(&self, x: f32, y: f32, z: f32) -> (f32, f32) {
+        let z = z.max(NEAR);
+        (self.cx + (x - self.x) * self.f / z, self.hz + (CAM_H - y) * self.f / z)
+    }
 }
 
 /// Fills a convex polygon given in float pixel coordinates, offset by `off`: a pixel is in when its
@@ -422,23 +428,16 @@ fn fill_convex(c: &mut Canvas, pts: &[(f32, f32)], off: (f32, f32), min_row: i32
     }
 }
 
-/// A 1 px line from `a` to `b` with `a` itself left out, so a chain of segments paints each joint
-/// once. Segments longer than 64 px are skipped: on a chain that only means a jump (a wrap).
-fn trace(c: &mut Canvas, a: (f32, f32), b: (f32, f32), col: Rgba) {
-    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
-    let n = dx.abs().max(dy.abs()).round();
-    if !(1.0..=64.0).contains(&n) {
-        return;
-    }
-    let n = n as i32;
-    for k in 1..=n {
-        let t = k as f32 / n as f32;
-        c.fill_rect((a.0 + dx * t).floor() as i32, (a.1 + dy * t).floor() as i32, 1, 1, col);
+/// A horizontal span `x0..x1` (float, rounded) on row `y`.
+fn span(c: &mut Canvas, x0: f32, x1: f32, y: i32, col: Rgba) {
+    let (a, b) = (x0.round() as i32, x1.round() as i32);
+    if b > a {
+        c.fill_rect(a, y, b - a, 1, col);
     }
 }
 
-/// Twice the signed area of a screen polygon (y down). Negative is counter-clockwise on screen, which
-/// is what an outward-wound face turned toward the viewer projects to.
+/// Twice the signed area of a screen polygon (y down). Negative is what an outward-wound face turned
+/// toward the viewer projects to.
 fn area2(pts: &[(f32, f32)]) -> f32 {
     let n = pts.len();
     let mut a = 0.0;
@@ -450,39 +449,37 @@ fn area2(pts: &[(f32, f32)]) -> f32 {
 }
 
 /// Where a part of the car is and which way it faces: a centre on the road (world x, z), a heading
-/// (`cs`, `sn` of the yaw, counter-clockwise from +x toward +z), the world scale and the projection's
-/// depth-0 row.
+/// (`cs`, `sn` of the yaw from straight ahead, positive toward +x), and the camera.
 #[derive(Clone, Copy)]
 struct Pose {
     x: f32,
     z: f32,
     cs: f32,
     sn: f32,
-    s: f32,
-    y0: f32,
+    cam: Cam,
 }
 
 impl Pose {
-    fn new(x: f32, z: f32, yaw: f32, s: f32, y0: f32) -> Self {
-        Pose { x, z, cs: yaw.cos(), sn: yaw.sin(), s, y0 }
+    fn new(x: f32, z: f32, yaw: f32, cam: Cam) -> Self {
+        Pose { x, z, cs: yaw.cos(), sn: yaw.sin(), cam }
     }
-    /// Local (u, v) on the ground to world (x, z).
+    /// Local (u, v) on the ground to world (x, z): forward is (sn, cs), left is (-cs, sn).
     fn at(&self, u: f32, v: f32) -> (f32, f32) {
-        (self.x + self.s * (u * self.cs - v * self.sn), self.z + self.s * (u * self.sn + v * self.cs))
+        (self.x + u * self.sn - v * self.cs, self.z + u * self.cs + v * self.sn)
     }
     fn screen(&self, p: (f32, f32, f32)) -> (f32, f32) {
         let (x, z) = self.at(p.0, p.1);
-        project(x, self.s * p.2, z, self.y0)
+        self.cam.project(x, p.2, z)
     }
     /// A local direction (u, v, y) to world (x, y, z).
     fn turn(&self, n: (f32, f32, f32)) -> (f32, f32, f32) {
-        (n.0 * self.cs - n.1 * self.sn, n.2, n.0 * self.sn + n.1 * self.cs)
+        (n.0 * self.sn - n.1 * self.cs, n.2, n.0 * self.cs + n.1 * self.sn)
     }
     /// The pose of a part at local (u, v), turned `dyaw` further.
     fn child(&self, u: f32, v: f32, dyaw: f32) -> Pose {
         let (x, z) = self.at(u, v);
         let (c, s) = (dyaw.cos(), dyaw.sin());
-        Pose { x, z, cs: self.cs * c - self.sn * s, sn: self.sn * c + self.cs * s, s: self.s, y0: self.y0 }
+        Pose { x, z, cs: self.cs * c - self.sn * s, sn: self.sn * c + self.cs * s, cam: self.cam }
     }
 }
 
@@ -495,6 +492,7 @@ enum Mat {
     Rim,
     Head,
     Tail,
+    TailCore,
     Carbon,
 }
 
@@ -507,6 +505,7 @@ struct Paint {
     rim: Rgba,
     head: Rgba,
     tail: Rgba,
+    tail_core: Rgba,
     carbon_lo: Rgba,
     carbon_hi: Rgba,
 }
@@ -524,6 +523,7 @@ impl Paint {
             rim: Rgba::lerp_linear(lit, BLACK, 0.35),
             head: Rgba::lerp_linear(lit, WHITE, 0.75),
             tail: Rgba::from_hex(&t.hot, 1.0),
+            tail_core: Rgba::lerp_linear(Rgba::from_hex(&t.hot, 1.0), BLACK, 0.55),
             carbon_lo: OUTLINE,
             carbon_hi: Rgba::lerp_linear(OUTLINE, lit, 0.35),
         }
@@ -536,6 +536,7 @@ impl Paint {
             Mat::Rim => self.rim,
             Mat::Head => self.head,
             Mat::Tail => self.tail,
+            Mat::TailCore => self.tail_core,
             Mat::Carbon => Rgba::lerp_linear(self.carbon_lo, self.carbon_hi, shade),
         }
     }
@@ -673,6 +674,27 @@ fn wing(out: &mut Shapes, pose: &Pose, paint: &Paint) {
     solid(out, pose, &WING, &WING, WING_Y, Mat::Carbon, &[Mat::Carbon], paint);
 }
 
+/// The four tail lamps' centres across the rear face.
+fn tail_lamps() -> [f32; 4] {
+    [TAIL_V[1], TAIL_V[0], -TAIL_V[0], -TAIL_V[1]]
+}
+
+/// A round lamp on the rear face (an octagon), wound the same way as the face so it culls with it.
+fn lamp_disc(u: f32, vc: f32, r: f32) -> [(f32, f32, f32); 8] {
+    let mut p = [(0.0f32, 0.0f32, 0.0f32); 8];
+    for (k, q) in p.iter_mut().enumerate() {
+        let a = -(k as f32) * TAU / 8.0;
+        *q = (u, vc + r * a.cos(), TAIL_Y + r * a.sin());
+    }
+    p
+}
+
+/// The rear face's four corners.
+fn tail_face() -> Quad {
+    let (r0, r1) = (BODY[4], BODY[5]);
+    [(r0.0, r0.1, BODY_Y.0), (r1.0, r1.1, BODY_Y.0), (r1.0, r1.1, BODY_Y.1), (r0.0, r0.1, BODY_Y.1)]
+}
+
 /// The car's visible polygons in painter's order: the wheels on the far side, the body, its lamps,
 /// the wing and the cabin (the wing after the cabin when the tail faces the viewer), the near wheels.
 fn car_shapes(pose: &Pose, steer: f32, paint: &Paint) -> Shapes {
@@ -693,13 +715,12 @@ fn car_shapes(pose: &Pose, steer: f32, paint: &Paint) -> Shapes {
     let (uf, ur) = (BODY[0].0 + 0.02, BODY[4].0 - 0.02);
     for (lo, hi) in [(va, vb), (-vb, -va)] {
         face(&mut out, pose, &[(uf, lo, ya), (uf, hi, ya), (uf, hi, yb), (uf, lo, yb)], Mat::Head, paint);
-        face(&mut out, pose, &[(ur, hi, ya), (ur, lo, ya), (ur, lo, yb), (ur, hi, yb)], Mat::Tail, paint);
     }
-    let (r0, r1) = (BODY[4], BODY[5]);
-    let tail_seen = faces_viewer(
-        pose,
-        &[(r0.0, r0.1, BODY_Y.0), (r1.0, r1.1, BODY_Y.0), (r1.0, r1.1, BODY_Y.1), (r0.0, r0.1, BODY_Y.1)],
-    );
+    for vc in tail_lamps() {
+        face(&mut out, pose, &lamp_disc(ur, vc, TAIL_R), Mat::Tail, paint);
+        face(&mut out, pose, &lamp_disc(ur - 0.01, vc, TAIL_CORE), Mat::TailCore, paint);
+    }
+    let tail_seen = faces_viewer(pose, &tail_face());
     if !tail_seen {
         wing(&mut out, pose, paint);
     }
@@ -724,26 +745,36 @@ fn car_shapes(pose: &Pose, steer: f32, paint: &Paint) -> Shapes {
     out
 }
 
-/// One smoke position in the ring: on the road (world x, z), and a small fixed jitter drawn when it
-/// was laid.
+/// Draws the car's shapes: a 1 px dark outline under all of them, then the faces and struts.
+fn draw_shapes(c: &mut Canvas, sh: &Shapes) {
+    let list = &sh.s[..sh.n];
+    for s in list.iter().filter(|s| s.n >= 3) {
+        for off in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0)] {
+            fill_convex(c, &s.pts[..s.n], off, 0, OUTLINE);
+        }
+    }
+    for s in list {
+        if s.n == 2 {
+            let (a, b) = (s.pts[0], s.pts[1]);
+            c.line(a.0.floor() as i32, a.1.floor() as i32, b.0.floor() as i32, b.1.floor() as i32, s.col);
+        } else {
+            fill_convex(c, &s.pts[..s.n], (0.0, 0.0), 0, s.col);
+        }
+    }
+}
+
+/// One puff of smoke: depth ahead of the camera, sideways offset from the road's centre, height, its
+/// sideways drift, and a small fixed radius jitter.
 #[derive(Clone, Copy, Default)]
 struct Puff {
-    x: f32,
     z: f32,
-    jy: f32,
-    /// A radius jitter (-1, 0, +1 px) so the plume billows rather than drawing a smooth tube.
-    jr: i32,
+    d: f32,
+    y: f32,
+    vd: f32,
+    jr: f32,
 }
 
-/// One skid-mark position: on the road, and how hard the tyre was sliding (0 = no mark).
-#[derive(Clone, Copy, Default)]
-struct Mark {
-    x: f32,
-    z: f32,
-    a: f32,
-}
-
-/// Which layers draw - a test hook, so the car, the smoke and the marks can be measured on their own.
+/// Which layers draw - a test hook, so the car and the smoke can be measured on their own.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Only {
     All,
@@ -755,47 +786,45 @@ pub struct Drift {
     /// Fires the drift on a rare bass hit. `pub(crate)` so the tests can force it.
     pub(crate) flourish: Trigger,
     hit: Envelope,
-    /// Finds the kicks the car flicks on.
+    /// Finds the kicks.
     onset: Flux,
     elapsed_s: f32,
-    /// The wander's phase and the motion's eased amplitude (0..1).
-    phase: f32,
+    /// The motion's eased amplitude (0..1).
     amp: f32,
-    /// The car's centre: x in camera space (the world scrolls past it), z across the road; and its
-    /// lateral speed, units per second.
-    car_x: f32,
-    car_z: f32,
-    vz: f32,
-    /// Which way the car is turning (+1 toward the far kerb), and how long since it last flicked.
-    side: f32,
-    since_flip_ms: f32,
-    /// The body's slip angle against its path (degrees, signed) and its heading (radians).
+    /// The camera's distance along the course (wrapped) and its sideways position.
+    s_cam: f32,
+    cam_x: f32,
+    /// The car's slide from the road's centre and its speed, units and units per second.
+    lat: f32,
+    vlat: f32,
+    /// The body's slip angle against the road (degrees, signed), the clutch kick's share of it, and
+    /// how hard the road at the car is bending (-1..1).
     slip: f32,
-    yaw: f32,
+    kick: f32,
+    bend: f32,
+    /// The exhaust pop's envelope (0..1).
+    flame: f32,
     /// The drift's spin (radians) and its direction.
     spin: f32,
     spin_dir: f32,
-    /// Where the car was when the sweep began.
-    sweep_from: f32,
-    /// The world's scroll, wrapped at `SCROLL_WRAP` (scaled).
-    dist: f32,
+    /// The ridges' sideways shift, px.
+    bg_off: f32,
+    /// The road's centre at depth `i * DZ` in the camera's frame.
+    road: [f32; ROAD_N],
+    /// Per ground row: depth, the road's centre column and half width, px.
+    row_z: [f32; ROWS],
+    row_cx: [f32; ROWS],
+    row_hw: [f32; ROWS],
     ring: [Puff; TRAIL],
     head: usize,
-    marks: [[Mark; MARKS]; 2],
-    mark_head: usize,
     ring_live: bool,
     layout: Layout,
     layout_dim: (i32, i32),
-    /// The baked scene. Keyed on size and colours.
+    /// The baked sky. Keyed on size and colours.
     bg: Canvas,
     bg_key: u64,
     rng: u64,
     only: Only,
-    /// Flicks so far, and how many of them landed on a kick - for the tests.
-    #[cfg(test)]
-    flips: u32,
-    #[cfg(test)]
-    kick_flips: u32,
 }
 
 impl Default for Drift {
@@ -805,23 +834,24 @@ impl Default for Drift {
             hit: Default::default(),
             onset: Default::default(),
             elapsed_s: 0.0,
-            phase: 0.0,
             amp: 0.0,
-            car_x: 0.0,
-            car_z: f32::NAN,
-            vz: 0.0,
-            side: 1.0,
-            since_flip_ms: 0.0,
+            s_cam: 0.0,
+            cam_x: 0.0,
+            lat: 0.0,
+            vlat: 0.0,
             slip: 0.0,
-            yaw: 0.0,
+            kick: 0.0,
+            bend: 0.0,
+            flame: 0.0,
             spin: 0.0,
             spin_dir: 1.0,
-            sweep_from: 0.0,
-            dist: 0.0,
+            bg_off: 0.0,
+            road: [0.0; ROAD_N],
+            row_z: [0.0; ROWS],
+            row_cx: [0.0; ROWS],
+            row_hw: [0.0; ROWS],
             ring: [Puff::default(); TRAIL],
             head: 0,
-            marks: [[Mark::default(); MARKS]; 2],
-            mark_head: 0,
             ring_live: false,
             layout: Layout::default(),
             layout_dim: (0, 0),
@@ -829,10 +859,6 @@ impl Default for Drift {
             bg_key: 0,
             rng: 0xbb67_ae85_84ca_a73b,
             only: Only::All,
-            #[cfg(test)]
-            flips: 0,
-            #[cfg(test)]
-            kick_flips: 0,
         }
     }
 }
@@ -856,7 +882,7 @@ fn neon_of(t: &Theme) -> Rgba {
     Rgba::from_hex(hex, 1.0)
 }
 
-/// FNV-1a over the strings/values the baked background depends on. No allocation.
+/// FNV-1a over the strings/values the baked sky depends on. No allocation.
 fn colour_key(t: &Theme, w: i32, h: i32) -> u64 {
     let mut k: u64 = 0xcbf2_9ce4_8422_2325;
     let mut eat = |b: u8| {
@@ -874,13 +900,6 @@ fn colour_key(t: &Theme, w: i32, h: i32) -> u64 {
         eat(b);
     }
     k | 1
-}
-
-/// The asphalt, the sidewalk and the near kerb's colours for a colourway.
-fn street_colours(t: &Theme) -> (Rgba, Rgba) {
-    let panel = Rgba::from_hex(&t.panel, 1.0);
-    let edge = Rgba::from_hex(&t.edge, 1.0);
-    (Rgba::lerp_linear(panel, edge, 0.62), Rgba::lerp_linear(panel, edge, 0.95))
 }
 
 /// Draws `text` in `font3x5` at `scale` with its top-left at (x, y).
@@ -908,16 +927,6 @@ fn text_outlined(c: &mut Canvas, x: i32, y: i32, s: &str, scale: i32, col: Rgba,
     text(c, x, y, s, scale, col);
 }
 
-/// Whether a flickering sign is lit at time `e`: mostly on, with a stutter off (off, on, off) at the
-/// start of each cycle.
-fn sign_on(s: &Sign, e: f32) -> bool {
-    if !s.flicker {
-        return true;
-    }
-    let f = (e * s.rate + s.phase).fract();
-    !((0.0..0.12).contains(&f) || (0.17..0.25).contains(&f))
-}
-
 /// Smoothstep.
 fn ease(p: f32) -> f32 {
     let p = p.clamp(0.0, 1.0);
@@ -929,14 +938,63 @@ fn wrap_deg(a: f32) -> f32 {
     (a + 180.0).rem_euclid(360.0) - 180.0
 }
 
-/// An iso box in the skyline: its side face and roof as parallelograms, then the front over them.
-#[allow(clippy::too_many_arguments)]
-fn iso_block(bg: &mut Canvas, b: &Block, base: i32, dx: f32, dy: f32, front: Rgba, side: Rgba, roof: Rgba) {
-    let (x0, x1) = (b.x as f32, (b.x + b.w) as f32);
-    let (top, bot) = ((base - b.h) as f32, base as f32);
-    fill_convex(bg, &[(x1, top), (x1 + dx, top - dy), (x1 + dx, bot - dy), (x1, bot)], (0.0, 0.0), 0, side);
-    fill_convex(bg, &[(x0, top), (x1, top), (x1 + dx, top - dy), (x0 + dx, top - dy)], (0.0, 0.0), 0, roof);
-    bg.fill_rect(b.x, base - b.h, b.w, b.h, front);
+/// The scene's colours for a colourway.
+struct Palette {
+    panel: Rgba,
+    lit: Rgba,
+    hot: Rgba,
+    neon: Rgba,
+    haze: Rgba,
+    road_a: Rgba,
+    road_b: Rgba,
+    kerb_w: Rgba,
+    line: Rgba,
+    slope_a: Rgba,
+    slope_b: Rgba,
+    shoulder: Rgba,
+    valley_hi: Rgba,
+    valley_lo: Rgba,
+    ridge_far: Rgba,
+    ridge_near: Rgba,
+    ridge_rim: Rgba,
+    pine: Rgba,
+    post: Rgba,
+    rail: Rgba,
+}
+
+impl Palette {
+    fn new(t: &Theme) -> Self {
+        let panel = Rgba::from_hex(&t.panel, 1.0);
+        let lit = Rgba::from_hex(&t.lit, 1.0);
+        let hot = Rgba::from_hex(&t.hot, 1.0);
+        let edge = Rgba::from_hex(&t.edge, 1.0);
+        let neon = neon_of(t);
+        // Asphalt is a near-neutral grey with the colourway's tint, so the road reads against the dark
+        // slope and the darker valley.
+        let road_a = Rgba::lerp_linear(edge, ASPHALT, 0.5);
+        Palette {
+            panel,
+            lit,
+            hot,
+            neon,
+            haze: Rgba::lerp_linear(Rgba::lerp_linear(panel, edge, 0.55), neon, 0.03),
+            road_a,
+            road_b: Rgba::lerp_linear(road_a, BLACK, 0.2),
+            kerb_w: Rgba::lerp_linear(edge, WHITE, 0.6),
+            line: Rgba::lerp_linear(edge, lit, 0.7),
+            slope_a: Rgba::lerp_linear(panel, BLACK, 0.2),
+            slope_b: Rgba::lerp_linear(panel, edge, 0.08),
+            shoulder: Rgba::lerp_linear(panel, edge, 0.45),
+            valley_hi: Rgba::lerp_linear(Rgba::lerp_linear(panel, edge, 0.15), neon, 0.012),
+            valley_lo: Rgba::lerp_linear(panel, BLACK, 0.45),
+            ridge_far: Rgba::lerp_linear(panel, edge, 0.45),
+            ridge_near: Rgba::lerp_linear(panel, BLACK, 0.45),
+            ridge_rim: Rgba::lerp_linear(panel, edge, 0.8),
+            pine: Rgba::lerp_linear(panel, BLACK, 0.6),
+            post: Rgba::lerp_linear(edge, WHITE, 0.45),
+            rail: Rgba::lerp_linear(edge, WHITE, 0.3),
+        }
+    }
 }
 
 impl Drift {
@@ -945,25 +1003,36 @@ impl Drift {
         self.only = only;
     }
 
-    /// The car's centre on screen, x - for the tests.
-    #[cfg(test)]
-    fn car_screen_x(&self) -> f32 {
-        self.car_x + self.car_z * ZX
-    }
-
     fn next_rng(&mut self) -> u64 {
         splitmix(&mut self.rng)
     }
 
-    /// Rebuilds the geometry on a size change and the baked scene on a size or colour change.
+    /// The road's centre at depth `z`, in the camera's frame (linear in the table).
+    fn road_at(&self, z: f32) -> f32 {
+        let f = (z / DZ).clamp(0.0, (ROAD_N - 1) as f32);
+        let i = (f as usize).min(ROAD_N - 2);
+        let t = f - i as f32;
+        self.road[i] + (self.road[i + 1] - self.road[i]) * t
+    }
+
+    fn cam(&self, w: i32) -> Cam {
+        Cam { cx: w as f32 * 0.5, hz: self.layout.hz, f: self.layout.f, x: self.cam_x }
+    }
+
+    /// The car's pose this frame.
+    fn car_pose(&self, cam: Cam) -> Pose {
+        let x = self.road_at(CAR_Z) + self.lat;
+        let heading = (self.road_at(CAR_Z + DZ) - self.road_at(CAR_Z - DZ)) / (2.0 * DZ);
+        let yaw = heading.atan() + self.slip.to_radians() + self.spin;
+        Pose::new(x, CAR_Z, yaw, cam)
+    }
+
+    /// Rebuilds the layout on a size change and the baked sky on a size or colour change.
     fn resize(&mut self, w: i32, h: i32, t: &Theme) {
         if self.layout_dim != (w, h) {
             self.layout = layout(w, h);
             self.layout_dim = (w, h);
             self.ring_live = false;
-            self.car_z = self.layout.road_d * 0.5;
-            self.vz = 0.0;
-            self.dist = 0.0;
         }
         let key = colour_key(t, w, h);
         if key == self.bg_key {
@@ -976,95 +1045,31 @@ impl Drift {
         let l = &self.layout;
         let bg = &mut self.bg;
         bg.clear();
-        let panel = Rgba::from_hex(&t.panel, 1.0);
-        let lit = Rgba::from_hex(&t.lit, 1.0);
-        let hot = Rgba::from_hex(&t.hot, 1.0);
+        let p = Palette::new(t);
         let edge = Rgba::from_hex(&t.edge, 1.0);
-        let neon = neon_of(t);
-        let (ix0, iy0, ix1, iy1) = (3, 4, w - 3, h - 4);
+        let (ix0, iy0, ix1) = (3, 4, w - 3);
         let iw = ix1 - ix0;
-        let base = l.base;
-        let sky_h = (base - iy0).max(1) as f32;
-
+        let sky_h = (l.hz_row - iy0).max(1) as f32;
         // The sky: panel at the top, toward edge and a wash of neon at the horizon.
-        for y in iy0..base {
+        for y in iy0..l.hz_row {
             let f = (y - iy0) as f32 / sky_h;
-            let col = Rgba::lerp_linear(panel, edge, 0.85 * f.powf(1.6));
-            bg.fill_rect(ix0, y, iw, 1, Rgba::lerp_linear(col, neon, 0.16 * f.powi(3)));
+            let col = Rgba::lerp_linear(p.panel, edge, 0.85 * f.powf(1.6));
+            bg.fill_rect(ix0, y, iw, 1, Rgba::lerp_linear(col, p.neon, 0.22 * f.powi(3)));
         }
-        // Far towers: hazy iso boxes a shade off the horizon sky, with a sparse dim window here and
-        // there.
-        let far = Rgba::lerp_linear(panel, edge, 0.62);
-        let far_side = Rgba::lerp_linear(far, panel, 0.35);
-        let far_roof = Rgba::lerp_linear(far, edge, 0.6);
-        let far_win = Rgba::lerp_linear(far, lit, 0.22);
-        let (dx, dy) = (l.roof_dx, l.roof_dy);
+        // Stars, thinning toward the glow.
         let mut s: u64 = 0x0f0f_1a2b_3c4d_5e6f;
-        for b in &l.far[..l.far_n] {
-            iso_block(bg, b, base, dx * 0.7, dy * 0.7, far, far_side, far_roof);
-            let mut y = base - b.h + 2;
-            while y < base - 3 {
-                let mut x = b.x + 1;
-                while x < b.x + b.w - 1 {
-                    if splitmix(&mut s).is_multiple_of(11) {
-                        bg.fill_rect(x, y, 1, 1, far_win);
-                    }
-                    x += 2;
-                }
-                y += 3;
-            }
+        let n = (iw * (l.hz_row - iy0) / 90).max(4);
+        for _ in 0..n {
+            let x = ix0 + (splitmix(&mut s) % iw as u64) as i32;
+            let fy = unit(&mut s);
+            let y = iy0 + (fy * fy * sky_h * 0.8) as i32;
+            let a = 0.25 + 0.5 * unit(&mut s);
+            bg.fill_rect(x, y, 1, 1, with_alpha(Rgba::lerp_linear(p.lit, WHITE, 0.6), a));
         }
-        // Near blocks: black iso boxes, a lit roof, and a grid of windows with a scatter lit.
-        let near = Rgba::lerp_linear(panel, BLACK, 0.5);
-        let near_side = Rgba::lerp_linear(near, edge, 0.4);
-        let roof = Rgba::lerp_linear(near, edge, 0.85);
-        let win = Rgba::lerp_linear(edge, lit, 0.5);
-        let win_warm = Rgba::lerp_linear(edge, WARM_WINDOW, 0.6);
-        let win_dark = Rgba::lerp_linear(near, edge, 0.35);
-        let win_w = if h >= 48 { 2 } else { 1 };
-        for b in &l.near[..l.near_n] {
-            iso_block(bg, b, base, dx, dy, near, near_side, roof);
-            let mut y = base - b.h + 2;
-            while y < base - 2 {
-                let mut x = b.x + 2;
-                while x + win_w < b.x + b.w {
-                    let r = splitmix(&mut s) % 100;
-                    let col = if r < 16 {
-                        win
-                    } else if r < 22 {
-                        win_warm
-                    } else {
-                        win_dark
-                    };
-                    bg.fill_rect(x, y, win_w, 1, col);
-                    x += win_w + 2;
-                }
-                y += 3;
-            }
-        }
-        // The signs' unlit tubes (the lit tube is drawn per frame).
-        for sg in &l.signs[..l.signs_n] {
-            let base_c = if sg.hot { hot } else { neon };
-            bg.fill_rect(sg.x, sg.y, sg.w, sg.h, Rgba::lerp_linear(near, base_c, 0.22));
-        }
-        // The street: the sidewalk, the far kerb's bright edge, the asphalt (a little neon in it toward
-        // the far side), the near kerb.
-        let (road, walk) = street_colours(t);
-        bg.fill_rect(ix0, base, iw, l.kerb - base, walk);
-        bg.fill_rect(ix0, l.kerb, iw, 1, Rgba::lerp_linear(edge, lit, 0.35));
-        let y0 = l.y0 as i32;
-        let road_rows = (y0 - l.kerb - 1).max(1) as f32;
-        for y in l.kerb + 1..y0 {
-            let f = 1.0 - (y - l.kerb - 1) as f32 / road_rows;
-            bg.fill_rect(ix0, y, iw, 1, Rgba::lerp_linear(road, neon, 0.07 * f * f));
-        }
-        bg.fill_rect(ix0, y0, iw, 1, Rgba::lerp_linear(walk, lit, 0.18));
-        bg.fill_rect(ix0, y0 + 1, iw, iy1 - y0 - 1, Rgba::lerp_linear(panel, BLACK, 0.2));
-
-        // The gauge's ring and ticks.
+        // The gauge's ring.
         if l.show_gauge {
             let (gx, gcy) = l.gauge;
-            let ring = Rgba::lerp_linear(panel, lit, 0.45);
+            let ring = Rgba::lerp_linear(p.panel, p.lit, 0.45);
             let r = GAUGE_R as f32;
             for y in gcy - GAUGE_R - 1..=gcy {
                 for x in gx - GAUGE_R - 1..=gx + GAUGE_R + 1 {
@@ -1074,87 +1079,76 @@ impl Drift {
                     }
                 }
             }
-            bg.fill_rect(gx - GAUGE_R - 1, gcy + 1, 2 * GAUGE_R + 3, 1, Rgba::lerp_linear(panel, lit, 0.25));
-            // The centre tick.
-            bg.fill_rect(gx, gcy - GAUGE_R + 1, 1, 1, Rgba::lerp_linear(panel, lit, 0.7));
         }
     }
 
-    /// Advances the drift: the wander, the flicks, the lateral spring, the slip and the heading.
-    /// Returns whether the car wrapped round the panel this frame.
-    #[allow(clippy::too_many_arguments)]
-    fn steer(&mut self, dt: f32, rms_norm: f32, kick: bool, drifting: bool, since_ms: f32, iw: f32, ix0: f32) -> bool {
-        let (s, road_d) = (self.layout.s, self.layout.road_d);
-        let k = (dt / SWING_EASE_MS).min(1.0);
+    /// Advances the course, the camera and the car; returns the speed, units per second.
+    fn advance(&mut self, dt: f32, rms_norm: f32, kick: bool, drifting: bool, since_ms: f32, boost: f32) -> f32 {
+        let k = (dt / AMP_EASE_MS).min(1.0);
         self.amp += (rms_norm - self.amp) * k;
         if !self.amp.is_finite() {
             self.amp = 0.0;
         }
         let amp = self.amp.clamp(0.0, 1.0);
+        let v = V_BASE + V_RMS * rms_norm.max(boost);
+        let dts = dt / 1000.0;
+        let c_cam = curve(self.s_cam);
+        self.s_cam = (self.s_cam + v * dts).rem_euclid(COURSE);
+        self.bg_off = (self.bg_off + c_cam * v * dts * self.layout.f).rem_euclid(RIDGE_W as f32 * 2.0);
+        if !self.s_cam.is_finite() || !self.bg_off.is_finite() {
+            self.s_cam = 0.0;
+            self.bg_off = 0.0;
+        }
 
-        // The flick: on a kick once the last one has settled, or on its own after a while.
-        self.since_flip_ms = (self.since_flip_ms + dt).min(1.0e6);
-        let due = (kick && self.since_flip_ms >= MIN_FLIP_MS) || self.since_flip_ms >= MAX_FLIP_MS;
-        if !drifting && amp > FLIP_AMP && due {
-            self.side = -self.side;
-            self.since_flip_ms = 0.0;
-            #[cfg(test)]
-            {
-                self.flips += 1;
-                if kick {
-                    self.kick_flips += 1;
-                }
+        // The road ahead: curvature integrated twice from the camera, then turned so it runs straight
+        // away at the car (most of the way - `ROT`).
+        let (mut x, mut dx) = (0.0f32, 0.0f32);
+        let mut heading = [0.0f32; ROAD_N];
+        for i in 0..ROAD_N {
+            self.road[i] = x;
+            heading[i] = dx;
+            let z = i as f32 * DZ;
+            dx += curve(self.s_cam + z) * DZ;
+            x += dx * DZ;
+        }
+        let at_car = heading[(CAR_Z / DZ) as usize];
+        for i in 0..ROAD_N {
+            self.road[i] -= ROT * at_car * i as f32 * DZ;
+        }
+
+        // The drift: into the bend, sliding out of it; a clutch kick on the beat; full lock and a
+        // spin in the flourish.
+        self.bend = (2.5 * curve(self.s_cam + CAR_Z) / C_MAX).tanh();
+        if kick && amp > KICK_AMP && !drifting {
+            self.kick = KICK_SLIP;
+            self.flame = 1.0;
+        }
+        self.kick *= (-dt / KICK_DECAY_MS).exp();
+        self.flame = (self.flame - dt / FLAME_MS).max(0.0);
+        let dir = if self.bend >= 0.0 { 1.0 } else { -1.0 };
+        let slip_to = if drifting {
+            self.spin_dir * SLIP_MAX
+        } else {
+            SLIP_MAX * amp * self.bend + dir * self.kick * amp
+        };
+        self.slip += (slip_to - self.slip) * (1.0 - (-dt / FLICK_MS).exp());
+        let lat_to = -self.bend * LAT_SLIDE * amp;
+        let steps = ((dt / 8.0).ceil() as i32).clamp(1, 25);
+        let h = dts / steps as f32;
+        for _ in 0..steps {
+            let a = LAT_OMEGA * LAT_OMEGA * (lat_to - self.lat) - 2.0 * LAT_OMEGA * self.vlat;
+            self.vlat += a * h;
+            self.lat += self.vlat * h;
+        }
+        self.spin = if drifting && since_ms < SPIN_MS { self.spin_dir * TAU * ease(since_ms / SPIN_MS) } else { 0.0 };
+        let car_x = self.road_at(CAR_Z) + self.lat;
+        self.cam_x += (CAM_FOLLOW * car_x - self.cam_x) * (dt / 200.0).min(1.0);
+        for v in [&mut self.slip, &mut self.lat, &mut self.vlat, &mut self.cam_x, &mut self.kick] {
+            if !v.is_finite() {
+                *v = 0.0;
             }
         }
-
-        // Across the road: a critically damped spring toward this side, in small steps.
-        let z_mid = road_d * 0.5;
-        let z_to = z_mid + self.side * amp * Z_SWING * road_d;
-        let steps = ((dt / 8.0).ceil() as i32).clamp(1, 25);
-        let h = dt / 1000.0 / steps as f32;
-        for _ in 0..steps {
-            let a = LAT_OMEGA * LAT_OMEGA * (z_to - self.car_z) - 2.0 * LAT_OMEGA * self.vz;
-            self.vz += a * h;
-            self.car_z += self.vz * h;
-        }
-        if !self.car_z.is_finite() || !self.vz.is_finite() {
-            self.car_z = z_mid;
-            self.vz = 0.0;
-        }
-
-        // The slip: into the turn, flicking fast to the new lock; pinned at full lock in the drift.
-        let reach = if drifting { 1.0 } else { amp };
-        let slip_to = self.side * SLIP_MAX * reach;
-        self.slip += (slip_to - self.slip) * (1.0 - (-dt / FLICK_MS).exp());
-        if !self.slip.is_finite() {
-            self.slip = 0.0;
-        }
-
-        // Along the screen: the wander, or the drift's sweep round the panel.
-        self.phase = (self.phase + TAU * dt / 1000.0 / SWING_S).rem_euclid(TAU);
-        let mid = ix0 + iw * 0.5 - z_mid * ZX;
-        let pend_x = mid + amp * SWING_FRAC * iw * self.phase.sin();
-        let pend_v = amp * SWING_FRAC * iw * self.phase.cos() * TAU / SWING_S;
-        let reach_px = REACH * s * CAR_SCALE;
-        let lap = iw + 2.0 * reach_px;
-        let old_x = self.car_x;
-        let sweeping = drifting && since_ms < SWEEP_MS;
-        if sweeping {
-            // Out past the right edge and back in from the left, on a torus the car can leave fully.
-            let start = ix0 - reach_px - z_mid * ZX;
-            let from = self.sweep_from;
-            let dist = lap + (pend_x - from);
-            let u = from - start + dist * ease(since_ms / SWEEP_MS);
-            self.car_x = start + u.rem_euclid(lap);
-            self.spin = self.spin_dir * TAU * ease(since_ms / SWEEP_MS);
-        } else {
-            self.car_x = pend_x;
-            self.spin = 0.0;
-        }
-        let speed = iw * (SCROLL_BASE + SCROLL_RMS * rms_norm);
-        let heading = if sweeping { 0.0 } else { self.vz.atan2(speed + pend_v) };
-        self.yaw = heading + self.slip.to_radians() + self.spin;
-        (self.car_x - old_x).abs() > lap * 0.5
+        v
     }
 }
 
@@ -1198,210 +1192,201 @@ impl Family for Drift {
         let env = self.hit.update(fired, dt, DRIFT_MS);
         let since_ms = (1.0 - env) * DRIFT_MS;
         if fired {
-            self.sweep_from = self.car_x;
-            self.spin_dir = self.side;
+            self.spin_dir = if self.slip >= 0.0 { 1.0 } else { -1.0 };
         }
         let drifting = env > 0.0;
-        // Full lock the moment the sweep starts, easing back as the hit ends.
         let boost = if drifting { (env / 0.35).min(1.0) } else { 0.0 };
 
-        // ---- the car ----
+        // ---- the course, the camera, the car ----
         let kick = self.onset.update(&d.levels, dt, ONSET_RATIO, ONSET_REFRACTORY_MS) && bass >= KICK_BASS;
-        let wrapped = self.steer(dt, rms_norm, kick, drifting, since_ms, iw as f32, ix0 as f32);
-        let l = &self.layout;
-        let (s, y0) = (l.s, l.y0);
-        let pose = Pose::new(self.car_x, self.car_z, self.yaw, s * CAR_SCALE, y0);
+        let v = self.advance(dt, rms_norm, kick, drifting, since_ms, boost);
+        let cam = self.cam(w);
+        let pose = self.car_pose(cam);
+        let (s, f, hz_row) = (self.layout.s, self.layout.f, self.layout.hz_row);
 
-        // ---- the world scrolls; the trail and the marks ride it ----
-        let step = iw as f32 * (SCROLL_BASE + SCROLL_RMS * rms_norm.max(boost)) * dt / 1000.0;
-        let rear = pose.at(AXLE_R, 0.0);
-        let wheels = [pose.at(AXLE_R, TRACK), pose.at(AXLE_R, -TRACK)];
+        // ---- the smoke ring: puffs drag, rise and spread; a new one at a rear tyre ----
+        let dts = dt / 1000.0;
         if !self.ring_live {
-            for (i, p) in self.ring.iter_mut().enumerate() {
-                *p = Puff { x: rear.0 - step.max(1.0) * i as f32, z: rear.1, jy: 0.0, jr: 0 };
-            }
+            self.ring = [Puff { z: -1.0, ..Puff::default() }; TRAIL];
             self.head = 0;
-            self.marks = [[Mark::default(); MARKS]; 2];
-            self.mark_head = 0;
             self.ring_live = true;
-        } else {
-            for p in self.ring.iter_mut() {
-                p.x -= step;
-            }
-            self.head = (self.head + 1) % TRAIL;
-            let rnd = self.next_rng();
-            let jy = (rnd % 5) as f32 - 2.0;
-            let jr = ((rnd >> 8) % 3) as i32 - 1;
-            self.ring[self.head] = Puff { x: rear.0, z: rear.1, jy: jy * 0.6, jr };
-
-            for side in self.marks.iter_mut() {
-                for m in side.iter_mut() {
-                    m.x -= step;
-                }
-            }
-            self.mark_head = (self.mark_head + 1) % MARKS;
-            let a = if wrapped {
-                0.0
-            } else if drifting {
-                1.0
-            } else {
-                ((self.slip.abs() - MARK_FROM) / MARK_SPAN).clamp(0.0, 1.0)
-            };
-            for (k, &(x, z)) in wheels.iter().enumerate() {
-                self.marks[k][self.mark_head] = Mark { x, z, a };
-            }
         }
-        self.dist = (self.dist + step).rem_euclid(SCROLL_WRAP * s);
+        let out = if self.slip >= 0.0 { -1.0 } else { 1.0 };
+        for p in self.ring.iter_mut() {
+            p.z -= v * (1.0 - DRAG) * dts;
+            p.y += RISE * dts;
+            p.d += p.vd * dts;
+        }
+        self.head = (self.head + 1) % TRAIL;
+        let side = if self.head.is_multiple_of(2) { TRACK } else { -TRACK };
+        let (px, pz) = pose.at(AXLE_R - WHEEL.0, side);
+        let rnd = self.next_rng();
+        let road_px = self.road_at(pz);
+        self.ring[self.head] = Puff {
+            z: pz,
+            d: px - road_px,
+            y: 0.6,
+            vd: out * SPREAD * (0.4 + 0.6 * self.slip.abs() / SLIP_MAX) + ((rnd % 7) as f32 - 3.0) * 0.4,
+            jr: ((rnd >> 8) % 5) as f32 * 0.08 - 0.16,
+        };
 
-        let lit = Rgba::from_hex(&t.lit, 1.0);
-        let hot = Rgba::from_hex(&t.hot, 1.0);
-        let neon = neon_of(t);
-        let l = &self.layout;
+        // ---- per ground row: depth, the road's centre and half width ----
+        let rows_end = (iy1.max(0) as usize).min(ROWS);
+        for y in hz_row.max(0) as usize..rows_end {
+            let z = CAM_H * f / (y as f32 + 0.5 - self.layout.hz);
+            self.row_z[y] = z;
+            self.row_cx[y] = cam.cx + (self.road_at(z) - cam.x) * f / z;
+            self.row_hw[y] = HALF_W * f / z;
+        }
+
+        let pal = Palette::new(t);
         let only = self.only;
-        let (road_d, walk_d, kerb, base) = (l.road_d, l.walk_d, l.kerb, l.base);
-        let (road, walk) = street_colours(t);
+        let flash = drifting && since_ms < FLASH_MS;
+        let flash_on = flash && (since_ms / 1000.0 * FLASH_HZ).fract() < 0.5;
 
         if only == Only::All {
-            // ---- the baked scene ----
-            c.copy_region(&self.bg, (ix0, iy0), (ix0, iy0), iw, ih);
+            // ---- the sky ----
+            c.copy_region(&self.bg, (ix0, iy0), (ix0, iy0), iw, hz_row - iy0);
 
-            // ---- neon, and its streak on the wet road ----
-            let flash = drifting && since_ms < FLASH_MS;
-            let flash_on = flash && (since_ms / 1000.0 * FLASH_HZ).fract() < 0.5;
-            let halo_a = 0.14 + 0.22 * bass;
-            let road_px = (y0 - kerb as f32).max(1.0);
-            for sg in &l.signs[..l.signs_n] {
-                if !flash && !sign_on(sg, e) {
+            // ---- the ridges, shifting as the car corners ----
+            let l = &self.layout;
+            for x in ix0..ix1 {
+                let i_far = ((x as f32 + self.bg_off * 0.5) as i64).rem_euclid(RIDGE_W as i64) as usize;
+                let i_near = ((x as f32 + self.bg_off) as i64).rem_euclid(RIDGE_W as i64) as usize;
+                let hf = l.ridge_far[i_far] as i32;
+                c.fill_rect(x, hz_row - hf, 1, hf, pal.ridge_far);
+                let hn = l.ridge_near[i_near] as i32;
+                if hn > 0 {
+                    c.fill_rect(x, hz_row - hn, 1, hn, pal.ridge_near);
+                    c.fill_rect(x, hz_row - hn, 1, 1, pal.ridge_rim);
+                }
+            }
+
+            // ---- the ground, row by row ----
+            for y in hz_row.max(0)..iy1.min(ROWS as i32) {
+                let yi = y as usize;
+                let (z, cx, hw) = (self.row_z[yi], self.row_cx[yi], self.row_hw[yi]);
+                let fog = (z / FOG_Z).clamp(0.0, 1.0).powf(1.3);
+                let fogged = |col: Rgba| Rgba::lerp_linear(col, pal.haze, fog);
+                let dist = self.s_cam + z;
+                let band = ((dist / SEG).floor() as i64) & 1 == 1;
+                let kerb = KERB_W * f / z;
+                let shoulder = 2.0 * f / z;
+                let (l0, r0) = (cx - hw, cx + hw);
+                let valley_f = ((y - hz_row) as f32 / (iy1 - hz_row).max(1) as f32).clamp(0.0, 1.0);
+                // The mountainside, the kerbs, the asphalt, the shoulder and the valley.
+                span(c, ix0 as f32, l0 - kerb, y, fogged(if band { pal.slope_a } else { pal.slope_b }));
+                let kerb_col = fogged(if band { pal.kerb_w } else { KERB_RED });
+                span(c, l0 - kerb, l0, y, kerb_col);
+                span(c, l0, r0, y, fogged(if band { pal.road_a } else { pal.road_b }));
+                span(c, r0, r0 + kerb, y, kerb_col);
+                span(c, r0 + kerb, r0 + kerb + shoulder, y, fogged(pal.shoulder));
+                let valley = Rgba::lerp_linear(pal.valley_hi, pal.valley_lo, valley_f.sqrt());
+                span(c, r0 + kerb + shoulder, ix1 as f32, y, valley);
+                if ((dist / DASH).floor() as i64) & 1 == 0 {
+                    let lw = (LINE_W * f / z).max(0.6);
+                    span(c, cx - lw * 0.5, cx + lw * 0.5, y, fogged(pal.line));
+                }
+            }
+
+            // ---- the city in the valley ----
+            for li in &l.lights[..l.lights_n] {
+                let yi = li.row;
+                if yi < hz_row || yi >= iy1 || yi as usize >= ROWS {
                     continue;
                 }
-                let base_c = if sg.hot { hot } else { neon };
-                let (col, ha) = if flash_on { (Rgba::lerp_linear(base_c, WHITE, 0.55), 0.5) } else { (base_c, halo_a) };
-                c.fill_rect(sg.x - 1, sg.y - 1, sg.w + 2, sg.h + 2, with_alpha(base_c, ha));
-                c.fill_rect(sg.x, sg.y, sg.w, sg.h, col);
-                // Mirrored in the ground at the buildings' base and stretched, the way a wet street
-                // smears a light; only the part on the asphalt shows.
-                let (r0, r1) = (base + (1.6 * (base - sg.y - sg.h) as f32) as i32, base + (1.6 * (base - sg.y) as f32) as i32);
-                for r in r0.max(kerb + 1)..r1.min(y0 as i32) {
-                    let f = 1.0 - (r - kerb) as f32 / road_px;
-                    let f = f.max(0.0);
-                    c.fill_rect(sg.x, r, sg.w, 1, with_alpha(base_c, 0.10 * f * f));
+                let x = ix0 as f32 + (li.vx - self.bg_off * 0.6).rem_euclid(2.0 * RIDGE_W as f32);
+                let edge_x = self.row_cx[yi as usize] + self.row_hw[yi as usize] * 1.25 + 2.0;
+                if x >= ix1 as f32 || x < edge_x || !(flash || light_on(li, e)) {
+                    continue;
                 }
+                let base = match li.kind {
+                    0 => pal.neon,
+                    1 => WARM,
+                    _ => pal.hot,
+                };
+                let depth = 1.0 - (yi - hz_row) as f32 / (iy1 - hz_row).max(1) as f32;
+                let col = if flash_on { WHITE } else { base };
+                c.fill_rect(x as i32, yi, 1, 1, with_alpha(col, 0.55 + 0.45 * (1.0 - depth * 0.6)));
             }
 
-            // ---- the street's scrolling features ----
-            let lo_x = ix0 as f32 - (road_d + walk_d) * ZX - 8.0;
-            let hi_x = ix1 as f32 + 8.0;
-            // Sidewalk seams: slanted, one every SEAM.
-            let seam = Rgba::lerp_linear(walk, BLACK, 0.5);
-            let period = SEAM * s;
-            let mut x = lo_x - (self.dist % period);
-            while x < hi_x {
-                let a = project(x, 0.0, road_d, y0);
-                let b = project(x, 0.0, road_d + walk_d, y0);
-                trace(c, (a.0, a.1 - 0.5), b, seam);
-                x += period;
-            }
-            // The centre line.
-            let dash = Rgba::lerp_linear(road, lit, 0.28);
-            let zc = road_d * 0.5;
-            let row = project(0.0, 0.0, zc, y0).1.floor() as i32;
-            let period = DASH * s;
-            let mut x = lo_x - (self.dist % period);
-            while x < hi_x {
-                c.fill_rect((x + zc * ZX).round() as i32, row, (DASH_ON * s).round() as i32, 1, dash);
-                x += period;
-            }
-            // Zebra crossings: slanted stripes across the road.
-            let zebra = Rgba::lerp_linear(road, lit, 0.24);
-            let period = CROSSING * s;
-            let (z0, z1) = (road_d * 0.10, road_d * 0.90);
-            let mut x = lo_x - (self.dist % period) + period * 0.6;
-            while x < hi_x + period {
-                for j in 0..STRIPES {
-                    let sx = x + j as f32 * 2.0 * STRIPE_W * s;
-                    let sw = STRIPE_W * s;
-                    let pts = [
-                        project(sx, 0.0, z0, y0),
-                        project(sx + sw, 0.0, z0, y0),
-                        project(sx + sw, 0.0, z1, y0),
-                        project(sx, 0.0, z1, y0),
-                    ];
-                    if pts[1].0 >= ix0 as f32 && pts[3].0 < hi_x {
-                        fill_convex(c, &pts, (0.0, 0.0), kerb + 1, zebra);
-                    }
+            // ---- pines on the mountainside, far to near ----
+            let far_slot = ((self.s_cam + Z_FAR) / TREE_GAP).floor() as i64;
+            for k in (0..60).map(|j| far_slot - j) {
+                let z = k as f32 * TREE_GAP - self.s_cam;
+                if z < 10.0 {
+                    break;
                 }
-                x += period;
+                let x = self.road_at(z) - (HALF_W + 5.0 + hash01(k) * 26.0);
+                let th = 8.0 + hash01(k * 7 + 3) * 9.0;
+                let fog = (z / FOG_Z).clamp(0.0, 1.0).powf(1.3);
+                let col = Rgba::lerp_linear(pal.pine, pal.haze, fog);
+                let apex = cam.project(x, th, z);
+                let bl = cam.project(x - th * 0.32, 1.5, z);
+                let br = cam.project(x + th * 0.32, 1.5, z);
+                fill_convex(c, &[apex, br, bl], (0.0, 0.0), 0, col);
+                let (t0, t1) = (cam.project(x, 1.6, z), cam.project(x, 0.0, z));
+                let tw = (0.6 * f / z).max(1.0);
+                c.fill_rect(
+                    (t0.0 - tw * 0.5).round() as i32,
+                    t0.1.round() as i32,
+                    tw.round() as i32,
+                    (t1.1 - t0.1).round().max(1.0) as i32,
+                    col,
+                );
             }
-        }
 
-        // ---- skid marks ----
-        if only == Only::All {
-            let mark = Rgba::lerp_linear(road, BLACK, 0.85);
-            for side in &self.marks {
-                let mut prev: Option<((f32, f32), f32)> = None;
-                for i in 0..MARKS {
-                    let m = side[(self.mark_head + MARKS - i) % MARKS];
-                    let p = project(m.x, 0.0, m.z, y0);
-                    if let Some((q, qa)) = prev {
-                        let a = m.a.min(qa);
-                        if a > 0.0 {
-                            let fade = 1.0 - (i as f32 / MARKS as f32).powf(1.5);
-                            trace(c, q, p, with_alpha(mark, 0.9 * a * fade));
+            // ---- reflector posts and the guardrail, far to near ----
+            let far_slot = ((self.s_cam + Z_FAR * 0.8) / POST_GAP).floor() as i64;
+            let mut prev_rail: Option<(f32, f32)> = None;
+            for k in (0..60).map(|j| far_slot - j) {
+                let z = k as f32 * POST_GAP - self.s_cam;
+                if z < 8.0 {
+                    break;
+                }
+                let fog = (z / FOG_Z).clamp(0.0, 1.0).powf(1.3);
+                let pw = (0.35 * f / z).max(1.0);
+                for (side, refl) in [(-1.0f32, pal.neon), (1.0, pal.hot)] {
+                    let x = self.road_at(z) + side * (HALF_W + KERB_W + 1.0);
+                    let (b, tp) = (cam.project(x, 0.0, z), cam.project(x, POST_H, z));
+                    let col = Rgba::lerp_linear(pal.post, pal.haze, fog);
+                    let (px0, pwi) = ((b.0 - pw * 0.5).round() as i32, pw.round() as i32);
+                    c.fill_rect(px0, tp.1.round() as i32, pwi, (b.1 - tp.1).round().max(1.0) as i32, col);
+                    let rc = if flash_on { WHITE } else { Rgba::lerp_linear(refl, pal.haze, fog * 0.6) };
+                    c.fill_rect(px0, tp.1.round() as i32, pwi, (0.5 * f / z).round().max(1.0) as i32, rc);
+                    if side > 0.0 {
+                        let rail = cam.project(x, RAIL_H, z);
+                        if let Some(q) = prev_rail {
+                            let rcol = Rgba::lerp_linear(pal.rail, pal.haze, fog);
+                            let (qx, qy, rx, ry) = (q.0.round() as i32, q.1.round() as i32, rail.0.round() as i32, rail.1.round() as i32);
+                            c.line(qx, qy, rx, ry, rcol);
+                            if z < 70.0 {
+                                c.line(qx, qy + 1, rx, ry + 1, rcol);
+                            }
                         }
+                        prev_rail = Some(rail);
                     }
-                    prev = Some((p, m.a));
                 }
             }
 
-            // ---- the headlight beam and the shadow ----
-            let beam = Rgba::lerp_linear(lit, WHITE, 0.6);
+            // ---- the headlights' beam ahead, and the neon underglow ----
+            let beam = Rgba::lerp_linear(pal.lit, WHITE, 0.6);
             let nose = BODY[0].0;
-            for (len, spread, a) in [(36.0, 11.0, 0.03), (24.0, 7.5, 0.035), (12.0, 4.8, 0.045)] {
+            for (len, spread, a) in [(70.0, 16.0, 0.035), (45.0, 10.0, 0.04), (22.0, 6.0, 0.05)] {
                 let pts = [
                     pose.screen((nose, -3.0, 0.0)),
                     pose.screen((nose, 3.0, 0.0)),
                     pose.screen((nose + len, spread, 0.0)),
                     pose.screen((nose + len, -spread, 0.0)),
                 ];
-                fill_convex(c, &pts, (0.0, 0.0), kerb, with_alpha(beam, a));
+                fill_convex(c, &pts, (0.0, 0.0), hz_row, with_alpha(beam, a));
             }
-            let mut shadow = [(0.0f32, 0.0f32); 8];
-            for (i, p) in BODY.iter().enumerate() {
-                shadow[i] = pose.screen((p.0 * 1.06, p.1 * 1.12, 0.0));
-            }
-            fill_convex(c, &shadow, (0.0, 0.5), 0, with_alpha(BLACK, 0.45));
-        }
-
-        // ---- the tyre smoke: the meter ----
-        if only != Only::Car {
-            let r_max = 1.0 + PUFF_GAIN * s;
-            let mut radius = [0i32; TRAIL];
-            for (i, r) in radius.iter_mut().enumerate() {
-                let base_r = 1.0 + lvl(d.levels[i]) * PUFF_GAIN * s;
-                *r = (base_r + (r_max - base_r) * boost).round().max(1.0) as i32;
-            }
-            let tint = Rgba::lerp_linear(WHITE, hot, 0.7 * boost);
-            let ghost = if t.ghost.is_finite() { t.ghost.clamp(0.05, 0.6) } else { 0.3 };
-            let lift = l.rise / (TRAIL - 1) as f32;
-            // Oldest first, so the fresh puffs at the car sit on top.
-            for i in (0..TRAIL).rev() {
-                let p = self.ring[(self.head + TRAIL - i) % TRAIL];
-                let r = if radius[i] >= 3 { radius[i] + p.jr } else { radius[i] };
-                let (sx, gy) = project(p.x, 0.0, p.z, y0);
-                let x = sx.round() as i32;
-                if x + r < ix0 || x - r >= ix1 {
-                    continue;
+            for (ku, kv, a) in [(1.3, 2.0, 0.12), (1.0, 1.45, 0.25)] {
+                let mut glow = [(0.0f32, 0.0f32); 8];
+                for (i, q) in BODY.iter().enumerate() {
+                    glow[i] = pose.screen((q.0 * ku, q.1 * kv, 0.0));
                 }
-                let cy = (gy - 1.0 - r as f32 * 0.55 - lift * i as f32 + p.jy).round() as i32;
-                // Consecutive puffs overlap a lot, so each disc pass is a fraction of `ghost`: the core
-                // of a lone puff lands near `ghost * 0.55`, and the fresh overlapping ones build toward
-                // `ghost` and past it where the smoke is thick. Older puffs thin out.
-                let a = ghost * (1.0 - 0.65 * i as f32 / (TRAIL - 1) as f32);
-                let col = with_alpha(tint, a * 0.32);
-                c.fill_circle(x, cy, r, col);
-                if r >= 2 {
-                    c.fill_circle(x, cy, r - 1, col);
-                }
+                fill_convex(c, &glow, (0.0, 0.0), hz_row, with_alpha(pal.neon, a * (0.8 + 0.4 * bass)));
             }
         }
 
@@ -1410,37 +1395,57 @@ impl Family for Drift {
             let paint = Paint::new(t);
             let steer = (-self.slip).clamp(-COUNTER_MAX, COUNTER_MAX).to_radians();
             let shapes = car_shapes(&pose, steer, &paint);
-            let list = &shapes.s[..shapes.n];
-            // A 1 px dark outline first, so the car reads against its own smoke and the street.
-            for sh in list.iter().filter(|sh| sh.n >= 3) {
-                for off in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0)] {
-                    fill_convex(c, &sh.pts[..sh.n], off, 0, OUTLINE);
+            draw_shapes(c, &shapes);
+            if only == Only::All && faces_viewer(&pose, &tail_face()) {
+                // The four round tail lamps' glow and, on a kick, the exhaust's pop.
+                let r = (1.3 * f / CAR_Z).max(1.0).round() as i32;
+                for vc in tail_lamps() {
+                    let (gx, gy) = pose.screen((BODY[4].0 - 0.5, vc, TAIL_Y));
+                    c.fill_circle(gx.round() as i32, gy.round() as i32, r, with_alpha(pal.hot, 0.22));
+                }
+                if self.flame > 0.0 {
+                    let (fx, fy) = pose.screen(EXHAUST);
+                    let fr = (self.flame * 1.6 * f / CAR_Z).max(1.0);
+                    c.fill_circle(fx.round() as i32, fy.round() as i32, fr.round() as i32, with_alpha(FLAME, 0.85));
+                    c.fill_circle(fx.round() as i32, fy.round() as i32, (fr * 0.5).round() as i32, with_alpha(WARM, 0.95));
                 }
             }
-            for sh in list {
-                if sh.n == 2 {
-                    let (a, b) = (sh.pts[0], sh.pts[1]);
-                    c.line(a.0.floor() as i32, a.1.floor() as i32, b.0.floor() as i32, b.1.floor() as i32, sh.col);
-                } else {
-                    fill_convex(c, &sh.pts[..sh.n], (0.0, 0.0), 0, sh.col);
+        }
+
+        // ---- the tyre smoke: the meter, rolling back toward the camera ----
+        if only != Only::Car {
+            let tint = Rgba::lerp_linear(WHITE, pal.hot, 0.7 * boost);
+            let ghost = if t.ghost.is_finite() { t.ghost.clamp(0.05, 0.6) } else { 0.3 };
+            let r_max_px = PUFF_MAX_PX * s;
+            // Newest (at the tyres, farthest) first, so the older puffs nearer the camera sit on top.
+            for i in 0..TRAIL {
+                let p = self.ring[(self.head + TRAIL - i) % TRAIL];
+                if p.z < 6.0 {
+                    continue;
                 }
-            }
-            if only == Only::All {
-                // The tail lamps' glow, when the tail faces the viewer.
-                let (r0, r1) = (BODY[4], BODY[5]);
-                let tail = [(r0.0, r0.1, BODY_Y.0), (r1.0, r1.1, BODY_Y.0), (r1.0, r1.1, BODY_Y.1), (r0.0, r0.1, BODY_Y.1)];
-                if faces_viewer(&pose, &tail) {
-                    let ym = (LAMP_Y.0 + LAMP_Y.1) * 0.5;
-                    let vm = (LAMP_V.0 + LAMP_V.1) * 0.5;
-                    for v in [vm, -vm] {
-                        let (gx, gy) = pose.screen((r0.0 - 0.5, v, ym));
-                        c.fill_circle(gx.round() as i32, gy.round() as i32, 2, with_alpha(hot, 0.22));
-                    }
+                let age = i as f32 / (TRAIL - 1) as f32;
+                let lv = lvl(d.levels[i]) + (1.0 - lvl(d.levels[i])) * boost;
+                let rw = (PUFF_R0 + lv * PUFF_GAIN) * (1.0 + PUFF_GROW * age) + p.jr;
+                let x = self.road_at(p.z) + p.d;
+                let (sx, sy) = cam.project(x, p.y + rw * 0.6, p.z);
+                let r = (rw * f / p.z).min(r_max_px);
+                if r < 0.5 || sx + r < ix0 as f32 || sx - r >= ix1 as f32 {
+                    continue;
+                }
+                // Thinner with age and as it nears the lens.
+                let near = ((p.z - 6.0) / 14.0).clamp(0.0, 1.0);
+                let a = ghost * (1.0 - 0.7 * age) * near;
+                let col = with_alpha(tint, a * 0.24);
+                let (xi, yi, ri) = (sx.round() as i32, sy.round() as i32, r.round().max(1.0) as i32);
+                c.fill_circle(xi, yi, ri, col);
+                if ri >= 2 {
+                    c.fill_circle(xi, yi, ri - 1, col);
                 }
             }
         }
 
         if only == Only::All {
+            let l = &self.layout;
             // ---- the steering gauge ----
             if l.show_gauge {
                 let angle = wrap_deg(self.slip + self.spin.to_degrees());
@@ -1448,14 +1453,14 @@ impl Family for Drift {
                 let th = (90.0 - angle.clamp(-45.0, 45.0) * 2.0).to_radians();
                 let reach = (GAUGE_R - 1) as f32;
                 let (nx, ny) = (gx as f32 + reach * th.cos(), gcy as f32 - reach * th.sin());
-                c.line(gx, gcy, nx.round() as i32, ny.round() as i32, hot);
-                c.fill_rect(gx, gcy, 1, 1, lit);
+                c.line(gx, gcy, nx.round() as i32, ny.round() as i32, pal.hot);
+                c.fill_rect(gx, gcy, 1, 1, pal.lit);
                 let a = angle.abs().round().clamp(0.0, 99.0) as u32;
                 let digits = [b'0' + (a / 10) as u8, b'0' + (a % 10) as u8];
                 let ds = std::str::from_utf8(&digits).unwrap_or("00");
                 let (tx, ty) = l.angle_text;
-                text(c, tx, ty, "ANGLE", 1, Rgba::lerp_linear(panel, lit, 0.75));
-                text(c, tx + text_w("ANGLE ", 1) + 1, ty, ds, 1, lit);
+                text(c, tx, ty, "ANGLE", 1, Rgba::lerp_linear(panel, pal.lit, 0.75));
+                text(c, tx + text_w("ANGLE ", 1) + 1, ty, ds, 1, pal.lit);
             }
 
             // ---- DRIFT! ----
@@ -1463,14 +1468,14 @@ impl Family for Drift {
             if drifting && (0.0..TEXT_MS).contains(&tin) {
                 let (tx, ty) = l.drift_text;
                 let big_w = text_w("DRIFT!", 3);
-                if tin < 20.0 && big_w + 4 <= iw && 15 + 2 <= base - iy0 {
+                if tin < 20.0 && big_w + 4 <= iw && 15 + 2 <= hz_row - iy0 {
                     // The slam: one frame at 3x.
                     let bx = ix0 + (iw - big_w) / 2;
                     let by = (ty - 2).max(iy0 + 1);
-                    text_outlined(c, bx, by, "DRIFT!", 3, hot, OUTLINE);
+                    text_outlined(c, bx, by, "DRIFT!", 3, pal.hot, OUTLINE);
                 } else {
                     let shake = if tin < 100.0 { if (tin / 33.0) as i32 % 2 == 0 { 1 } else { -1 } } else { 0 };
-                    text_outlined(c, tx + shake, ty, "DRIFT!", 2, hot, OUTLINE);
+                    text_outlined(c, tx + shake, ty, "DRIFT!", 2, pal.hot, OUTLINE);
                 }
             }
         }
@@ -1478,7 +1483,6 @@ impl Family for Drift {
         c.clip_to_rounded_rect(1, 2, w - 2, h - 4, 3);
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1591,18 +1595,23 @@ mod tests {
         }
         (x0 <= x1).then_some((x0, y0, x1, y1))
     }
-    /// Smoke pixels (drawn over the panel, smoke-only hook) within the columns `x0..x1`.
-    fn smoke_px(c: &Canvas, t: &Theme, x0: i32, x1: i32) -> usize {
+    /// The mean row of the painted pixels, and how many there are.
+    fn centroid_y(c: &Canvas, t: &Theme) -> (f32, usize) {
         let panel = Rgba::from_hex(&t.panel, 1.0);
-        let mut n = 0;
+        let (mut sum, mut n) = (0.0f32, 0usize);
         for y in 4..c.height() - 4 {
-            for x in x0.max(3)..x1.min(c.width() - 3) {
+            for x in 3..c.width() - 3 {
                 if drew_over_panel(c.get(x, y), panel) {
+                    sum += y as f32;
                     n += 1;
                 }
             }
         }
-        n
+        (sum / n.max(1) as f32, n)
+    }
+    /// A behind-the-car camera for the model tests: the car at `CAR_Z`, straight ahead.
+    fn test_cam() -> Cam {
+        Cam { cx: 60.0, hz: 20.0, f: FOCAL, x: 0.0 }
     }
 
     #[test]
@@ -1622,7 +1631,7 @@ mod tests {
         }
     }
 
-    /// Silence still shows the street: sky, skyline, windows, neon, the road, the car and a thin trail.
+    /// Silence still shows the touge: sky, ridges, road, roadside, the car.
     #[test]
     fn rest_frame_is_not_empty() {
         for id in IDS {
@@ -1635,45 +1644,65 @@ mod tests {
         }
     }
 
-    /// The projection's winding test: the roof always faces the viewer and the floor never does; side
-    /// on (heading +x) the viewer sees the front and the near side, not the tail or the far side.
+    /// The winding test, from the chase camera: the roof always faces the viewer and the floor never
+    /// does; straight ahead the viewer sees the tail, not the nose.
     #[test]
-    fn the_roof_faces_the_viewer_and_the_floor_does_not() {
+    fn from_behind_the_roof_and_tail_show() {
         let roof: Vec<(f32, f32, f32)> = CABIN_HI.iter().map(|p| (p.0, p.1, CABIN_Y.1)).collect();
         let floor: Vec<(f32, f32, f32)> = BODY.iter().rev().map(|p| (p.0, p.1, BODY_Y.0)).collect();
         for k in 0..36 {
-            let pose = Pose::new(100.0, 10.0, k as f32 * TAU / 36.0, 1.0, 50.0);
+            let pose = Pose::new(0.0, CAR_Z, k as f32 * TAU / 36.0, test_cam());
             assert!(faces_viewer(&pose, &roof), "heading {}: roof hidden", k * 10);
             assert!(!faces_viewer(&pose, &floor), "heading {}: floor shown", k * 10);
         }
-        let pose = Pose::new(100.0, 10.0, 0.0, 1.0, 50.0);
+        let pose = Pose::new(0.0, CAR_Z, 0.0, test_cam());
         let side = |i: usize| {
             let (a, b) = (BODY[i], BODY[(i + 1) % 8]);
             faces_viewer(&pose, &[(a.0, a.1, 1.2), (b.0, b.1, 1.2), (b.0, b.1, 4.0), (a.0, a.1, 4.0)])
         };
-        assert!(side(0), "front hidden");
-        assert!(!side(4), "tail shown");
-        assert!(side(6), "near side hidden");
-        assert!(!side(2), "far side shown");
+        assert!(side(4), "tail hidden");
+        assert!(!side(0), "nose shown");
     }
 
-    /// The model really turns: drawn side on it is long and low; turned 45 degrees either way it is
-    /// taller on screen (its length now runs into the depth) and, nose toward the viewer, far shorter;
-    /// and it shows several shades (a lit top, shaded sides, glass) rather than one flat sprite colour.
+    /// The R34 tail: straight on from behind, four separate round `hot` lamps across the rear face.
+    #[test]
+    fn the_tail_has_four_round_lamps() {
+        let t = theme("drift-night");
+        let paint = Paint::new(&t);
+        let mut c = Canvas::new(120, 70);
+        let pose = Pose::new(0.0, CAR_Z, 0.0, test_cam());
+        draw_shapes(&mut c, &car_shapes(&pose, 0.0, &paint));
+        let (_, gy) = pose.screen((BODY[4].0, 0.0, TAIL_Y));
+        let row = gy.round() as i32;
+        let mut runs = 0;
+        let mut inside = false;
+        for x in 0..120 {
+            let p = c.get(x, row);
+            let lamp = p == paint.tail || p == paint.tail_core;
+            if lamp && !inside {
+                runs += 1;
+            }
+            inside = lamp;
+        }
+        assert_eq!(runs, 4, "{runs} lamp runs across the tail's row {row}");
+    }
+
+    /// The model really turns: from behind it is narrow; turned 45 degrees either way it is wider on
+    /// screen (its side now shows), and it shows several shades rather than one flat colour.
     #[test]
     fn the_car_model_turns_and_is_shaded() {
         let t = theme("drift-shibuya");
         let paint = Paint::new(&t);
         let draw_at = |deg: f32| {
             let mut c = Canvas::new(120, 70);
-            let pose = Pose::new(50.0, 10.0, deg.to_radians(), 1.0, 60.0);
+            let pose = Pose::new(0.0, CAR_Z, deg.to_radians(), test_cam());
             let sh = car_shapes(&pose, 0.0, &paint);
             for s in &sh.s[..sh.n] {
                 if s.n >= 3 {
                     fill_convex(&mut c, &s.pts[..s.n], (0.0, 0.0), 0, s.col);
                 }
             }
-            let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+            let (mut x0, mut x1) = (i32::MAX, i32::MIN);
             let mut cols: Vec<u32> = Vec::new();
             for y in 0..70 {
                 for x in 0..120 {
@@ -1681,8 +1710,6 @@ mod tests {
                     if p.a > 0 {
                         x0 = x0.min(x);
                         x1 = x1.max(x);
-                        y0 = y0.min(y);
-                        y1 = y1.max(y);
                         let k = (p.r as u32) << 16 | (p.g as u32) << 8 | p.b as u32;
                         if !cols.contains(&k) {
                             cols.push(k);
@@ -1690,149 +1717,148 @@ mod tests {
                     }
                 }
             }
-            (x1 - x0 + 1, y1 - y0 + 1, cols.len())
+            (x1 - x0 + 1, cols.len())
         };
-        let (w0, h0, n0) = draw_at(0.0);
-        let (_, h45, n45) = draw_at(45.0);
-        let (wm45, hm45, _) = draw_at(-45.0);
-        assert!((22..=30).contains(&w0), "side on, {w0} px long");
-        // Either way round, the length runs into the depth and the car stands taller.
-        assert!(h45 >= h0 + 4 && hm45 >= h0 + 4, "turned 45, {h45} / {hm45} px tall vs {h0} side on");
-        // Nose toward the viewer, the depth axis's lean cancels much of the length: nearly end on.
-        assert!(wm45 + 6 <= w0, "turned -45, {wm45} px wide vs {w0} side on");
+        let (w0, n0) = draw_at(0.0);
+        let (w45, n45) = draw_at(45.0);
+        let (wm45, _) = draw_at(-45.0);
+        assert!(w45 >= w0 + 6 && wm45 >= w0 + 6, "turned 45, {w45} / {wm45} px wide vs {w0} from behind");
         assert!(n0 >= 4 && n45 >= 4, "only {n0} / {n45} distinct colours: not shaded");
     }
 
-    /// Silent: the car straightens and cruises down the middle of the road, centred on the panel, not
-    /// turning (its painted box is the same frame to frame).
+    /// Silent: the car drives the bends on grip - next to no slip - and stays near the bottom centre.
     #[test]
-    fn silent_the_car_cruises_straight_down_the_centre() {
+    fn silent_the_car_drives_on_grip_near_the_centre() {
         for id in IDS {
             let t = calm_theme(id);
             for (w, h) in [(380, 60), (128, 44)] {
                 let mut fam = Drift::default();
                 fam.only_for_test(Only::Car);
                 let _ = frames(&mut fam, &t, w, h, 0.0, 60);
-                let mut boxes = Vec::new();
-                for _ in 0..12 {
+                for _ in 0..30 {
                     let c = frames(&mut fam, &t, w, h, 0.0, 10);
-                    boxes.push(bbox(&c, &t).expect("no car drawn"));
+                    let (x0, y0, x1, y1) = bbox(&c, &t).expect("no car drawn");
+                    assert!(((x0 + x1) / 2 - w / 2).abs() <= w / 10, "{id} {w}x{h}: car off centre at {x0}..{x1}");
+                    assert!(y1 >= h / 2 && y0 >= 4 && y1 < h - 4, "{id} {w}x{h}: car not at the bottom, rows {y0}..{y1}");
+                    assert!(fam.slip.abs() < 1.0, "{id} {w}x{h}: slip {} with no music", fam.slip);
                 }
-                let (x0, y0, x1, y1) = boxes[0];
-                assert!(((x0 + x1) / 2 - w / 2).abs() <= 3, "{id} {w}x{h}: parked off centre at {x0}..{x1}");
-                for b in &boxes {
-                    assert!((b.0 - x0).abs() <= 1 && (b.2 - x1).abs() <= 1, "{id} {w}x{h}: moved {b:?} vs {:?}", boxes[0]);
-                    assert!((b.1 - y0).abs() <= 1 && (b.3 - y1).abs() <= 1, "{id} {w}x{h}: turned {b:?} vs {:?}", boxes[0]);
-                }
-                assert!(fam.slip.abs() < 0.5, "{id} {w}x{h}: slip {} at rest", fam.slip);
             }
         }
     }
 
-    /// Loud with a beat: the body flicks from lock to lock several times, holds a big slip angle, and
-    /// the painted car changes shape as it turns and moves across the road's depth - while staying in
-    /// the panel.
+    /// Loud: the drift comes from the road - in a bend the slip points into it (most of the time), it
+    /// reaches a big angle, and over a run of S-bends it swaps lock.
     #[test]
-    fn loud_the_car_flicks_from_lock_to_lock_across_the_road() {
-        for id in IDS {
-            let t = calm_theme(id);
-            for (w, h) in [(380, 60), (128, 44)] {
-                let mut fam = Drift::default();
-                fam.only_for_test(Only::Car);
-                let mut c = Canvas::new(w, h);
-                let (mut sign_changes, mut last_sign, mut max_slip) = (0, 0.0f32, 0.0f32);
-                let (mut h_lo, mut h_hi, mut cy_lo, mut cy_hi) = (i32::MAX, i32::MIN, i32::MAX, i32::MIN);
-                for k in 0..420 {
-                    c.clear();
-                    fam.draw(&mut c, &t, &music(0.85, 0.22, k, 30));
-                    if k < 60 {
-                        continue;
-                    }
-                    let sg = fam.slip.signum();
-                    if fam.slip.abs() > 5.0 {
-                        if last_sign != 0.0 && sg != last_sign {
-                            sign_changes += 1;
-                        }
-                        last_sign = sg;
-                    }
-                    max_slip = max_slip.max(fam.slip.abs());
-                    let (_, y0, _, y1) = bbox(&c, &t).expect("no car drawn");
-                    assert!(y0 >= 4 && y1 < h - 4, "{id} {w}x{h}: car outside the panel at rows {y0}..{y1}");
-                    h_lo = h_lo.min(y1 - y0);
-                    h_hi = h_hi.max(y1 - y0);
-                    cy_lo = cy_lo.min(y0 + y1);
-                    cy_hi = cy_hi.max(y0 + y1);
-                }
-                assert!(sign_changes >= 4, "{id} {w}x{h}: only {sign_changes} flicks in 6 s");
-                assert!(max_slip >= 25.0, "{id} {w}x{h}: slip only reached {max_slip:.0} degrees");
-                assert!(h_hi - h_lo >= 3, "{id} {w}x{h}: the car's height only varied {h_lo}..{h_hi} px");
-                let road_px = (fam.layout.y0 - fam.layout.kerb as f32) as i32;
-                assert!(
-                    (cy_hi - cy_lo) / 2 >= road_px / 5,
-                    "{id} {w}x{h}: the car only moved {} rows across a {road_px} px road",
-                    (cy_hi - cy_lo) / 2
-                );
+    fn loud_the_drift_follows_the_bends() {
+        let t = calm_theme("drift-shibuya");
+        let mut fam = Drift::default();
+        fam.only_for_test(Only::Car);
+        let mut c = Canvas::new(380, 60);
+        let (mut agree, mut bent, mut swaps, mut last, mut max_slip) = (0, 0, 0, 0.0f32, 0.0f32);
+        for k in 0..1200 {
+            c.clear();
+            fam.draw(&mut c, &t, &music(0.85, 0.22, k, 0));
+            if k < 60 {
+                continue;
             }
+            if fam.bend.abs() > 0.6 {
+                bent += 1;
+                if fam.slip * fam.bend > 0.0 {
+                    agree += 1;
+                }
+            }
+            if fam.slip.abs() > 8.0 {
+                let sg = fam.slip.signum();
+                if last != 0.0 && sg != last {
+                    swaps += 1;
+                }
+                last = sg;
+            }
+            max_slip = max_slip.max(fam.slip.abs());
         }
+        assert!(bent > 100, "only {bent} frames in a bend: the course is too straight");
+        assert!(agree * 10 >= bent * 9, "slip into the bend on only {agree} of {bent} bent frames");
+        assert!(max_slip >= 25.0, "slip only reached {max_slip:.0} degrees");
+        assert!(swaps >= 2, "only {swaps} swaps of lock in 19 s of S-bends");
     }
 
-    /// The flicks are on the beat: with a kick every second (longer than the flick's minimum gap), most
-    /// flicks land on a kick; with no beat at all the car still flicks, on its own timer.
+    /// A clutch kick on the bass: more slip and the exhaust pops.
     #[test]
-    fn flicks_land_on_the_kicks() {
+    fn a_kick_is_a_clutch_kick() {
         let t = calm_theme("drift-shibuya");
         let mut fam = Drift::default();
         let mut c = Canvas::new(380, 60);
-        for k in 0..480 {
+        for k in 0..200 {
             c.clear();
-            fam.draw(&mut c, &t, &music(0.85, 0.22, k, 60));
+            fam.draw(&mut c, &t, &music(0.6, 0.15, k, 0));
         }
-        assert!(fam.flips >= 5, "only {} flicks in 8 s", fam.flips);
-        assert!(fam.kick_flips * 10 >= fam.flips * 8, "{} of {} flicks on a kick", fam.kick_flips, fam.flips);
+        assert!(fam.kick < 0.5 && fam.flame == 0.0, "kick {} flame {} with no beat", fam.kick, fam.flame);
+        let mut fired = false;
+        for k in 200..260 {
+            c.clear();
+            fam.draw(&mut c, &t, &music(0.6, 0.15, k, if k < 203 { 1 } else { 0 }));
+            fired |= fam.flame > 0.0 && fam.kick > KICK_SLIP * 0.8;
+        }
+        assert!(fired, "a kick did not kick");
+    }
 
-        // Steady levels: no onsets, so the timer does it.
+    /// The road bends: over a run its far end swings across the panel, and it streams (consecutive
+    /// frames differ on the ground even in silence).
+    #[test]
+    fn the_road_winds_and_streams() {
+        let t = calm_theme("drift-touge");
         let mut fam = Drift::default();
-        let _ = frames(&mut fam, &t, 380, 60, 0.22, 400);
-        assert!(fam.flips >= 2, "no beat: only {} flicks in 6.7 s", fam.flips);
-        assert_eq!(fam.kick_flips, 0);
-    }
-
-    /// Skid marks: after a sliding passage the road behind the car carries dark marks (pixels darker
-    /// than the baked road); after a silent one it carries none.
-    #[test]
-    fn skid_marks_trail_behind_a_sliding_car() {
-        for id in IDS {
-            let t = calm_theme(id);
-            let (w, h) = (380, 60);
-            let marks = |level: f32, rms: f32| {
-                let mut fam = Drift::default();
-                let c = frames_bands(&mut fam, &t, w, h, 0..64, level, rms, 300);
-                let l = fam.layout;
-                let right = (fam.car_screen_x() - REACH * l.s * CAR_SCALE) as i32;
-                let mut n = 0;
-                for y in l.kerb + 1..l.y0 as i32 {
-                    for x in 3..right {
-                        let (p, b) = (c.get(x, y), fam.bg.get(x, y));
-                        let (lp, lb) = (p.r as i32 + p.g as i32 + p.b as i32, b.r as i32 + b.g as i32 + b.b as i32);
-                        if lb - lp > 24 {
-                            n += 1;
-                        }
-                    }
-                }
-                n
-            };
-            let sliding = marks(0.15, 0.22);
-            assert!(sliding >= 40, "{id}: only {sliding} px of skid marks after a sliding passage");
-            let silent = marks(0.0, 0.0);
-            assert_eq!(silent, 0, "{id}: {silent} px of skid marks after silence");
+        let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+        for _ in 0..60 {
+            let _ = frames(&mut fam, &t, 380, 60, 0.15, 10);
+            let row = (fam.layout.hz_row + 2) as usize;
+            lo = lo.min(fam.row_cx[row]);
+            hi = hi.max(fam.row_cx[row]);
         }
+        assert!(hi - lo >= 80.0, "the far road only swung {lo:.0}..{hi:.0}");
+        let a = frames(&mut fam, &t, 380, 60, 0.0, 1);
+        let b = frames(&mut fam, &t, 380, 60, 0.0, 1);
+        let hz = fam.layout.hz_row;
+        let mut diff = 0;
+        for y in hz..56 {
+            for x in 3..377 {
+                if a.get(x, y) != b.get(x, y) {
+                    diff += 1;
+                }
+            }
+        }
+        assert!(diff >= 50, "only {diff} ground px changed between frames");
     }
 
-    /// Bass-only vs treble-only, the car straight (rms 0): the smoke close behind the car (the first
-    /// puffs, which are the bass bands) is far bigger on bass; the far end of the trail (the treble
-    /// bands) is bigger on treble. Read off the painted smoke.
+    /// The valley's lights show beyond the guardrail and some of them twinkle.
     #[test]
-    fn the_smoke_trail_billows_with_the_spectrum() {
+    fn the_city_glitters_in_the_valley() {
+        let t = theme("drift-shibuya");
+        let l = layout(380, 60);
+        let tw: Vec<Light> = l.lights[..l.lights_n].iter().copied().filter(|li| li.twinkle).collect();
+        assert!(!tw.is_empty(), "no twinkling light");
+        assert!(tw.iter().any(|li| (0..60).any(|k| !light_on(li, k as f32 / 60.0)) && (0..60).any(|k| light_on(li, k as f32 / 60.0))));
+        let mut fam = Drift::default();
+        let c = frames(&mut fam, &t, 380, 60, 0.0, 20);
+        let neon = neon_of(&t);
+        let mut n = 0;
+        for y in fam.layout.hz_row..56 {
+            let edge = (fam.row_cx[y as usize] + fam.row_hw[y as usize] * 1.25) as i32 + 2;
+            for x in edge.max(3)..377 {
+                let p = c.get(x, y);
+                let d = (p.r as i32 - neon.r as i32).abs() + (p.g as i32 - neon.g as i32).abs() + (p.b as i32 - neon.b as i32).abs();
+                if d < 120 {
+                    n += 1;
+                }
+            }
+        }
+        assert!(n >= 8, "only {n} neon city lights in the valley");
+    }
+
+    /// Bass-only vs treble-only, straight (rms 0): bass makes the fresh puffs at the tyres big, so the
+    /// smoke sits low by the wheels; treble makes the old risen puffs big, so it sits higher.
+    #[test]
+    fn the_smoke_billows_with_the_spectrum() {
         for id in IDS {
             let t = calm_theme(id);
             for (w, h) in [(380, 60), (128, 44)] {
@@ -1840,52 +1866,33 @@ mod tests {
                     let mut fam = Drift::default();
                     fam.only_for_test(Only::Smoke);
                     let c = frames_bands(&mut fam, &t, w, h, bands, 0.9, 0.0, 90);
-                    let rear = (fam.car_screen_x() + AXLE_R * fam.layout.s * CAR_SCALE).round() as i32;
-                    (c, rear)
+                    centroid_y(&c, &t)
                 };
-                let (bass, rear) = run(0..16);
-                let (treble, rear2) = run(48..64);
-                assert_eq!(rear, rear2);
-                // The first ~16 puffs sit within this many px behind the rear axle.
-                let iw = (w - 6) as f32;
-                let step = iw * SCROLL_BASE / 60.0;
-                let near = (rear - (step * 14.0) as i32, rear + 9);
-                let far = (rear - (step * 63.0) as i32, rear - (step * 48.0) as i32);
-                let (bn, tn) = (smoke_px(&bass, &t, near.0, near.1), smoke_px(&treble, &t, near.0, near.1));
-                assert!(bn >= 3 * tn.max(1), "{id} {w}x{h}: near the car bass {bn} px vs treble {tn} px");
-                let (bf, tf) = (smoke_px(&bass, &t, far.0, far.1), smoke_px(&treble, &t, far.0, far.1));
-                assert!(tf >= 2 * bf.max(1), "{id} {w}x{h}: at the trail's end treble {tf} px vs bass {bf} px");
+                let ((yb, nb), (yt, nt)) = (run(0..16), run(48..64));
+                assert!(nb > 20 && nt > 20, "{id} {w}x{h}: smoke {nb} / {nt} px");
+                assert!(yb >= yt + 2.0, "{id} {w}x{h}: bass smoke at row {yb:.1}, treble at {yt:.1}");
             }
         }
     }
 
-    /// A forced drift: within 900 ms the car's painted extent spans >= 60 % of the width, it spins a
-    /// full turn on the way, and it lands back on its line (centred, at silence).
+    /// A forced drift spins the car a full turn and lets go after.
     #[test]
-    fn drift_flourish_sweeps_and_spins_the_car_across() {
+    fn drift_flourish_spins_the_car() {
         for id in IDS {
             let t = theme(id);
             for (w, h) in [(380, 60), (190, 48), (128, 44)] {
                 let mut fam = Drift::default();
                 fam.only_for_test(Only::Car);
-                // Silence: the forced drift fires regardless, and the car parks dead centre after.
                 let _ = frames(&mut fam, &t, w, h, 0.0, 30);
                 fam.flourish.force_next();
-                let (mut lo, mut hi, mut spin) = (i32::MAX, i32::MIN, 0.0f32);
+                let mut spin = 0.0f32;
                 for _ in 0..54 {
                     let c = frames(&mut fam, &t, w, h, 0.0, 1);
-                    if let Some((a, _, b, _)) = bbox(&c, &t) {
-                        lo = lo.min(a);
-                        hi = hi.max(b);
-                    }
+                    assert!(bbox(&c, &t).is_some(), "{id} {w}x{h}: the car vanished in the drift");
                     spin = spin.max(fam.spin.abs());
                 }
-                let span = (hi - lo) as f32 / w as f32;
-                assert!(span >= 0.6, "{id} {w}x{h}: the drift swept only {lo}..{hi} ({:.0}%)", span * 100.0);
                 assert!(spin >= 0.95 * TAU, "{id} {w}x{h}: the drift only spun {:.0} degrees", spin.to_degrees());
-                let c = frames(&mut fam, &t, w, h, 0.0, 10);
-                let (a, _, b, _) = bbox(&c, &t).unwrap();
-                assert!(((a + b) / 2 - w / 2).abs() <= 3, "{id} {w}x{h}: after the drift the car is at {a}..{b}");
+                let _ = frames(&mut fam, &t, w, h, 0.0, 10);
                 assert!(fam.spin == 0.0, "{id} {w}x{h}: still spinning after the drift");
             }
         }
@@ -1917,21 +1924,17 @@ mod tests {
                 fam.flourish.force_next();
                 let _ = frames(&mut fam, &t, w, h, 0.1, 15); // ~250 ms in
                 let during = count(&frames(&mut fam, &t, w, h, 0.1, 1));
-                // DRIFT! at 2x: D R I F T ! are 48 glyph pixels, 192 canvas pixels; the car or smoke
-                // may cross a few.
                 assert!(during >= before + 4 * 44, "{id} {w}x{h}: only {during} hot px of DRIFT! (before: {before})");
                 let _ = frames(&mut fam, &t, w, h, 0.1, 50);
                 let after = count(&frames(&mut fam, &t, w, h, 0.1, 1));
-                // A few `hot` pixels (a sign, the needle) can fall in the box; DRIFT! is 192.
                 assert!(before <= 24, "{id} {w}x{h}: DRIFT! up before the drift ({before} hot px)");
                 assert!(after <= 24, "{id} {w}x{h}: DRIFT! still up after the drift ({after} hot px)");
             }
         }
     }
 
-    /// 380x60 draws the steering gauge and its readout in the top-right sky; 190x48 and 128x44 drop it.
-    /// Counted in the gauge's own colours - its ring and the readout's `lit` digits - since a `hot`
-    /// sign can stand in that corner of the skyline.
+    /// 380x60 draws the steering gauge and its readout; 190x48 and 128x44 drop it. Counted in the
+    /// gauge's own colours - its ring and the readout's `lit` digits.
     #[test]
     fn the_gauge_fits_or_drops() {
         let t = theme("drift-night");
@@ -1953,38 +1956,6 @@ mod tests {
         assert!(gauge_px(380, 60) >= 20, "380x60: no gauge");
         assert_eq!(gauge_px(190, 48), 0, "190x48: the gauge did not drop");
         assert_eq!(gauge_px(128, 44), 0, "128x44: the gauge did not drop");
-    }
-
-    /// Some neon flickers: across a second at rest, at least one sign's pixel is lit in one frame and
-    /// dark in another.
-    #[test]
-    fn some_neon_flickers() {
-        let t = theme("drift-shibuya");
-        let (w, h) = (380, 60);
-        let l = layout(w, h);
-        let flick: Vec<Sign> = l.signs[..l.signs_n].iter().copied().filter(|s| s.flicker).collect();
-        assert!(!flick.is_empty(), "no flickering sign");
-        let mut fam = Drift::default();
-        let mut on = vec![0usize; flick.len()];
-        let mut off = vec![0usize; flick.len()];
-        let panel = Rgba::from_hex(&t.panel, 1.0);
-        for _ in 0..60 {
-            let c = frames(&mut fam, &t, w, h, 0.0, 1);
-            for (i, s) in flick.iter().enumerate() {
-                let p = c.get(s.x, s.y);
-                // A lit tube is the full neon; an unlit one is a dim tint of it.
-                let bright = (p.r as i32 + p.g as i32 + p.b as i32) - (panel.r as i32 + panel.g as i32 + panel.b as i32);
-                if bright > 250 {
-                    on[i] += 1;
-                } else {
-                    off[i] += 1;
-                }
-            }
-        }
-        assert!(
-            (0..flick.len()).any(|i| on[i] > 0 && off[i] > 0),
-            "no sign flickered over a second: on {on:?} off {off:?}"
-        );
     }
 
     /// 190x48 and 128x44 with a forced drift: no panic, something drawn, nothing outside the panel.
@@ -2027,7 +1998,7 @@ mod tests {
             d.dt_ms = if k % 3 == 0 { f32::NAN } else { 1.0e9 };
             fam.draw(&mut c, &t, &d);
         }
-        for v in [fam.car_x, fam.car_z, fam.vz, fam.slip, fam.yaw, fam.amp, fam.dist] {
+        for v in [fam.s_cam, fam.cam_x, fam.lat, fam.slip, fam.amp, fam.bg_off] {
             assert!(v.is_finite(), "state went non-finite: {v}");
         }
     }
@@ -2073,8 +2044,7 @@ mod tests {
     }
 
     /// Dumps for the eye test, composited over `#202020`. Each file is `<name>.<w>x<h>.rgba`. The
-    /// `-strip` dumps stack eight frames a quarter of a second apart, top to bottom, to show the
-    /// motion in a still.
+    /// `-strip` dumps stack eight frames half a second apart, top to bottom, to show the motion.
     ///
     /// Run: cargo test --release dump_drift -- --ignored --nocapture
     #[test]
@@ -2121,11 +2091,11 @@ mod tests {
             let mut fam = Drift::default();
             let mut c = Canvas::new(w, h);
             let mut out = Canvas::new(w, h * 8);
-            for k in 0..(120 + 8 * 15) {
+            for k in 0..(120 + 8 * 30) {
                 c.clear();
                 fam.draw(&mut c, &t, &music(level, rms, k, 30));
-                if k >= 120 && (k - 120) % 15 == 14 {
-                    let row = ((k - 120) / 15) as i32;
+                if k >= 120 && (k - 120) % 30 == 29 {
+                    let row = ((k - 120) / 30) as i32;
                     out.copy_region(&c, (0, 0), (0, row * h), w, h);
                 }
             }
@@ -2133,44 +2103,30 @@ mod tests {
         };
         for id in IDS {
             let short = &id["drift-".len()..];
-            for (tag, level, rms, n) in [("calm", 0.3f32, 0.07f32, 250), ("loud", 0.85, 0.2, 266)] {
+            for (tag, level, rms, n) in [("calm", 0.3f32, 0.07f32, 250), ("loud", 0.85, 0.2, 400)] {
                 let (_, c, _) = run(id, 380, 60, level, rms, n);
                 write(format!("drift-{short}-{tag}"), &c);
             }
-            // The drift ~250 ms in (mid-sweep, mid-spin, DRIFT! up) and ~500 ms in (the smoke wall).
             write(format!("drift-{short}-flourish"), &flourish(id, 380, 60, 15));
             write(format!("drift-{short}-flourish-late"), &flourish(id, 380, 60, 30));
         }
         write("drift-shibuya-loud-strip".into(), &strip("drift-shibuya", 380, 60, 0.85, 0.2));
-        // The car alone on the asphalt at eight headings, as `draw` paints it (outline, then faces).
+        write("drift-orange-calm-strip".into(), &strip("drift-orange", 380, 60, 0.3, 0.07));
+        // The car alone at eight headings from the chase camera.
         for id in ["drift-shibuya", "drift-orange"] {
             let t = theme(id);
             let paint = Paint::new(&t);
-            let (road, _) = street_colours(&t);
-            let mut c = Canvas::new(8 * 48, 34);
-            c.fill_rect(0, 0, 8 * 48, 34, road);
-            for (k, deg) in [-60.0f32, -40.0, -20.0, 0.0, 20.0, 40.0, 60.0, 90.0].into_iter().enumerate() {
-                let pose = Pose::new(k as f32 * 48.0 + 20.0, 6.0, deg.to_radians(), CAR_SCALE, 30.0);
-                let sh = car_shapes(&pose, (-deg * 0.6).clamp(-COUNTER_MAX, COUNTER_MAX).to_radians(), &paint);
-                for s in sh.s[..sh.n].iter().filter(|s| s.n >= 3) {
-                    for off in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0)] {
-                        fill_convex(&mut c, &s.pts[..s.n], off, 0, OUTLINE);
-                    }
-                }
-                for s in &sh.s[..sh.n] {
-                    if s.n == 2 {
-                        let (a, b) = (s.pts[0], s.pts[1]);
-                        c.line(a.0.floor() as i32, a.1.floor() as i32, b.0.floor() as i32, b.1.floor() as i32, s.col);
-                    } else {
-                        fill_convex(&mut c, &s.pts[..s.n], (0.0, 0.0), 0, s.col);
-                    }
-                }
+            let mut c = Canvas::new(8 * 60, 40);
+            c.fill_rect(0, 0, 8 * 60, 40, Palette::new(&t).road_a);
+            for (k, deg) in [-60.0f32, -40.0, -20.0, 0.0, 20.0, 40.0, 60.0, 180.0].into_iter().enumerate() {
+                let cam = Cam { cx: k as f32 * 60.0 + 30.0, hz: 0.0, f: FOCAL, x: 0.0 };
+                let pose = Pose::new(0.0, CAR_Z, deg.to_radians(), cam);
+                draw_shapes(&mut c, &car_shapes(&pose, (-deg * 0.6).clamp(-COUNTER_MAX, COUNTER_MAX).to_radians(), &paint));
             }
             write(format!("{id}-turntable"), &c);
         }
-        write("drift-orange-calm-strip".into(), &strip("drift-orange", 380, 60, 0.3, 0.07));
         for (w, h) in [(190, 48), (128, 44)] {
-            let (_, c, _) = run("drift-shibuya", w, h, 0.85, 0.2, 266);
+            let (_, c, _) = run("drift-shibuya", w, h, 0.85, 0.2, 400);
             write(format!("drift-shibuya-{w}x{h}"), &c);
             write(format!("drift-shibuya-{w}x{h}-flourish"), &flourish("drift-shibuya", w, h, 15));
         }

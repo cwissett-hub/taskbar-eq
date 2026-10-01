@@ -3,7 +3,16 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** (Unreleased, on main) — TOKYO DRIFT REWORKED INTO AN ISO STREET, at the user's
+**Last updated:** (Unreleased, on main) — TOKYO DRIFT, THIRD TAKE: CHASE CAM ON A TOUGE, R34
+TAIL. The user: "a view from behind the car going along a touge road" and "model the car off the
+rear of an R34 Skyline". `drift` is now a pseudo-3D racer road (OutRun-style rows, a winding course,
+haze to the horizon) on a mountain pass: pines on the slope, a guardrail on reflector posts, the
+city's neon in the valley, ridges that shift as you corner. The car is seen from behind with four
+round tail lamps and a tall wing. It drifts because of the bends (slip into the corner, swapping
+lock through S-bends), with a clutch kick and exhaust pop on bass kicks. The smoke meter rolls back
+toward the camera; the flourish is a 360. 0.23 ms/frame steady. Review sheet section 32.
+
+Earlier (same day, superseded): TOKYO DRIFT REWORKED INTO AN ISO STREET, at the user's
 request ("the car sprite is completely 2d and just goes left and right, doesn't look like drifting,
 find a way to make it a more iso view"). `drift` now draws in an oblique iso projection: iso-box
 skyline with roofs and side faces, slanted sidewalk seams, zebra crossings, neon streaking the wet
@@ -150,14 +159,12 @@ Nothing right now. Queued, in order:
 
 ## Waiting on you
 
-- [ ] **Judge section 31 on `docs/review/index.html`: the reworked Tokyo Drift (iso street, 3D
-      car, flicks on the kick, skid marks, 360 flourish).** It is running on your taskbar now
-      (pick any `drift-*` colourway). Open questions: the oblique view makes the car look long
-      when its nose points at the far kerb and properly sideways when it points at you; smaller
-      depth lean evens that out but looks less iso. Is one flick every other kick right (one
-      setting, `MIN_FLIP_MS`)? Are 1 px skid marks visible enough at 1:1? Keep the headlight
-      beam? The neon in the glass reads as a pink band on the white Shibuya car; keep or darken?
-      Is the car big enough at ~26x14 px? Does the 360 spin in the flourish land or feel silly?
+- [ ] **Judge section 32 on `docs/review/index.html`: Tokyo Drift as a chase cam down a touge
+      with an R34-style tail.** Running on your taskbar now (pick any `drift-*` colourway).
+      Open questions: do the four round tail lamps read as an R34 at 1:1 (they are ~2 px each)?
+      Orange and Night have a white `hot`, so their lamps are white; force red lamps everywhere?
+      Smoke amount on loud tracks? Is the valley's city glow enough? Want a Bayside Blue
+      colourway? Keep the 360 in the flourish or make it a bigger flick?
 - [ ] **Judge sections 23-30 on `docs/review/index.html`: keep, tune or drop each colourway
       (v0.4.0 + v0.4.1), with the implementers' open questions, and try the now-playing
       click/tray/hotkey.** Section 23, `bling`: busy at 1:1? are the gold gems meant to read as
