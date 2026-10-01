@@ -850,9 +850,14 @@ impl Canvas {
         let maxy = points.iter().map(|p| p.1).max().unwrap();
         let y0 = miny.max(0);
         let y1 = maxy.min(self.h - 1);
-        let mut xs: Vec<i32> = Vec::new();
+        // A row crosses at most `n` edges. Small polygons (every feather, quad and triangle the
+        // families draw per frame) keep their crossings on the stack, so a frame of fills allocates
+        // nothing; only a polygon with more than 16 points falls back to the heap.
+        let mut stack = [0i32; 16];
+        let mut heap: Vec<i32> = if n > stack.len() { vec![0; n] } else { Vec::new() };
+        let buf: &mut [i32] = if n > stack.len() { &mut heap } else { &mut stack };
         for y in y0..=y1 {
-            xs.clear();
+            let mut len = 0usize;
             for i in 0..n {
                 let (ax, ay) = points[i];
                 let (bx, by) = points[(i + 1) % n];
@@ -865,8 +870,10 @@ impl Canvas {
                     continue;
                 }
                 let t = (y - lo) as f32 / (hi - lo) as f32;
-                xs.push((lo_x as f32 + t * (hi_x - lo_x) as f32).round() as i32);
+                buf[len] = (lo_x as f32 + t * (hi_x - lo_x) as f32).round() as i32;
+                len += 1;
             }
+            let xs = &mut buf[..len];
             xs.sort_unstable();
             let mut i = 0;
             while i + 1 < xs.len() {
