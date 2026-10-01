@@ -20,7 +20,7 @@
 //!   `DANGER TO MANIFOLD` as `DAMGER TO MAMIFOLD` on the `nos` flourish.
 //!
 //! Three families grew a private copy of a 3x5 font (this one seeded from `sesh`'s stamp glyphs).
-//! `vsghost` and `vswings` still carry their own private phrase fonts; those are out of scope here and
+//! `vsghost` migrated here in fidelity pass 2; `vswings` still carries its own private title font,
 //! left to migrate to this module later.
 //!
 //! Row format matches `canvas::glyph_3x5`: five rows of three bits, **bit 2 leftmost** (so
@@ -106,6 +106,11 @@ pub fn glyph(ch: char) -> Option<[u8; 5]> {
         '!' => [0b010, 0b010, 0b010, 0b000, 0b010],
         // The PLAY marker: a solid right-pointing triangle.
         '>' => [0b100, 0b110, 0b111, 0b110, 0b100],
+        // Added for the vsghost kaomoji (`( ^_^ )`, `( >_< )`): a caret, and `<` as the mirror of the
+        // solid `>` so the pair stays symmetric. (vsghost draws its face's eyes as its own chevron
+        // shapes; these are so the faces can also be set as plain text.)
+        '^' => [0b010, 0b101, 0b000, 0b000, 0b000],
+        '<' => [0b001, 0b011, 0b111, 0b011, 0b001],
         ' ' => [0, 0, 0, 0, 0],
         _ => return None,
     })
@@ -194,6 +199,10 @@ mod tests {
             // The bling family's glitter phrases (see `bling::PHRASES`) - the reason `*` and `$`
             // were added above.
             "BLING BLING", "ICED OUT", "4 REAL", "XOXO", "~*UR MINE*~", "$$$", "HOTTIE", "LUV U 4EVA",
+            // The vsghost kaomoji and ticker (see `vsghost::FACES`/`TICKER`) - the reason `^` and `<`
+            // were added above.
+            "( ^_^ )", "( >_< )", "( o_o )", "( -_- )", "( ^o^ )", "( ~_~ )", "( ._. )", "( O_O )",
+            "GHOST VOICES // EON BREAK // A.I.NGEL // PARTICLE ARTS // UTOPIA // ",
         ];
         for label in labels {
             for ch in label.chars() {

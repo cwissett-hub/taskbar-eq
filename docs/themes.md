@@ -50,9 +50,12 @@ wings, cobalt floor), `vswings-eon-break` (black panel, cobalt-to-electric wings
 `vswings-angel-voices` (pale-pink panel, violet wings tipped violet), `vswings-utopia` (black panel,
 silver-to-white chrome wings) and `vswings-ghost` (black panel, pure white wings, no floor).
 
-The Virtual Self: ghost voices colourways are `vsghost-white` (black panel, white ticks, ice peaks),
-`vsghost-cobalt` (black panel, cobalt ticks, electric-cyan peaks), `vsghost-inverse` (white panel,
-black ticks, cobalt peaks) and `vsghost-violet` (black panel, violet ticks, pale-pink peaks).
+The Virtual Self: ghost voices family is a big glitching kaomoji face (eyes open with the bass, the
+mouth with the mids, slices of it shifted by the bass) over a ticker meter of 32 thin bars and a
+crawling phrase. Its colourways are `vsghost-white` (black panel, white face and ticks, ice peaks),
+`vsghost-cobalt` (black panel, cyan-to-cobalt face and cobalt ticks, electric-cyan peaks), `vsghost-inverse`
+(white panel, cobalt-to-black face and black ticks, cobalt peaks) and `vsghost-violet` (black panel,
+pink-to-violet face and violet ticks, pale-pink peaks).
 
 The Virtual Self: orb colourways are `vsorb-chrome` (ice gradient, cobalt chrome orb, white spikes),
 `vsorb-eon` (black-to-cobalt, electric-cyan orb, ice spikes), `vsorb-angel` (pale-pink-to-violet
