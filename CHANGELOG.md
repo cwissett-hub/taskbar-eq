@@ -5,9 +5,9 @@ not commit dates.
 
 ## [0.4.0] — 2026-10-01
 
-- `bling` — a Blingee GIF panel: rhinestone gem columns, glitter text and camcorder-era stamps,
-  topped off with a bass-hit flash flourish (a full-panel white wash before the gems and glitter
-  redraw over it); four colourways.
+- `bling` — a Blingee GIF panel: rhinestone gem columns, glitter text and sparkle / `$` / crown /
+  heart stamps, topped off with a bass-hit flash flourish (a full-panel white wash before the gems
+  and glitter redraw over it); four colourways.
 - `nos` — a 2 Fast 2 Furious dash: an LED tacho arc, shift lights, a gear/MPH readout and
   under-glow, capped by the `DANGER TO MANIFOLD` flourish — a blinking green warning screen plus a
   speed-line purge on a bass hit; four colourways.

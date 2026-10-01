@@ -58,6 +58,11 @@ const ID_KEYS_EDIT: usize = 1104;
 /// One id per action, so clicking a binding starts capturing for THAT action. As wide as
 /// `hotkeys::SLOTS`.
 const ID_BIND_BASE: usize = 1110;
+/// `ID_BIND_BASE` reserves `hotkeys::SLOTS` ids (1110..1110+SLOTS), and `ID_RANDOM_THEME_NOW` is
+/// the very next id used - they now abut exactly (9 slots: 1110..1119, then 1120). A tenth slot
+/// added without moving `ID_RANDOM_THEME_NOW` would collide a bind-row id with this one; this
+/// catches that at compile time instead of at a menu click.
+const _: () = assert!(ID_BIND_BASE + crate::win::hotkeys::SLOTS <= ID_RANDOM_THEME_NOW);
 const ID_RANDOM_THEME_NOW: usize = 1120;
 const ID_RANDOM_COLOURWAY_NOW: usize = 1121;
 const ID_FLOURISH_NOW: usize = 1122;
@@ -105,12 +110,27 @@ pub enum TrayEvent {
     ShowNowPlaying,
 }
 
+/// Escapes `&` for a Win32 menu string: a lone `&` is consumed as the next character's
+/// underline-mnemonic marker (so "Fast & Furious: NOS" rendered as "Fast  Furious" with an
+/// underlined space), and `&&` is the documented way to show a literal ampersand instead.
+///
+/// Apply this to every piece of DYNAMIC text that reaches `AppendMenuW` - family/theme names,
+/// song and track titles, anything not a `w!()` literal already known not to contain `&`. The one
+/// exception is `song_entries`' `SongEntry::label`, which already escapes at construction because
+/// it is built once and reused; running this over it again would double the `&&` into `&&&&`.
+fn menu_text(s: &str) -> String {
+    s.replace('&', "&&")
+}
+
 /// The `♪ <title>` line at the top of the context menu: the label to show, and whether it is
 /// enabled (false when nothing is playing, in which case the label is the disabled placeholder).
 ///
 /// Pure so it is testable without a real menu. 48 characters is comfortably short of what a tray
 /// menu column can hold at the app's usual DPI settings without wrapping or getting clipped by the
-/// screen edge.
+/// screen edge. The truncation budget is measured against the RAW title, before `&` escaping -
+/// escaping doubles characters that were never part of what the user is reading, and escaping
+/// first would risk truncating a doubled `&&` apart into a single trailing `&`, which Win32 would
+/// then read as a dangling mnemonic marker onto whatever follows it (here, "...").
 pub fn now_playing_menu_label(title: &str) -> (String, bool) {
     const MAX_CHARS: usize = 48;
     let title = title.trim();
@@ -124,7 +144,7 @@ pub fn now_playing_menu_label(title: &str) -> (String, bool) {
     } else {
         title.to_string()
     };
-    (format!("♪ {shown}"), true)
+    (format!("♪ {}", menu_text(&shown)), true)
 }
 
 /// One recent song in the Songs submenu: the label as the menu shows it, the URL it opens.
@@ -396,7 +416,7 @@ impl Tray {
                     AppendMenuW(themes, MF_STRING | MF_DISABLED | MF_GRAYED, 0, w!("Recently used"));
                 for (i, label) in &recent_rows {
                     let mut wide: Vec<u16> =
-                        label.encode_utf16().chain(std::iter::once(0)).collect();
+                        menu_text(label).encode_utf16().chain(std::iter::once(0)).collect();
                     let _ = AppendMenuW(
                         themes,
                         MF_STRING,
@@ -426,7 +446,7 @@ impl Tray {
                     family_holds_current |= selected;
                     let flags = if selected { MF_STRING | MF_CHECKED } else { MF_STRING };
                     let mut wide: Vec<u16> =
-                        it.name.encode_utf16().chain(std::iter::once(0)).collect();
+                        menu_text(&it.name).encode_utf16().chain(std::iter::once(0)).collect();
                     let _ = AppendMenuW(
                         sub,
                         flags,
@@ -437,7 +457,8 @@ impl Tray {
                 // Check the family too, so the active one is identifiable without opening
                 // every submenu to hunt for the tick.
                 let label = crate::themes::family_label(family);
-                let mut wide: Vec<u16> = label.encode_utf16().chain(std::iter::once(0)).collect();
+                let mut wide: Vec<u16> =
+                    menu_text(&label).encode_utf16().chain(std::iter::once(0)).collect();
                 let flags = if family_holds_current {
                     MF_POPUP | MF_CHECKED
                 } else {
@@ -460,7 +481,7 @@ impl Tray {
                 None => "Themes".to_string(),
             };
             let mut wide: Vec<u16> =
-                current_label.encode_utf16().chain(std::iter::once(0)).collect();
+                menu_text(&current_label).encode_utf16().chain(std::iter::once(0)).collect();
             let _ = AppendMenuW(
                 menu,
                 MF_POPUP,
@@ -483,7 +504,7 @@ impl Tray {
                         label
                     );
                     let mut wide: Vec<u16> =
-                        text.encode_utf16().chain(std::iter::once(0)).collect();
+                        menu_text(&text).encode_utf16().chain(std::iter::once(0)).collect();
                     let _ = AppendMenuW(
                         sub,
                         MF_STRING,
@@ -544,7 +565,7 @@ impl Tray {
                 for (i, label) in [(3usize, "Any theme key"), (4, "Colourway key")] {
                     let text = format!("{label}:  {}", transport.keys[i]);
                     let mut wide: Vec<u16> =
-                        text.encode_utf16().chain(std::iter::once(0)).collect();
+                        menu_text(&text).encode_utf16().chain(std::iter::once(0)).collect();
                     let _ = AppendMenuW(
                         sub,
                         MF_STRING,
@@ -573,7 +594,7 @@ impl Tray {
                 for (i, label) in [(5usize, "Flourish now key"), (6, "On/off key")] {
                     let text = format!("{label}:  {}", transport.keys[i]);
                     let mut wide: Vec<u16> =
-                        text.encode_utf16().chain(std::iter::once(0)).collect();
+                        menu_text(&text).encode_utf16().chain(std::iter::once(0)).collect();
                     let _ = AppendMenuW(
                         sub,
                         MF_STRING,
@@ -607,7 +628,7 @@ impl Tray {
                 {
                     let text = format!("Identify key:  {}", transport.keys[identify_idx]);
                     let mut wide: Vec<u16> =
-                        text.encode_utf16().chain(std::iter::once(0)).collect();
+                        menu_text(&text).encode_utf16().chain(std::iter::once(0)).collect();
                     let _ = AppendMenuW(
                         sub,
                         MF_STRING,
@@ -621,7 +642,7 @@ impl Tray {
                     // `hotkeys::request_now_playing`. This row only sets which key does it.
                     let text = format!("Show now playing key:  {}", transport.keys[show_now_playing_idx]);
                     let mut wide: Vec<u16> =
-                        text.encode_utf16().chain(std::iter::once(0)).collect();
+                        menu_text(&text).encode_utf16().chain(std::iter::once(0)).collect();
                     let _ = AppendMenuW(
                         sub,
                         MF_STRING,
@@ -635,6 +656,9 @@ impl Tray {
                         AppendMenuW(sub, MF_STRING | MF_DISABLED | MF_GRAYED, 0, w!("no songs yet"));
                 }
                 for (i, s) in songs.iter().take(SONG_SLOTS).enumerate() {
+                    // NOT passed through `menu_text`: `song_entries` already escapes `&` into `&&`
+                    // at construction, and this label is built once and reused - escaping again
+                    // here would double it into `&&&&`.
                     let mut wide: Vec<u16> =
                         s.label.encode_utf16().chain(std::iter::once(0)).collect();
                     let _ = AppendMenuW(
@@ -1008,6 +1032,40 @@ mod tests {
         // minus the 3 for "...".
         let expected = format!("♪ {}...", "x".repeat(45));
         assert_eq!(label, expected);
+    }
+
+    #[test]
+    fn now_playing_label_escapes_an_ampersand_title_after_truncating() {
+        // A short title with a literal `&`: the label must carry the doubled `&&` Win32 needs to
+        // show one ampersand instead of eating it as a mnemonic marker.
+        let (label, enabled) = now_playing_menu_label("Simon & Garfunkel");
+        assert!(enabled);
+        assert!(label.contains("&&"), "{label:?} should contain an escaped ampersand");
+        assert_eq!(label, "♪ Simon && Garfunkel");
+
+        // A long title whose `&` lands right at the truncation boundary (the last RAW character
+        // kept before the "..." is appended): truncating against the raw title and escaping the
+        // whole assembled string afterwards means every `&` always doubles atomically, so it can
+        // never come out as a lone, un-paired `&` that Win32 would read as a dangling mnemonic
+        // marker onto the following "...".
+        let title = format!("{}&{}", "x".repeat(44), "y".repeat(40));
+        let (label, _) = now_playing_menu_label(&title);
+        assert_eq!(
+            label.matches('&').count() % 2,
+            0,
+            "ampersands must come in pairs after escaping: {label:?}"
+        );
+        assert!(label.contains("&&"), "{label:?} should still carry the escaped ampersand");
+    }
+
+    #[test]
+    fn family_label_with_an_ampersand_is_escaped_for_the_menu() {
+        // "Fast & Furious: NOS" is the case that motivated this: a lone `&` is a Win32 menu
+        // mnemonic marker, so `AppendMenuW` would otherwise render "Fast  Furious" with an
+        // underlined space.
+        let label = crate::themes::family_label("nos");
+        assert!(label.contains('&'), "fixture assumption: {label:?} should contain '&'");
+        assert!(menu_text(&label).contains("&&"), "{label:?} should escape to '&&'");
     }
 
     #[test]

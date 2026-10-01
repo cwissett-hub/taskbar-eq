@@ -4,8 +4,8 @@ Kept current and pushed with every change, so progress is visible without readin
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
 **Last updated:** v0.4.0 — FOUR FAMILIES SHIP, PLUS A NOW-PLAYING CLICK. `bling` (a Blingee GIF
-panel — rhinestone gem columns, glitter text and camcorder-era stamps, a bass-hit flash flourish;
-four colourways), `nos` (a 2 Fast 2 Furious dash — LED tacho arc, shift lights, gear/MPH, under-glow,
+panel — rhinestone gem columns, glitter text and sparkle / `$` / crown / heart stamps, a bass-hit
+flash flourish; four colourways), `nos` (a 2 Fast 2 Furious dash — LED tacho arc, shift lights, gear/MPH, under-glow,
 the `DANGER TO MANIFOLD` flourish plus a speed-line purge; four colourways), `drift` (a Tokyo Drift
 night skyline — the tyre-smoke trail is the meter, a steering gauge, a `DRIFT!` flourish; four
 colourways) and `prism` (from the user's reference image — a glowing spectral arc over a rim-lit

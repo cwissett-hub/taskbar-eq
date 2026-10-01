@@ -451,6 +451,15 @@ impl Ticker {
         let opacity = self.gate.update(self.latest.rms, dt_ms.round() as u32);
         self.smoother.update(&self.latest.bands, dt_ms);
 
+        // Drained HERE, every tick, before the visibility check below - not inside it. The hotkey,
+        // the tray's `♪` line and the overlay's left click all set this flag asynchronously, so a
+        // press while the meter happens to be hidden (no audio, or still inside the hide delay)
+        // must not sit queued for however long it takes the gate to next open - it used to live
+        // inside the `if` below, which left exactly that press to pop a stale banner minutes later
+        // once something eventually played. Dropped instead: there is nowhere to show it right now,
+        // and nothing playing is reported live if the user asks again once the meter is back.
+        let now_playing_requested = win::hotkeys::take_now_playing_request();
+
         let t0 = std::time::Instant::now();
         // The shell part was decided above and returned early; what is left is whether the rect is
         // known and plausible, and whether the audio gate is open.
@@ -479,11 +488,9 @@ impl Ticker {
             // meter - all three funnel through `hotkeys::request_now_playing`). The identifier's
             // text is sticky while listening and fades normally once it has an answer.
             //
-            // Drained unconditionally, once per tick, regardless of which branch below fires - a
-            // request that arrived while a track-change or identify banner was about to take the
-            // `else if` branches must not be left set and shown stale on some LATER, unrelated
-            // banner change.
-            let now_playing_requested = win::hotkeys::take_now_playing_request();
+            // `now_playing_requested` was already drained above, before this `if` - not here -
+            // precisely so a press while the meter is hidden is dropped rather than left set and
+            // sprung on some LATER, unrelated banner change once the gate reopens.
             let (id_text, id_seq, id_sticky) = identify::banner();
             if id_seq != self.identify_seq {
                 self.identify_seq = id_seq;

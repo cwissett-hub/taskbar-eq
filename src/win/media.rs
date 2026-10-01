@@ -113,8 +113,7 @@ pub fn send_media_key(action: Action) -> Result<(), String> {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY,
     };
-    // Same shape as `overlay::open_widgets_panel`, which is the app's existing synthesised-input
-    // helper - one implementation pattern for injected keys rather than two.
+    // The same `SendInput` key-down/key-up pair shape used wherever this app injects input.
     let key = |vk: VIRTUAL_KEY, up: bool| INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {

@@ -261,10 +261,6 @@ impl Overlay {
     }
 }
 
-/// Synthesises Win+W to open the Widgets panel. The overlay covers the Widgets
-/// button while audio plays, so without this a left-click would simply do nothing
-/// and the weather would be unreachable. Sending the hotkey is far more robust than
-/// trying to forward a click to a window we are deliberately covering.
 /// Opens `path` in whatever the user edits text with, falling back to Notepad.
 ///
 /// The fallback is not defensive padding - `.toml` COMMONLY HAS NO ASSOCIATION AT ALL. Checked on

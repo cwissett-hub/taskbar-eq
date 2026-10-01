@@ -15,7 +15,9 @@
 //! letters:
 //! - `S` uses the standard S and is a pixel twin of `5` in isolation;
 //! - `T` uses the standard T and differs from `I` only in the foot;
-//! - `N` uses a filled-diagonal form that reads as N in a word but as a blob alone.
+//! - `N` uses an arched top (`0b110` on row 0, both verticals open below) rather than a filled
+//!   diagonal - the earlier filled-diagonal form differed from `M` by a single pixel, which read
+//!   `DANGER TO MANIFOLD` as `DAMGER TO MAMIFOLD` on the `nos` flourish.
 //!
 //! Three families grew a private copy of a 3x5 font (this one seeded from `sesh`'s stamp glyphs).
 //! `vsghost` and `vswings` still carry their own private phrase fonts; those are out of scope here and
