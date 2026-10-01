@@ -240,3 +240,8 @@ One thing worth knowing if you go tuning: **`bloom` is the halo radius, `glow_st
 brightness.** Raising `bloom` expecting more glow makes it *fainter*, because a wider blur
 kernel spreads the same energy thinner. That caught me out repeatedly.
 
+That's the general rule, but a few families (fidelity pass 2) don't follow it: for `rave` and
+`dolphin` these fields are ignored — both removed their per-frame bloom pass, so tuning
+`bloom`/`glow_strength` in a colourway TOML does nothing for either family. For `vswings`,
+`bloom` is repurposed as an on/off switch for the tip halo (any value > 0 enables it) and
+`glow_strength * 1.25` sets the halo's alpha directly, rather than feeding a blur kernel.

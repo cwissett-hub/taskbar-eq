@@ -24,10 +24,10 @@ not commit dates.
 - `Canvas::fill_poly` no longer allocates for polygons of 16 points or fewer (identical output),
   keeping scan-line crossings on the stack.
 - The stricter < 1 ms/frame timing target for the newer families is now a dev-machine-only check
-  (CI sets `CI=true` to skip it); CI still enforces the 2 ms gate for every family. The
-  windows-latest runner measures 1.5-2.2x slower than the dev laptop, which turned prism's 0.57 ms
-  into 1.19 ms and failed the v0.4.0 tag build on CI — that release's exe was attached to the
-  GitHub release manually.
+  (CI sets `CI=true` to skip it); CI still enforces the 2 ms gate for every gated family (the list
+  in `slow_vs_timing`, now also covering `rave` and `dolphin`). The windows-latest runner measures
+  1.5-2.2x slower than the dev laptop, which turned prism's 0.57 ms into 1.19 ms and failed the
+  v0.4.0 tag build on CI — that release's exe was attached to the GitHub release manually.
 
 ## [0.4.0] — 2026-10-01
 

@@ -525,7 +525,7 @@ mod opacity {
     #[test]
     #[ignore]
     fn slow_vs_timing() {
-        for id in ["vswings-particle-arts", "vsghost-white", "vsorb-chrome", "sesh-vhs", "night-yellow", "term-2077", "bling-pink", "nos-2fast", "drift-shibuya", "prism-sunset"] {
+        for id in ["vswings-particle-arts", "vsghost-white", "vsorb-chrome", "sesh-vhs", "night-yellow", "term-2077", "bling-pink", "nos-2fast", "drift-shibuya", "prism-sunset", "rave-frenchcore", "dolphin-sony-amber"] {
             let t = builtin::all().into_iter().find(|t| t.id == id).unwrap();
             let mut f = family_for(&t.family);
             let mut c = Canvas::new(380, 60);

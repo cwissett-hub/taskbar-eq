@@ -140,9 +140,10 @@ fn rave_base() -> Theme {
         family: "rave".into(),
         texture: Texture::None_,
         panel_alpha: 1.0,
-        // Wide and strong. Beams are 1px cores and the halo is most of what makes them read as light
-        // rather than as drawn lines - the opposite of the kaleidoscope family, where bloom dissolves the
-        // facet edges that carry the shape.
+        // STALE as of fidelity pass 2: `draw` no longer reads `bloom`/`glow_strength` (the
+        // per-frame bloom layer was removed; beams get their width from the cone geometry and
+        // the fog alpha instead). These two fields are therefore ignored by this family; left
+        // at their old values only because nothing else reads them either.
         bloom: 5.0,
         glow_strength: 0.70,
         edge_glow: 2.0,
@@ -4442,8 +4443,9 @@ fn dolphin_base() -> Theme {
         // The family draws its OWN lattice; a Glass or Scanlines overlay would double-screen it.
         texture: Texture::None_,
         panel_alpha: 1.0,
-        // Tight, and low. A backlight glows; it does not flare. A wide bloom also welds adjacent dots
-        // into a bar and destroys the one thing that makes this a dot-matrix display.
+        // STALE as of fidelity pass 2: `draw` no longer reads `bloom`/`glow_strength` (the
+        // per-frame bloom was removed along with the double in-draw smoothing). Left at their
+        // old values only because nothing else reads them either.
         bloom: 2.0,
         glow_strength: 0.22,
         edge_glow: 1.0,

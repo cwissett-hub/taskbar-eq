@@ -33,8 +33,10 @@
 //! the margins are too narrow and they would crowd the face). The old light rays are gone: they were
 //! the "mostly invisible graphic".
 //!
-//! The face is composed into a small preallocated buffer (rebuilt only when the panel size changes) and
-//! copied onto the panel row by row with each row's slice offset, so `draw` allocates nothing.
+//! The face is composed into a small buffer and copied onto the panel row by row with each row's
+//! slice offset. The buffer itself is reallocated only when the panel size changes (re-composed
+//! every frame regardless, since the slices and eye/mouth state move every frame), so `draw`
+//! allocates nothing once warmed up.
 //!
 //! # The meter
 //!
@@ -536,10 +538,6 @@ impl Vsghost {
                 c.fill_rect(x, y, bw, 1, colour);
                 y -= TICK_PITCH;
                 i += 1;
-            }
-            // A peak above the strip still shows, on its top tick.
-            if peak_tick > bh / TICK_PITCH && pk > f + 0.02 {
-                c.fill_rect(x, l.bar_y0 + (bh - 1) % TICK_PITCH, bw, 1, hot);
             }
         }
     }

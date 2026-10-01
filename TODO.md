@@ -14,8 +14,9 @@ lagging echo pair, floor reaching both edges, sparks on strong onsets; the accen
 big glitching kaomoji face reacting to bass/mids, a crawling phrase ticker and ticker-bar meter,
 margin "voices"; 0.04 ms). High-BPM depth: vswings 0.49 → 0.75, vsghost 0.43 → 0.67. Also: the
 < 1 ms/frame timing target for the newer families is now dev-machine-only (CI keeps the 2 ms gate
-for every family) — the windows-latest runner measures 1.5-2.2x slower than the dev laptop, which
-failed the v0.4.0 tag build on CI; that release's exe was attached to the GitHub release manually.
+for every gated family — the list in `slow_vs_timing`, now also covering `rave` and `dolphin`) —
+the windows-latest runner measures 1.5-2.2x slower than the dev laptop, which failed the v0.4.0
+tag build on CI; that release's exe was attached to the GitHub release manually.
 The user judges the four reworked families on the review sheet — see Waiting on you below.
 
 Earlier: v0.4.0 — FOUR FAMILIES SHIP, PLUS A NOW-PLAYING CLICK. `bling` (a Blingee GIF
@@ -140,23 +141,22 @@ Nothing right now. Queued, in order:
 ## Waiting on you
 
 - [ ] **Judge sections 23-30 on `docs/review/index.html`: keep, tune or drop each colourway
-      (v0.4.0 + v0.4.1), with the implementers' open questions.** `rave`: are the arms too busy
-      at 1:1; is the sharpened strobe tail OK? `dolphin`: is the 2x hero hidden by a loud sea at
-      128x44 (`HERO_MIN_ROWS`)? `vswings`: is the echo only visible after beats; do the feather
-      shafts look like dashes? `vsghost`: do the eyes read as `0` rather than `O`; the slices
-      re-roll every frame — does that read as jittery in motion? Separately: please delete the
-      leftover folder `C:\Users\cwisset\Documents\projects\te-v040` — a throwaway checkout the
-      assistant could not remove itself.
-- [ ] **Judge sections 23-26 on `docs/review/index.html`: keep, tune or drop each colourway
-      (v0.4.0), and try the now-playing click/tray/hotkey.** Section 23, `bling`: busy at 1:1?
-      are the gold gems meant to read as diamond-cut or gold? Section 24, `nos`: is the backlit
-      dial face too big? Section 25, `drift`: Shibuya's second neon colour reads red rather than
-      cyan — there's only one neon zone right now, so a second zone would let the two colours
-      coexist instead of one overriding the other; worth adding? Section 26, `prism`: does the
-      sunset match your reference image; do you want a wider, fainter halo? Separately: left-click
-      the meter, the tray menu's `♪ <title>` line, and a bound `show_now_playing` key should all
-      show the same banner — and the left click should no longer open the Windows Widgets panel
-      (press `Win+W` directly for that now).
+      (v0.4.0 + v0.4.1), with the implementers' open questions, and try the now-playing
+      click/tray/hotkey.** Section 23, `bling`: busy at 1:1? are the gold gems meant to read as
+      diamond-cut or gold? Section 24, `nos`: is the backlit dial face too big? Section 25,
+      `drift`: Shibuya's second neon colour reads red rather than cyan — there's only one neon
+      zone right now, so a second zone would let the two colours coexist instead of one
+      overriding the other; worth adding? Section 26, `prism`: does the sunset match your
+      reference image; do you want a wider, fainter halo? Section 27, `rave`: are the arms too
+      busy at 1:1; is the sharpened strobe tail OK? Section 28, `dolphin`: is the 2x hero hidden
+      by a loud sea at 128x44 (`HERO_MIN_ROWS`)? Section 29, `vswings`: is the echo only visible
+      after beats; do the feather shafts look like dashes? Section 30, `vsghost`: do the eyes
+      read as `0` rather than `O`; the slices re-roll every frame — does that read as jittery in
+      motion? Separately: left-click the meter, the tray menu's `♪ <title>` line, and a bound
+      `show_now_playing` key should all show the same banner — and the left click should no
+      longer open the Windows Widgets panel (press `Win+W` directly for that now). Also please
+      delete the leftover folder `C:\Users\cwisset\Documents\projects\te-v040` — a throwaway
+      checkout the assistant could not remove itself.
 - [ ] **Judge sections 20-22 on `docs/review/index.html`: keep, tune or drop each colourway
       (v0.3.2).** Section 20, `term`'s filename/output readability fix: does the status bar's
       right-aligned group (`▮NN%  UTF-8  LF`) still leave the filename slot legible; does the
