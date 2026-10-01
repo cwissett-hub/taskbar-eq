@@ -3,7 +3,28 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** v0.3.2 — FIDELITY PASS 1: FOUR FAMILIES REWORKED, PLUS THE VIRTUAL SELF RETUNE.
+**Last updated:** v0.4.0 — FOUR FAMILIES SHIP, PLUS A NOW-PLAYING CLICK. `bling` (a Blingee GIF
+panel — rhinestone gem columns, glitter text and camcorder-era stamps, a bass-hit flash flourish;
+four colourways), `nos` (a 2 Fast 2 Furious dash — LED tacho arc, shift lights, gear/MPH, under-glow,
+the `DANGER TO MANIFOLD` flourish plus a speed-line purge; four colourways), `drift` (a Tokyo Drift
+night skyline — the tyre-smoke trail is the meter, a steering gauge, a `DRIFT!` flourish; four
+colourways) and `prism` (from the user's reference image — a glowing spectral arc over a rim-lit
+horizon, a flare flourish; four colourways) join 32 families / 197 colourways. Now-playing is
+reachable three ways — the tray menu's new `♪ <title>` line, a `show_now_playing` hotkey slot, and
+a left click on the meter, all through one `hotkeys::request_now_playing` flag — **and a left click
+on the meter no longer opens the Windows Widgets panel**; it used to send `Win+W` since the overlay
+sits on top of the Widgets button, and that click-through is gone in favour of showing the track
+(press `Win+W` directly for Widgets). `font3x5` gained an arched `N` (the old one differed from `M`
+by one pixel, which made `DANGER TO MANIFOLD` read `DAMGER TO MAMIFOLD`) and a `!` glyph. Also fixed:
+a hard-coded hotkey slot index (`transport.keys[7]` / `ID_BIND_BASE + 7`) in the tray's Songs
+submenu, which only worked because `Slot::IdentifySong` happened to sit at index 7 — both that row
+and the new "Show now playing key" row now look their slot up in `Slot::ALL` by position. All ten
+timed families still measure comfortably under budget (`slow_vs_timing`): vswings 0.79 ms, vsghost
+0.05 ms, vsorb 0.77 ms, sesh 0.26 ms, night 0.19 ms, term 0.03 ms, bling 0.09 ms, nos 0.03 ms, drift
+0.29 ms, prism 0.57 ms. The user judges the four new families and the now-playing click on the
+review sheet — see Waiting on you below.
+
+Earlier: v0.3.2 — FIDELITY PASS 1: FOUR FAMILIES REWORKED, PLUS THE VIRTUAL SELF RETUNE.
 `brutal` (lit tops, shadow sides, formwork, aggregate, cracks, rebar peaks; new `brutal-sodium`
 colourway) fires its slam + dust on every bass onset — the flourish proper is THE MONOLITH, every
 block slamming to full height at once with the panel inverted. `pipes` (fat shaded pipes, three at
@@ -90,14 +111,14 @@ Earlier still: 150 colourways across 22 families, every one with a flourish. See
 Nothing right now. Queued, in order:
 
 1. **BATCH 2 of the fidelity pass**, brainstormed from their current dumps side by side:
-   `dolphin` — "really lacking in visual fidelity and flair, very basic, not cohesive with
-   blossom or vaporwave, I want them to pop more"; `rave` — "very bland, literally just lasers,
-   needs something else"; `vswings` — "lots of space on the sides that goes unused"; `vsghost` —
-   a RETHINK of the execution keeping the vibe: "just looks like bars over a mostly invisible
-   graphic; I like the vibe but the execution needs work". Also for `vsghost`: the 120 ms onset
-   refractory (from the VS retune, v0.3.2) lets 160 BPM off-beat hats trigger the score's scroll
-   the same as the kick does — the scroll (and `vsorb`'s spin) may now read busier on a real
-   track than intended; ask the user whether that's welcome or needs its own, looser refractory.
+   `rave` — "very bland, literally just lasers, needs something else"; `dolphin` — "really lacking
+   in visual fidelity and flair, very basic, not cohesive with blossom or vaporwave, I want them to
+   pop more"; `vswings` — "lots of space on the sides that goes unused"; `vsghost` — a RETHINK of
+   the execution keeping the vibe: "just looks like bars over a mostly invisible graphic; I like
+   the vibe but the execution needs work". Also for `vsghost`: the 120 ms onset refractory (from
+   the VS retune, v0.3.2) lets 160 BPM off-beat hats trigger the score's scroll the same as the
+   kick does — the scroll (and `vsorb`'s spin) may now read busier on a real track than intended;
+   ask the user whether that's welcome or needs its own, looser refractory.
 2. **Recapture the high-BPM fixture from a real VS track.** `tests/fixtures/high-bpm-bands.csv`
    is synthetic (160 BPM, kick + off-beat hats) because a live loopback capture needs Spotify
    playing through this machine, which an agent session can't rely on — see the fixture's own
@@ -108,6 +129,16 @@ Nothing right now. Queued, in order:
 
 ## Waiting on you
 
+- [ ] **Judge sections 23-26 on `docs/review/index.html`: keep, tune or drop each colourway
+      (v0.4.0), and try the now-playing click/tray/hotkey.** Section 23, `bling`: busy at 1:1?
+      are the gold gems meant to read as diamond-cut or gold? Section 24, `nos`: is the backlit
+      dial face too big? Section 25, `drift`: Shibuya's second neon colour reads red rather than
+      cyan — there's only one neon zone right now, so a second zone would let the two colours
+      coexist instead of one overriding the other; worth adding? Section 26, `prism`: does the
+      sunset match your reference image; do you want a wider, fainter halo? Separately: left-click
+      the meter, the tray menu's `♪ <title>` line, and a bound `show_now_playing` key should all
+      show the same banner — and the left click should no longer open the Windows Widgets panel
+      (press `Win+W` directly for that now).
 - [ ] **Judge sections 20-22 on `docs/review/index.html`: keep, tune or drop each colourway
       (v0.3.2).** Section 20, `term`'s filename/output readability fix: does the status bar's
       right-aligned group (`▮NN%  UTF-8  LF`) still leave the filename slot legible; does the

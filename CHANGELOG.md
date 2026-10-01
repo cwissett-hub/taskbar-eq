@@ -3,6 +3,34 @@
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); dates are release dates,
 not commit dates.
 
+## [0.4.0] — 2026-10-01
+
+- `bling` — a Blingee GIF panel: rhinestone gem columns, glitter text and camcorder-era stamps,
+  topped off with a bass-hit flash flourish (a full-panel white wash before the gems and glitter
+  redraw over it); four colourways.
+- `nos` — a 2 Fast 2 Furious dash: an LED tacho arc, shift lights, a gear/MPH readout and
+  under-glow, capped by the `DANGER TO MANIFOLD` flourish — a blinking green warning screen plus a
+  speed-line purge on a bass hit; four colourways.
+- `drift` — a Tokyo Drift night skyline, with the tyre-smoke trail standing in as the meter and a
+  steering gauge alongside, plus a `DRIFT!` flourish that slams in centred over flashing signs on a
+  bass hit; four colourways.
+- `prism` — from the user's reference image: a glowing spectral arc over a rim-lit horizon, with a
+  flare flourish that brightens the core on a bass hit; four colourways.
+- Now-playing, three ways: the tray menu's new `♪ <title>` line at the top (disabled and reading
+  `♪ (nothing playing)` when nothing is loaded), a `show_now_playing` hotkey slot, and a left click
+  on the meter — all three funnel through one `hotkeys::request_now_playing` flag so they always
+  agree. **Behaviour change:** a left click on the meter used to send `Win+W` and open the Windows
+  Widgets panel, since the overlay sits on top of the Widgets button; that is gone in favour of
+  showing the current track. Press `Win+W` directly for the Widgets panel while the meter is up.
+- `font3x5` gained an arched `N`, so `DANGER TO MANIFOLD` no longer reads `DAMGER TO MAMIFOLD` (the
+  old near-solid `N` differed from `M` by one pixel), and a `!` glyph for `DRIFT!`.
+- Fixed a hard-coded hotkey slot index in the tray menu's Songs submenu: the "Identify key" row
+  read `transport.keys[7]` / `ID_BIND_BASE + 7`, correct only because `Slot::IdentifySong` happened
+  to sit at index 7 in `Slot::ALL`. Both that row and the new "Show now playing key" row now look
+  up their slot's position in `Slot::ALL` instead, so a future reordering can no longer silently
+  bind a menu row to the wrong action.
+- 32 families / 197 colourways.
+
 ## [0.3.2] — 2026-09-30
 
 - `term` — readability pass on user feedback ("outputs get covered up almost immediately", "typing

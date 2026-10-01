@@ -6,7 +6,7 @@
 ## All 32 families
 
 Six are written up in full below (Segmented VFD, Oscilloscope, VU dials, Vaporwave grid, Valve
-row, Fluid). The other nineteen shipped later and their full write-ups still live in
+row, Fluid). The other twenty-six shipped later and their full write-ups still live in
 [docs/status.md](status.md) rather than here — that is pre-existing organisation, not a new
 split, and worth knowing before you go looking for one and only find it in the other file.
 
