@@ -12,6 +12,12 @@ not commit dates.
   road, posts and pines beyond it. More of the music shows: a bass kick also flares the tail lamps
   and jolts the camera, the neon underglow pulses with the bass, the valley's city lights swell
   with the mids and the reflectors glint with the treble.
+- `drift` — a touge's cross-section: a cut-rock cliff beside the road on the inside (jagged top,
+  shaded stretches, ragged strata, cracks, pines along the top; clipped behind crests) and a black
+  drop beyond the guardrail, replacing pines on a flat slope ("it looks sort of Mediterranean").
+- `drift` — faster: v0.4.2 measured 2.14 ms/frame on the CI runner (over the 2 ms gate; that push's
+  CI failed). The smoke was three quarters of the frame; each puff is now one disc plus a 60 % core,
+  capped at 8 px. 0.80 → 0.57 ms in `slow_vs_timing` on the dev machine.
 
 ## [0.4.2] — 2026-10-02
 

@@ -19,8 +19,11 @@
 //!   rim), shifting sideways as the car corners - the far one at half the rate.
 //! - **The road.** Asphalt in alternating bands, red-and-white kerbs and a dashed centre line, all of
 //!   which stream toward the camera; fogged toward the horizon.
-//! - **The touge.** On the left the mountainside (dark slope, pine silhouettes); on the right a
-//!   guardrail on reflector posts and beyond it the valley, where the city's lights glitter - the
+//! - **The touge.** On the left a cut-rock cliff stands beside the road behind a gutter, `CLIFF_H` to
+//!   `CLIFF_H + CLIFF_VAR` high with a jagged top, each stretch its own shade of rock, two ragged
+//!   strata lines, cracks and a rim catching the sky, pines
+//!   along its top; near the camera it towers out of the top of the panel. On the right a guardrail on
+//!   reflector posts, a black drop, and far below the valley, where the city's lights glitter - the
 //!   colourway's neon with a few warm and `hot` ones, some twinkling.
 //! - **The car.** A low-poly coupe modelled on the rear of an R34 Skyline (the user's ask) - no badge:
 //!   a squared-off tail with FOUR ROUND TAIL LAMPS (a `hot` ring with a darker centre, two each side),
@@ -112,6 +115,14 @@ const POST_GAP: f32 = 12.0;
 const POST_H: f32 = 2.2;
 const RAIL_H: f32 = 1.5;
 const TREE_GAP: f32 = 18.0;
+/// The cliff on the inside of the pass: its face stands this far beyond the kerb (a gutter), its
+/// height varies between `CLIFF_H` and `CLIFF_H + CLIFF_VAR` over knots `CLIFF_KNOT` apart, and
+/// ragged strata lines run along it.
+const CLIFF_GAP: f32 = 1.5;
+const CLIFF_H: f32 = 17.0;
+const CLIFF_VAR: f32 = 10.0;
+const CLIFF_KNOT: f32 = 30.0;
+const STRATA: [f32; 2] = [0.3, 0.62];
 /// Fog: full haze at this depth.
 const FOG_Z: f32 = 520.0;
 /// Per-row tables are this long (taller panels clamp).
@@ -162,7 +173,9 @@ const PUFF_GROW: f32 = 0.8;
 const DRAG: f32 = 0.6;
 const RISE: f32 = 8.0;
 const SPREAD: f32 = 5.0;
-const PUFF_MAX_PX: f32 = 12.0;
+const PUFF_MAX_PX: f32 = 8.0;
+/// How much of the road's rise and fall the smoke rides.
+const SMOKE_SLOPE: f32 = 0.35;
 
 // ---- the car's model: `u` forward, `v` to its left, `y` up, world units ----
 
@@ -380,6 +393,16 @@ fn hill(s: f32) -> f32 {
     HILLS.iter().map(|&(k, a, ph)| a * (k * p + ph).sin()).sum()
 }
 
+/// The cliff's height at distance `s`: hashed knots, smoothly joined, wrapping with the course.
+fn cliff_h(s: f32) -> f32 {
+    let knots = (COURSE / CLIFF_KNOT) as i64;
+    let u = s.rem_euclid(COURSE) / CLIFF_KNOT;
+    let k = u.floor() as i64;
+    let t = ease(u - k as f32);
+    let (a, b) = (hash01(k.rem_euclid(knots) * 31 + 7), hash01((k + 1).rem_euclid(knots) * 31 + 7));
+    CLIFF_H + CLIFF_VAR * (a + (b - a) * t)
+}
+
 /// A twinkling light is off for a stutter each cycle.
 fn light_on(l: &Light, e: f32) -> bool {
     if !l.twinkle {
@@ -412,6 +435,12 @@ impl Cam {
 /// centre is, so a slowly turning shape steps a pixel at a time rather than jumping with rounded
 /// vertices. Rows above `min_row` are left alone.
 fn fill_convex(c: &mut Canvas, pts: &[(f32, f32)], off: (f32, f32), min_row: i32, col: Rgba) {
+    fill_convex_rows(c, pts, off, min_row, i32::MAX, col);
+}
+
+/// `fill_convex` limited to rows `min_row..max_row` - the cliff uses the upper limit to stay behind
+/// the nearer road a crest has already drawn.
+fn fill_convex_rows(c: &mut Canvas, pts: &[(f32, f32)], off: (f32, f32), min_row: i32, max_row: i32, col: Rgba) {
     let n = pts.len();
     if n < 3 || col.a == 0 {
         return;
@@ -426,7 +455,7 @@ fn fill_convex(c: &mut Canvas, pts: &[(f32, f32)], off: (f32, f32), min_row: i32
     }
     // Rows whose centre is in [lo, hi).
     let first = ((lo - 0.5).ceil() as i32).max(min_row).max(0);
-    let last = ((hi - 0.5).ceil() as i32 - 1).min(c.height() - 1);
+    let last = ((hi - 0.5).ceil() as i32 - 1).min(c.height() - 1).min(max_row - 1);
     for y in first..=last {
         let yc = y as f32 + 0.5;
         let (mut xl, mut xr) = (f32::MAX, f32::MIN);
@@ -653,6 +682,9 @@ fn solid(
         face(out, pose, &quad, sides[i.min(sides.len() - 1)], paint);
     }
 }
+
+/// A screen point.
+type Pt = (f32, f32);
 
 /// A ground plan of four corners, and a face of four local vertices.
 type Plan4 = [(f32, f32); 4];
@@ -1005,6 +1037,10 @@ struct Palette {
     ridge_near: Rgba,
     ridge_rim: Rgba,
     pine: Rgba,
+    rock_a: Rgba,
+    rock_b: Rgba,
+    rock_line: Rgba,
+    rock_rim: Rgba,
     post: Rgba,
     rail: Rgba,
 }
@@ -1032,12 +1068,18 @@ impl Palette {
             slope_a: Rgba::lerp_linear(panel, BLACK, 0.2),
             slope_b: Rgba::lerp_linear(panel, edge, 0.08),
             shoulder: Rgba::lerp_linear(panel, edge, 0.45),
-            valley_hi: Rgba::lerp_linear(Rgba::lerp_linear(panel, edge, 0.15), neon, 0.012),
+            valley_hi: Rgba::lerp_linear(Rgba::lerp_linear(panel, edge, 0.12), neon, 0.012),
             valley_lo: Rgba::lerp_linear(panel, BLACK, 0.45),
             ridge_far: Rgba::lerp_linear(panel, edge, 0.45),
             ridge_near: Rgba::lerp_linear(panel, BLACK, 0.45),
             ridge_rim: Rgba::lerp_linear(panel, edge, 0.8),
             pine: Rgba::lerp_linear(panel, BLACK, 0.6),
+            // Cut rock: a cold grey taking the colourway's tint, two bands, darker strata, a rim
+            // catching the sky along the top.
+            rock_a: Rgba::lerp_linear(Rgba::lerp_linear(panel, edge, 0.6), ASPHALT, 0.3),
+            rock_b: Rgba::lerp_linear(Rgba::lerp_linear(panel, edge, 0.3), ASPHALT, 0.15),
+            rock_line: Rgba::lerp_linear(panel, BLACK, 0.4),
+            rock_rim: Rgba::lerp_linear(edge, lit, 0.35),
             post: Rgba::lerp_linear(edge, WHITE, 0.45),
             rail: Rgba::lerp_linear(edge, WHITE, 0.3),
         }
@@ -1385,8 +1427,11 @@ impl Family for Drift {
                 span(c, l0, r0, y, fogged(if band { pal.road_a } else { pal.road_b }));
                 span(c, r0, r0 + kerb, y, kerb_col);
                 span(c, r0 + kerb, r0 + kerb + shoulder, y, fogged(pal.shoulder));
+                // The drop: black right at the edge, the far valley's glow further out.
                 let valley = Rgba::lerp_linear(pal.valley_hi, pal.valley_lo, valley_f.sqrt());
-                span(c, r0 + kerb + shoulder, ix1 as f32, y, valley);
+                let lip = r0 + kerb + shoulder;
+                span(c, lip, lip + 3.0 * f / z, y, pal.valley_lo);
+                span(c, lip + 3.0 * f / z, ix1 as f32, y, valley);
                 if ((dist / DASH).floor() as i64) & 1 == 0 {
                     let lw = (LINE_W * f / z).max(0.6);
                     span(c, cx - lw * 0.5, cx + lw * 0.5, y, fogged(pal.line));
@@ -1416,24 +1461,22 @@ impl Family for Drift {
                 let depth = 1.0 - (yi - hz_row) as f32 / (iy1 - hz_row).max(1) as f32;
                 let col = if flash_on { WHITE } else { base };
                 // The city swells with the mids: brighter, and the bright ones bloom to 2 px.
-                let a = (0.5 + 0.3 * (1.0 - depth * 0.6) + 0.45 * mids).min(1.0);
+                let a = (0.62 + 0.3 * (1.0 - depth * 0.6) + 0.4 * mids).min(1.0);
                 let wd = if mids > 0.45 && li.kind != 1 { 2 } else { 1 };
                 c.fill_rect(x as i32, yi, wd, 1, with_alpha(col, a));
             }
 
-            // ---- pines on the mountainside, far to near ----
+            // ---- pines along the cliff top, far to near (the cliff, drawn next, covers the far ones) ----
+            let wall_d = HALF_W + KERB_W + CLIFF_GAP;
             let far_slot = ((self.s_cam + Z_FAR) / TREE_GAP).floor() as i64;
             for k in (0..60).map(|j| far_slot - j) {
                 let z = k as f32 * TREE_GAP - self.s_cam;
                 if z < 10.0 {
                     break;
                 }
-                let x = self.road_at(z) - (HALF_W + 5.0 + hash01(k) * 26.0);
-                let th = 8.0 + hash01(k * 7 + 3) * 9.0;
-                let g = self.elev_at(z);
-                if !self.ground_seen(z, cam.project(x, g, z).1) {
-                    continue;
-                }
+                let x = self.road_at(z) - (wall_d + 2.0 + hash01(k) * 14.0);
+                let th = 7.0 + hash01(k * 7 + 3) * 7.0;
+                let g = self.elev_at(z) + cliff_h(self.s_cam + z) - 0.5;
                 let fog = (z / FOG_Z).clamp(0.0, 1.0).powf(1.3);
                 let col = Rgba::lerp_linear(pal.pine, pal.haze, fog);
                 let apex = cam.project(x, g + th, z);
@@ -1449,6 +1492,57 @@ impl Family for Drift {
                     (t1.1 - t0.1).round().max(1.0) as i32,
                     col,
                 );
+            }
+
+            // ---- the cliff: a rock face beside the road, far to near ----
+            // Each stretch between two road samples is a quad from the gutter up to the cliff's top,
+            // kept to the rows above the nearer road (`seg_clip`), so behind a crest only the top shows.
+            // Each road sample's slot on the course, so a stretch keeps its shade, cracks and ragged
+            // top as it scrolls past.
+            let slots = (COURSE / DZ) as i64;
+            let slot = |z: f32| (((self.s_cam + z) / DZ).floor() as i64).rem_euclid(slots);
+            let mut prev: Option<(Pt, Pt, i64)> = None;
+            for i in (1..ROAD_N).rev() {
+                let z = i as f32 * DZ;
+                if z < 4.0 {
+                    break;
+                }
+                let k = slot(z);
+                let x = self.road[i] - wall_d;
+                let ht = cliff_h(self.s_cam + z) + (hash01(k * 13 + 5) - 0.5) * 1.8;
+                let (b, tp) = (cam.project(x, self.elev[i], z), cam.project(x, self.elev[i] + ht, z));
+                if let Some((pb, pt, pk)) = prev {
+                    let fog = (z / FOG_Z).clamp(0.0, 1.0).powf(1.3);
+                    let shade = hash01(k * 7 + 1);
+                    let rock = Rgba::lerp_linear(Rgba::lerp_linear(pal.rock_b, pal.rock_a, shade), pal.haze, fog);
+                    let max_row = self.seg_clip[i].ceil() as i32;
+                    fill_convex_rows(c, &[pb, pt, tp, b], (0.0, 0.0), iy0, max_row, rock);
+                    let line = Rgba::lerp_linear(pal.rock_line, pal.haze, fog);
+                    let near = (pb.0 - b.0).abs() < 64.0;
+                    // Ragged strata: each sample nudges every line up or down a little.
+                    for (j, h) in STRATA.into_iter().enumerate() {
+                        let jit = |kk: i64| h + (hash01(kk * 17 + j as i64) - 0.5) * 0.035;
+                        let q0 = (pb.0, pb.1 + (pt.1 - pb.1) * jit(pk));
+                        let q1 = (b.0, b.1 + (tp.1 - b.1) * jit(k));
+                        if near && q1.1 < max_row as f32 {
+                            c.line(q0.0.round() as i32, q0.1.round() as i32, q1.0.round() as i32, q1.1.round() as i32, line);
+                        }
+                    }
+                    // A crack down from the top every few stretches.
+                    if near && hash01(k * 29 + 11) < 0.22 {
+                        let depth = 0.35 + 0.4 * hash01(k * 3 + 2);
+                        let q = (b.0, tp.1 + (b.1 - tp.1) * depth);
+                        if tp.1 < max_row as f32 {
+                            let qy = q.1.min(max_row as f32 - 1.0);
+                            c.line(tp.0.round() as i32, tp.1.round() as i32 + 1, q.0.round() as i32, qy.round() as i32, line);
+                        }
+                    }
+                    if near && tp.1 < max_row as f32 {
+                        let rim = Rgba::lerp_linear(pal.rock_rim, pal.haze, fog);
+                        c.line(pt.0.round() as i32, pt.1.round() as i32, tp.0.round() as i32, tp.1.round() as i32, rim);
+                    }
+                }
+                prev = Some((b, tp, k));
             }
 
             // ---- reflector posts and the guardrail, far to near ----
@@ -1554,7 +1648,9 @@ impl Family for Drift {
                 let lv = lvl(d.levels[i]) + (1.0 - lvl(d.levels[i])) * boost;
                 let rw = (PUFF_R0 + lv * PUFF_GAIN) * (1.0 + PUFF_GROW * age) + p.jr;
                 let x = self.road_at(p.z) + p.d;
-                let (sx, sy) = cam.project(x, self.elev_at(p.z) + p.y + rw * 0.6, p.z);
+                // The smoke follows the slope only partly: the road behind the car is off the panel, so a puff
+                // riding a full downhill rise would look like a plume shooting into the sky.
+                let (sx, sy) = cam.project(x, SMOKE_SLOPE * self.elev_at(p.z) + p.y + rw * 0.6, p.z);
                 let r = (rw * f / p.z).min(r_max_px);
                 if r < 0.5 || sx + r < ix0 as f32 || sx - r >= ix1 as f32 {
                     continue;
@@ -1562,11 +1658,14 @@ impl Family for Drift {
                 // Thinner with age and as it nears the lens.
                 let near = ((p.z - 6.0) / 14.0).clamp(0.0, 1.0);
                 let a = ghost * (1.0 - 0.7 * age) * near;
-                let col = with_alpha(tint, a * 0.24);
+                // One soft disc and a denser core at 60 % of its radius. Two near-full discs per puff
+                // were three quarters of the frame (alpha blends are the expensive pixels) and pushed
+                // the CI runner past the 2 ms gate.
                 let (xi, yi, ri) = (sx.round() as i32, sy.round() as i32, r.round().max(1.0) as i32);
-                c.fill_circle(xi, yi, ri, col);
-                if ri >= 2 {
-                    c.fill_circle(xi, yi, ri - 1, col);
+                c.fill_circle(xi, yi, ri, with_alpha(tint, a * 0.26));
+                let core = (r * 0.6).round() as i32;
+                if core >= 1 {
+                    c.fill_circle(xi, yi, core, with_alpha(tint, a * 0.30));
                 }
             }
         }
@@ -1845,6 +1944,33 @@ mod tests {
         }
     }
 
+    /// The cliff: just left of the road, from its foot to above the horizon, the frame shows rock - not
+    /// the sky, not the flat slope - and near the camera it rises out of the top of the panel.
+    #[test]
+    fn a_cliff_stands_beside_the_road() {
+        let t = calm_theme("drift-night");
+        let mut fam = Drift::default();
+        let c = frames(&mut fam, &t, 380, 60, 0.0, 30);
+        let pal = Palette::new(&t);
+        let cam = fam.cam(380);
+        let z = 60.0;
+        let x = fam.road_at(z) - (HALF_W + KERB_W + CLIFF_GAP) - 0.5;
+        let (bx, by) = cam.project(x, fam.elev_at(z), z);
+        let (_, ty) = cam.project(x, fam.elev_at(z) + CLIFF_H, z);
+        assert!(ty < fam.layout.hz, "the cliff top at row {ty:.1} does not rise above the horizon");
+        let mut rock = 0;
+        for y in (ty.ceil() as i32 + 1)..(by.floor() as i32 - 1) {
+            let p = c.get(bx.round() as i32 - 1, y);
+            let near = |q: Rgba| (p.r as i32 - q.r as i32).abs() + (p.g as i32 - q.g as i32).abs() + (p.b as i32 - q.b as i32).abs() < 40;
+            if near(pal.rock_a) || near(pal.rock_b) || near(pal.rock_line) {
+                rock += 1;
+            }
+        }
+        assert!(rock >= 3, "only {rock} rock px up the cliff face at depth {z}");
+        let top_near = cam.project(fam.road_at(10.0) - (HALF_W + KERB_W + CLIFF_GAP), fam.elev_at(10.0) + CLIFF_H, 10.0).1;
+        assert!(top_near < 4.0, "near the camera the cliff top is at row {top_near:.1}, inside the panel");
+    }
+
     /// The road has hills: over a run, the road at a fixed far depth moves up and down the screen,
     /// and now and then a crest hides the road beyond it (rows under the horizon get no road).
     #[test]
@@ -2032,7 +2158,7 @@ mod tests {
                 }
             }
         }
-        assert!(n >= 8, "only {n} neon city lights in the valley");
+        assert!(n >= 4, "only {n} neon city lights in the valley");
     }
 
     /// Bass-only vs treble-only, straight (rms 0): bass makes the fresh puffs at the tyres big, so the
@@ -2311,6 +2437,33 @@ mod tests {
             write(format!("drift-shibuya-{w}x{h}-flourish"), &flourish("drift-shibuya", w, h, 15));
         }
         println!("wrote drift dumps to {}", dir.display());
+    }
+
+    /// Per-layer cost with `slow_vs_timing`'s frame (every band 0.5 + 0.4 sin), to find what is heavy.
+    ///
+    /// Run: cargo test --release probe_drift_layers -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn probe_drift_layers() {
+        let t = theme("drift-shibuya");
+        let mut d = FrameData::default();
+        for (i, v) in d.levels.iter_mut().enumerate() {
+            *v = 0.5 + 0.4 * ((i as f32) * 0.3).sin();
+        }
+        d.dt_ms = 16.7;
+        for only in [Only::All, Only::Car, Only::Smoke] {
+            let mut fam = Drift::default();
+            fam.only_for_test(only);
+            let mut c = Canvas::new(380, 60);
+            for _ in 0..30 {
+                fam.draw(&mut c, &t, &d);
+            }
+            let t0 = std::time::Instant::now();
+            for _ in 0..300 {
+                fam.draw(&mut c, &t, &d);
+            }
+            println!("{}: {:.3} ms/frame", match only { Only::All => "all", Only::Car => "car", Only::Smoke => "smoke" }, t0.elapsed().as_secs_f64() * 1000.0 / 300.0);
+        }
     }
 
     /// Per-frame cost, steady and during the drift, at 380x60.

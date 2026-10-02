@@ -143,6 +143,9 @@ Earlier still: 150 colourways across 22 families, every one with a flourish. See
 
 ## In progress
 
+**NEXT (user, 2 Oct 2026): rework `nos`** - "it feels very schizo and seems quite barebones ... something as
+cool as the drift theme is possible".
+
 Nothing right now. Queued, in order:
 
 1. **Recapture the high-BPM fixture from a real VS track.** `tests/fixtures/high-bpm-bands.csv`
@@ -159,8 +162,8 @@ Nothing right now. Queued, in order:
 
 ## Waiting on you
 
-- [ ] **Judge section 33 on `docs/review/index.html`: drift's tucked-in wheels, the hills and the
-      new music reactions** (kick: lamp flare and camera jolt; underglow on the bass; city lights
+- [ ] **Judge section 33 on `docs/review/index.html`: drift's tucked-in wheels, the hills, the cliff
+      and drop, and the new music reactions** (kick: lamp flare and camera jolt; underglow on the bass; city lights
       on the mids; reflectors on the treble). Running on your taskbar now; unreleased on main.
 - [ ] **Judge section 32 on `docs/review/index.html`: Tokyo Drift as a chase cam down a touge
       with an R34-style tail.** Running on your taskbar now (pick any `drift-*` colourway).
