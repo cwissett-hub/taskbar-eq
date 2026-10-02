@@ -5,6 +5,14 @@ not commit dates.
 
 ## [Unreleased]
 
+- `nos` — reworked at the user's request ("feels very schizo and seems quite barebones"): a 2 Fast 2
+  Furious street race from the driver's seat, on `drift`'s perspective camera and car model (now
+  `pub(crate)`). A neon city street at night (buildings with windows, shopfronts and blade signs,
+  sodium lamps, a rival car ahead), framed by A-pillars, a rear-view mirror and the dash, whose
+  wide LED strip is the meter. An engine model replaces the per-frame readouts that made it
+  twitch: the music is the throttle, the revs climb through six gears and the car shifts on a
+  bass kick while it waits on the limiter. The hit keeps `DANGER TO MANIFOLD`, then purges past
+  the rival with warp streaks and a blue rush. 0.30 ms/frame.
 - `drift` — the user's notes on v0.4.2. The wheels are smaller (2.5 tall, was 3.4) and tucked
   inside the body, drawn under it, with only the near wheels' outer faces over the flank; the old
   ones were drawn whole over the body and poked through the tail "like a tractor". The road has

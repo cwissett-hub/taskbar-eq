@@ -1055,10 +1055,12 @@ pub fn bling_myspace() -> Theme {
     }
 }
 
-// Fast & Furious: NOS - a street-racing in-car dash (the early films, 2 Fast 2 Furious). See
-// `render::nos`. `lit` is the tacho LEDs and the backlit dial face (the brightest stop, so it carries
-// the contrast rule); `hot` the needle and the gear/speed digits; `edge` the needle hub; `ghost` the
-// unlit segments. The one zone's `lit` is the under-glow neon - the family reads only `zones[0]`.
+// Fast & Furious: NOS - a 2 Fast 2 Furious street race from the driver's seat. See `render::nos`.
+// `lit` is the dash's LED strip, the rev bar and the gear box (the brightest stop, so it carries the
+// contrast rule); `hot` the speed and gear digits, the wheel's marker, a third of the neon signs and
+// the rival's tail lamps; `edge` the street, the buildings and the cockpit trim; `ghost` the unlit
+// LED segments. The one zone's `lit` is the city's neon (signs, shopfronts, the rival's paint and
+// the NOS bottle) - the family reads only `zones[0]`.
 fn nos_base() -> Theme {
     Theme {
         family: "nos".into(),

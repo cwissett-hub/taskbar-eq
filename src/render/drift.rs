@@ -181,7 +181,7 @@ const SMOKE_SLOPE: f32 = 0.35;
 
 /// The body: an octagonal prism, nose and tail chamfered, counter-clockwise seen from above. Edge 0
 /// is the front face, edge 4 the rear.
-const BODY: [(f32, f32); 8] =
+pub(crate) const BODY: [(f32, f32); 8] =
     [(11.0, -3.6), (11.0, 3.6), (9.2, 5.0), (-10.4, 5.0), (-11.0, 4.5), (-11.0, -4.5), (-10.4, -5.0), (9.2, -5.0)];
 const BODY_Y: (f32, f32) = (1.0, 4.0);
 /// The cabin: a frustum from the body's top to the roof; its faces are front, left, rear, right.
@@ -203,7 +203,7 @@ const LAMP_Y: (f32, f32) = (2.3, 3.7);
 /// The R34-style tail: four round lamps on the rear face, two each side - centres out from the
 /// centre line, their height, the ring's radius and the darker centre's.
 const TAIL_V: [f32; 2] = [1.75, 3.45];
-const TAIL_Y: f32 = 3.0;
+pub(crate) const TAIL_Y: f32 = 3.0;
 const TAIL_R: f32 = 0.82;
 const TAIL_CORE: f32 = 0.42;
 /// The exhaust, on the rear face.
@@ -305,7 +305,7 @@ fn unit(s: &mut u64) -> f32 {
 }
 
 /// A uniform 0..1 hashed from an integer, for roadside objects keyed by their slot on the course.
-fn hash01(k: i64) -> f32 {
+pub(crate) fn hash01(k: i64) -> f32 {
     let mut s = (k as u64).wrapping_mul(0x2545_F491_4F6C_DD1D) ^ 0x1234_5678;
     unit(&mut s)
 }
@@ -415,17 +415,17 @@ fn light_on(l: &Light, e: f32) -> bool {
 /// The perspective camera: screen centre column, horizon line, focal length, and its sideways
 /// position in the road's frame.
 #[derive(Clone, Copy)]
-struct Cam {
-    cx: f32,
-    hz: f32,
-    f: f32,
-    x: f32,
+pub(crate) struct Cam {
+    pub(crate) cx: f32,
+    pub(crate) hz: f32,
+    pub(crate) f: f32,
+    pub(crate) x: f32,
     /// Its height above the ground under the car.
-    y: f32,
+    pub(crate) y: f32,
 }
 
 impl Cam {
-    fn project(&self, x: f32, y: f32, z: f32) -> (f32, f32) {
+    pub(crate) fn project(&self, x: f32, y: f32, z: f32) -> (f32, f32) {
         let z = z.max(NEAR);
         (self.cx + (x - self.x) * self.f / z, self.hz + (self.y - y) * self.f / z)
     }
@@ -434,7 +434,7 @@ impl Cam {
 /// Fills a convex polygon given in float pixel coordinates, offset by `off`: a pixel is in when its
 /// centre is, so a slowly turning shape steps a pixel at a time rather than jumping with rounded
 /// vertices. Rows above `min_row` are left alone.
-fn fill_convex(c: &mut Canvas, pts: &[(f32, f32)], off: (f32, f32), min_row: i32, col: Rgba) {
+pub(crate) fn fill_convex(c: &mut Canvas, pts: &[(f32, f32)], off: (f32, f32), min_row: i32, col: Rgba) {
     fill_convex_rows(c, pts, off, min_row, i32::MAX, col);
 }
 
@@ -479,7 +479,7 @@ fn fill_convex_rows(c: &mut Canvas, pts: &[(f32, f32)], off: (f32, f32), min_row
 }
 
 /// A horizontal span `x0..x1` (float, rounded) on row `y`.
-fn span(c: &mut Canvas, x0: f32, x1: f32, y: i32, col: Rgba) {
+pub(crate) fn span(c: &mut Canvas, x0: f32, x1: f32, y: i32, col: Rgba) {
     let (a, b) = (x0.round() as i32, x1.round() as i32);
     if b > a {
         c.fill_rect(a, y, b - a, 1, col);
@@ -501,7 +501,7 @@ fn area2(pts: &[(f32, f32)]) -> f32 {
 /// Where a part of the car is and which way it faces: a centre on the road (world x, z), a heading
 /// (`cs`, `sn` of the yaw from straight ahead, positive toward +x), and the camera.
 #[derive(Clone, Copy)]
-struct Pose {
+pub(crate) struct Pose {
     x: f32,
     z: f32,
     cs: f32,
@@ -512,14 +512,14 @@ struct Pose {
 }
 
 impl Pose {
-    fn new(x: f32, z: f32, yaw: f32, cam: Cam) -> Self {
+    pub(crate) fn new(x: f32, z: f32, yaw: f32, cam: Cam) -> Self {
         Pose { x, z, cs: yaw.cos(), sn: yaw.sin(), e: 0.0, cam }
     }
     /// Local (u, v) on the ground to world (x, z): forward is (sn, cs), left is (-cs, sn).
     fn at(&self, u: f32, v: f32) -> (f32, f32) {
         (self.x + u * self.sn - v * self.cs, self.z + u * self.cs + v * self.sn)
     }
-    fn screen(&self, p: (f32, f32, f32)) -> (f32, f32) {
+    pub(crate) fn screen(&self, p: (f32, f32, f32)) -> (f32, f32) {
         let (x, z) = self.at(p.0, p.1);
         self.cam.project(x, p.2 + self.e, z)
     }
@@ -549,7 +549,7 @@ enum Mat {
 }
 
 /// The car's colours for a colourway, each material from its shadow to its lit tone.
-struct Paint {
+pub(crate) struct Paint {
     lit: Rgba,
     body_lo: Rgba,
     glass_lo: Rgba,
@@ -563,8 +563,13 @@ struct Paint {
 }
 
 impl Paint {
-    fn new(t: &Theme) -> Self {
-        let lit = Rgba::from_hex(&t.lit, 1.0);
+    /// The colourway's car: the body in `lit`.
+    pub(crate) fn new(t: &Theme) -> Self {
+        Paint::with_body(t, Rgba::from_hex(&t.lit, 1.0))
+    }
+
+    /// A car in `body` with the colourway's glass and lamps - `nos`'s rival.
+    pub(crate) fn with_body(t: &Theme, lit: Rgba) -> Self {
         let panel = Rgba::from_hex(&t.panel, 1.0);
         let neon = neon_of(t);
         Paint {
@@ -606,7 +611,7 @@ const NO_SHAPE: Shape = Shape { pts: [(0.0, 0.0); 8], n: 0, col: Rgba { r: 0, g:
 const MAX_SHAPES: usize = 56;
 
 /// The car's visible polygons for a frame: a fixed array, so drawing the car allocates nothing.
-struct Shapes {
+pub(crate) struct Shapes {
     s: [Shape; MAX_SHAPES],
     n: usize,
 }
@@ -635,7 +640,7 @@ fn projected(pose: &Pose, verts: &[(f32, f32, f32)]) -> ([(f32, f32); 8], usize,
     (pts, n, front)
 }
 
-fn faces_viewer(pose: &Pose, verts: &[(f32, f32, f32)]) -> bool {
+pub(crate) fn faces_viewer(pose: &Pose, verts: &[(f32, f32, f32)]) -> bool {
     projected(pose, verts).2
 }
 
@@ -688,7 +693,7 @@ type Pt = (f32, f32);
 
 /// A ground plan of four corners, and a face of four local vertices.
 type Plan4 = [(f32, f32); 4];
-type Quad = [(f32, f32, f32); 4];
+pub(crate) type Quad = [(f32, f32, f32); 4];
 
 /// A wheel's pose, its plan, and its outer face (the one on the car's outside).
 fn wheel_parts(pose: &Pose, u: f32, v: f32, steer: f32) -> (Pose, Plan4, Quad) {
@@ -738,7 +743,7 @@ fn wing(out: &mut Shapes, pose: &Pose, paint: &Paint) {
 }
 
 /// The four tail lamps' centres across the rear face.
-fn tail_lamps() -> [f32; 4] {
+pub(crate) fn tail_lamps() -> [f32; 4] {
     [TAIL_V[1], TAIL_V[0], -TAIL_V[0], -TAIL_V[1]]
 }
 
@@ -753,14 +758,14 @@ fn lamp_disc(u: f32, vc: f32, r: f32) -> [(f32, f32, f32); 8] {
 }
 
 /// The rear face's four corners.
-fn tail_face() -> Quad {
+pub(crate) fn tail_face() -> Quad {
     let (r0, r1) = (BODY[4], BODY[5]);
     [(r0.0, r0.1, BODY_Y.0), (r1.0, r1.1, BODY_Y.0), (r1.0, r1.1, BODY_Y.1), (r0.0, r0.1, BODY_Y.1)]
 }
 
 /// The car's visible polygons in painter's order: the wheels, the body, its lamps, the wing and
 /// the cabin (the wing after the cabin when the tail faces the viewer), the near wheels' outer faces.
-fn car_shapes(pose: &Pose, steer: f32, paint: &Paint) -> Shapes {
+pub(crate) fn car_shapes(pose: &Pose, steer: f32, paint: &Paint) -> Shapes {
     car_shapes_opt(pose, steer, paint, true)
 }
 
@@ -814,7 +819,7 @@ fn car_shapes_opt(pose: &Pose, steer: f32, paint: &Paint, with_wheels: bool) -> 
 }
 
 /// Draws the car's shapes: a 1 px dark outline under all of them, then the faces and struts.
-fn draw_shapes(c: &mut Canvas, sh: &Shapes) {
+pub(crate) fn draw_shapes(c: &mut Canvas, sh: &Shapes) {
     let list = &sh.s[..sh.n];
     for s in list.iter().filter(|s| s.n >= 3) {
         for off in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0)] {

@@ -143,9 +143,6 @@ Earlier still: 150 colourways across 22 families, every one with a flourish. See
 
 ## In progress
 
-**NEXT (user, 2 Oct 2026): rework `nos`** - "it feels very schizo and seems quite barebones ... something as
-cool as the drift theme is possible".
-
 Nothing right now. Queued, in order:
 
 1. **Recapture the high-BPM fixture from a real VS track.** `tests/fixtures/high-bpm-bands.csv`
@@ -162,6 +159,10 @@ Nothing right now. Queued, in order:
 
 ## Waiting on you
 
+- [ ] **Judge section 34 on `docs/review/index.html`: NOS reworked as a street race from the
+      driver's seat** (engine model, shifts on the kick, the rival, the cockpit, the purge). Running
+      on your taskbar now; unreleased on main. Open: reaches 6th in ~8 s and then cruises at 186 -
+      relaunch from a standing start now and then? Rival size/distance? Busier facades?
 - [ ] **Judge section 33 on `docs/review/index.html`: drift's tucked-in wheels, the hills, the cliff
       and drop, and the new music reactions** (kick: lamp flare and camera jolt; underglow on the bass; city lights
       on the mids; reflectors on the treble). Running on your taskbar now; unreleased on main.
