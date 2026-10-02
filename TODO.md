@@ -159,6 +159,9 @@ Nothing right now. Queued, in order:
 
 ## Waiting on you
 
+- [ ] **Judge section 33 on `docs/review/index.html`: drift's tucked-in wheels, the hills and the
+      new music reactions** (kick: lamp flare and camera jolt; underglow on the bass; city lights
+      on the mids; reflectors on the treble). Running on your taskbar now; unreleased on main.
 - [ ] **Judge section 32 on `docs/review/index.html`: Tokyo Drift as a chase cam down a touge
       with an R34-style tail.** Running on your taskbar now (pick any `drift-*` colourway).
       Open questions: do the four round tail lamps read as an R34 at 1:1 (they are ~2 px each)?

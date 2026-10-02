@@ -29,6 +29,13 @@
 //!   Projected and flat-shaded each frame (faces culled by projected winding, parts in painter's
 //!   order, a 1 px dark outline under it all). Seen from behind: tail lamps and their glow, neon
 //!   underglow on the road under it, the headlights' beam on the road ahead.
+//! - **The hills.** The course rises and falls (`HILLS`, gradients to ~11 %); road segments are drawn
+//!   near to far, each filling only the rows above the nearer road, so a crest hides what is beyond
+//!   it, and posts and pines behind a crest are skipped.
+//! - **The music.** Beyond the smoke meter: speed and drift angle follow rms; a bass kick is a clutch
+//!   kick (more angle, an exhaust pop, the tail lamps flaring and the camera jolting down); the neon
+//!   underglow pulses with the bass, the valley's city lights swell with the mids and the reflectors
+//!   glint with the treble.
 //! - **The drift.** It comes from the road. In a bend the car slides to the outside and holds a slip
 //!   angle into the corner (up to `SLIP_MAX` at full rms); through an S-bend it swaps lock, quickly
 //!   (`FLICK_MS`). A bass kick is a clutch kick: `KICK_SLIP` more angle that decays, and a pop of
@@ -97,6 +104,9 @@ const ROAD_N: usize = 161;
 /// at the wrap); its curvature reaches `C_MAX` per unit in the tightest bends.
 const COURSE: f32 = 7200.0;
 const C_MAX: f32 = 0.012;
+/// The hills: (cycles per course, amplitude in world units, phase). Gradients reach ~11 %, so the
+/// road climbs to crests that hide what is beyond and drops into dips.
+const HILLS: [(f32, f32, f32); 2] = [(5.0, 12.0, 0.0), (11.0, 6.0, 1.3)];
 /// Roadside: reflector posts, the guardrail's height, pines.
 const POST_GAP: f32 = 12.0;
 const POST_H: f32 = 2.2;
@@ -127,6 +137,9 @@ const LAT_OMEGA: f32 = 4.0;
 const KICK_SLIP: f32 = 14.0;
 const KICK_DECAY_MS: f32 = 300.0;
 const FLAME_MS: f32 = 90.0;
+/// A kick's camera jolt (world units of camera height) and how fast it settles.
+const BUMP: f32 = 1.1;
+const BUMP_MS: f32 = 140.0;
 /// Below this much motion there is no clutch kick.
 const KICK_AMP: f32 = 0.08;
 /// A kick: an onset (the `bling` net) with the low bands over this.
@@ -157,7 +170,7 @@ const PUFF_MAX_PX: f32 = 12.0;
 /// is the front face, edge 4 the rear.
 const BODY: [(f32, f32); 8] =
     [(11.0, -3.6), (11.0, 3.6), (9.2, 5.0), (-10.4, 5.0), (-11.0, 4.5), (-11.0, -4.5), (-10.4, -5.0), (9.2, -5.0)];
-const BODY_Y: (f32, f32) = (1.2, 4.0);
+const BODY_Y: (f32, f32) = (1.0, 4.0);
 /// The cabin: a frustum from the body's top to the roof; its faces are front, left, rear, right.
 const CABIN_LO: [(f32, f32); 4] = [(4.0, -4.3), (4.0, 4.3), (-6.6, 4.3), (-6.6, -4.3)];
 const CABIN_HI: [(f32, f32); 4] = [(0.4, -3.5), (0.4, 3.5), (-4.6, 3.5), (-4.6, -3.5)];
@@ -169,8 +182,8 @@ const STRUT: (f32, f32) = (-10.5, 2.8);
 /// Wheels: the axles, the track's half width, and a wheel's half length, half width and height.
 const AXLE_F: f32 = 7.2;
 const AXLE_R: f32 = -7.0;
-const TRACK: f32 = 4.4;
-const WHEEL: (f32, f32, f32) = (2.3, 0.9, 3.4);
+const TRACK: f32 = 4.15;
+const WHEEL: (f32, f32, f32) = (1.9, 0.8, 2.5);
 /// Headlamps: each one's `v` span out from the centre line and its `y` span, on the front face.
 const LAMP_V: (f32, f32) = (1.7, 3.5);
 const LAMP_Y: (f32, f32) = (2.3, 3.7);
@@ -361,6 +374,12 @@ fn curve(s: f32) -> f32 {
     C_MAX * shape.clamp(-1.0, 1.0)
 }
 
+/// The course's height at distance `s` (wrapped).
+fn hill(s: f32) -> f32 {
+    let p = TAU * s.rem_euclid(COURSE) / COURSE;
+    HILLS.iter().map(|&(k, a, ph)| a * (k * p + ph).sin()).sum()
+}
+
 /// A twinkling light is off for a stutter each cycle.
 fn light_on(l: &Light, e: f32) -> bool {
     if !l.twinkle {
@@ -378,12 +397,14 @@ struct Cam {
     hz: f32,
     f: f32,
     x: f32,
+    /// Its height above the ground under the car.
+    y: f32,
 }
 
 impl Cam {
     fn project(&self, x: f32, y: f32, z: f32) -> (f32, f32) {
         let z = z.max(NEAR);
-        (self.cx + (x - self.x) * self.f / z, self.hz + (CAM_H - y) * self.f / z)
+        (self.cx + (x - self.x) * self.f / z, self.hz + (self.y - y) * self.f / z)
     }
 }
 
@@ -456,12 +477,14 @@ struct Pose {
     z: f32,
     cs: f32,
     sn: f32,
+    /// The ground's height under it.
+    e: f32,
     cam: Cam,
 }
 
 impl Pose {
     fn new(x: f32, z: f32, yaw: f32, cam: Cam) -> Self {
-        Pose { x, z, cs: yaw.cos(), sn: yaw.sin(), cam }
+        Pose { x, z, cs: yaw.cos(), sn: yaw.sin(), e: 0.0, cam }
     }
     /// Local (u, v) on the ground to world (x, z): forward is (sn, cs), left is (-cs, sn).
     fn at(&self, u: f32, v: f32) -> (f32, f32) {
@@ -469,7 +492,7 @@ impl Pose {
     }
     fn screen(&self, p: (f32, f32, f32)) -> (f32, f32) {
         let (x, z) = self.at(p.0, p.1);
-        self.cam.project(x, p.2, z)
+        self.cam.project(x, p.2 + self.e, z)
     }
     /// A local direction (u, v, y) to world (x, y, z).
     fn turn(&self, n: (f32, f32, f32)) -> (f32, f32, f32) {
@@ -479,7 +502,7 @@ impl Pose {
     fn child(&self, u: f32, v: f32, dyaw: f32) -> Pose {
         let (x, z) = self.at(u, v);
         let (c, s) = (dyaw.cos(), dyaw.sin());
-        Pose { x, z, cs: self.cs * c - self.sn * s, sn: self.sn * c + self.cs * s, cam: self.cam }
+        Pose { x, z, cs: self.cs * c - self.sn * s, sn: self.sn * c + self.cs * s, e: self.e, cam: self.cam }
     }
 }
 
@@ -648,15 +671,23 @@ fn wheel_parts(pose: &Pose, u: f32, v: f32, steer: f32) -> (Pose, Plan4, Quad) {
     (w, plan, outer)
 }
 
+/// A whole wheel. Drawn before the body, which hides all of it but the tyre under the sills.
 fn wheel(out: &mut Shapes, pose: &Pose, u: f32, v: f32, steer: f32, paint: &Paint) {
     let (w, plan, _) = wheel_parts(pose, u, v, steer);
     solid(out, &w, &plan, &plan, (0.0, WHEEL.2), Mat::Tyre, &[Mat::Tyre], paint);
-    // The rim, just proud of the outer face.
+}
+
+/// A near wheel's outer face and rim, drawn AFTER the body so it shows in the lower flank like a
+/// wheel in its arch. Only the outer face: the rest of the wheel is behind the body, and drawing it
+/// over the body was what made the old wheels poke through the tail like a tractor's.
+fn wheel_outer(out: &mut Shapes, pose: &Pose, u: f32, v: f32, steer: f32, paint: &Paint) {
+    let (w, _, outer) = wheel_parts(pose, u, v, steer);
+    face(out, &w, &outer, Mat::Tyre, paint);
     let hw = WHEEL.1 + 0.02;
     let rim = if v > 0.0 {
-        [(0.9, hw, 0.9), (-0.9, hw, 0.9), (-0.9, hw, 2.5), (0.9, hw, 2.5)]
+        [(0.7, hw, 0.7), (-0.7, hw, 0.7), (-0.7, hw, 1.8), (0.7, hw, 1.8)]
     } else {
-        [(-0.9, -hw, 0.9), (0.9, -hw, 0.9), (0.9, -hw, 2.5), (-0.9, -hw, 2.5)]
+        [(-0.7, -hw, 0.7), (0.7, -hw, 0.7), (0.7, -hw, 1.8), (-0.7, -hw, 1.8)]
     };
     face(out, &w, &rim, Mat::Rim, paint);
 }
@@ -695,17 +726,22 @@ fn tail_face() -> Quad {
     [(r0.0, r0.1, BODY_Y.0), (r1.0, r1.1, BODY_Y.0), (r1.0, r1.1, BODY_Y.1), (r0.0, r0.1, BODY_Y.1)]
 }
 
-/// The car's visible polygons in painter's order: the wheels on the far side, the body, its lamps,
-/// the wing and the cabin (the wing after the cabin when the tail faces the viewer), the near wheels.
+/// The car's visible polygons in painter's order: the wheels, the body, its lamps, the wing and
+/// the cabin (the wing after the cabin when the tail faces the viewer), the near wheels' outer faces.
 fn car_shapes(pose: &Pose, steer: f32, paint: &Paint) -> Shapes {
+    car_shapes_opt(pose, steer, paint, true)
+}
+
+/// `car_shapes`, optionally without the wheels - a test hook to measure what the wheels add.
+fn car_shapes_opt(pose: &Pose, steer: f32, paint: &Paint, with_wheels: bool) -> Shapes {
     let mut out = Shapes::new();
     let wheels = [(AXLE_F, TRACK, steer), (AXLE_F, -TRACK, steer), (AXLE_R, TRACK, 0.0), (AXLE_R, -TRACK, 0.0)];
     let near = wheels.map(|(u, v, st)| {
         let (w, _, outer) = wheel_parts(pose, u, v, st);
         faces_viewer(&w, &outer)
     });
-    for (i, &(u, v, st)) in wheels.iter().enumerate() {
-        if !near[i] {
+    if with_wheels {
+        for &(u, v, st) in &wheels {
             wheel(&mut out, pose, u, v, st, paint);
         }
     }
@@ -738,8 +774,8 @@ fn car_shapes(pose: &Pose, steer: f32, paint: &Paint) -> Shapes {
         wing(&mut out, pose, paint);
     }
     for (i, &(u, v, st)) in wheels.iter().enumerate() {
-        if near[i] {
-            wheel(&mut out, pose, u, v, st, paint);
+        if with_wheels && near[i] {
+            wheel_outer(&mut out, pose, u, v, st, paint);
         }
     }
     out
@@ -809,8 +845,15 @@ pub struct Drift {
     spin_dir: f32,
     /// The ridges' sideways shift, px.
     bg_off: f32,
-    /// The road's centre at depth `i * DZ` in the camera's frame.
+    /// The road's centre and its height (relative to the ground under the car) at depth `i * DZ`, and
+    /// the lowest screen row already covered by nearer road when segment `i` was drawn.
     road: [f32; ROAD_N],
+    elev: [f32; ROAD_N],
+    seg_clip: [f32; ROAD_N],
+    /// The camera's jolt on a kick (0..1).
+    bump: f32,
+    /// Whether a ground row got road this frame (a row behind a crest does not).
+    row_ok: [bool; ROWS],
     /// Per ground row: depth, the road's centre column and half width, px.
     row_z: [f32; ROWS],
     row_cx: [f32; ROWS],
@@ -847,6 +890,10 @@ impl Default for Drift {
             spin_dir: 1.0,
             bg_off: 0.0,
             road: [0.0; ROAD_N],
+            elev: [0.0; ROAD_N],
+            seg_clip: [0.0; ROAD_N],
+            bump: 0.0,
+            row_ok: [false; ROWS],
             row_z: [0.0; ROWS],
             row_cx: [0.0; ROWS],
             row_hw: [0.0; ROWS],
@@ -1015,8 +1062,23 @@ impl Drift {
         self.road[i] + (self.road[i + 1] - self.road[i]) * t
     }
 
+    /// The road's height at depth `z` (linear in the table).
+    fn elev_at(&self, z: f32) -> f32 {
+        let f = (z / DZ).clamp(0.0, (ROAD_N - 1) as f32);
+        let i = (f as usize).min(ROAD_N - 2);
+        let t = f - i as f32;
+        self.elev[i] + (self.elev[i + 1] - self.elev[i]) * t
+    }
+
+    /// Whether a point on the ground at depth `z`, at screen row `y`, is in view (not behind a crest).
+    fn ground_seen(&self, z: f32, y: f32) -> bool {
+        let i = ((z / DZ) as usize).min(ROAD_N - 1);
+        y <= self.seg_clip[i] + 1.0
+    }
+
     fn cam(&self, w: i32) -> Cam {
-        Cam { cx: w as f32 * 0.5, hz: self.layout.hz, f: self.layout.f, x: self.cam_x }
+        // A kick jolts the camera down a touch, as if the car squatted on the throttle.
+        Cam { cx: w as f32 * 0.5, hz: self.layout.hz, f: self.layout.f, x: self.cam_x, y: CAM_H - BUMP * self.bump }
     }
 
     /// The car's pose this frame.
@@ -1112,8 +1174,10 @@ impl Drift {
             x += dx * DZ;
         }
         let at_car = heading[(CAR_Z / DZ) as usize];
+        let ground = hill(self.s_cam + CAR_Z);
         for i in 0..ROAD_N {
             self.road[i] -= ROT * at_car * i as f32 * DZ;
+            self.elev[i] = hill(self.s_cam + i as f32 * DZ) - ground;
         }
 
         // The drift: into the bend, sliding out of it; a clutch kick on the beat; full lock and a
@@ -1122,7 +1186,9 @@ impl Drift {
         if kick && amp > KICK_AMP && !drifting {
             self.kick = KICK_SLIP;
             self.flame = 1.0;
+            self.bump = 1.0;
         }
+        self.bump *= (-dt / BUMP_MS).exp();
         self.kick *= (-dt / KICK_DECAY_MS).exp();
         self.flame = (self.flame - dt / FLAME_MS).max(0.0);
         let dir = if self.bend >= 0.0 { 1.0 } else { -1.0 };
@@ -1143,7 +1209,7 @@ impl Drift {
         self.spin = if drifting && since_ms < SPIN_MS { self.spin_dir * TAU * ease(since_ms / SPIN_MS) } else { 0.0 };
         let car_x = self.road_at(CAR_Z) + self.lat;
         self.cam_x += (CAM_FOLLOW * car_x - self.cam_x) * (dt / 200.0).min(1.0);
-        for v in [&mut self.slip, &mut self.lat, &mut self.vlat, &mut self.cam_x, &mut self.kick] {
+        for v in [&mut self.slip, &mut self.lat, &mut self.vlat, &mut self.cam_x, &mut self.kick, &mut self.bump] {
             if !v.is_finite() {
                 *v = 0.0;
             }
@@ -1181,6 +1247,8 @@ impl Family for Drift {
         // rms rarely passes ~0.25 in practice (the `term` convention).
         let rms_norm = (rms * 4.0).clamp(0.0, 1.0);
         let bass = d.levels[0..8].iter().map(|&v| lvl(v)).sum::<f32>() / 8.0;
+        let mids = d.levels[16..40].iter().map(|&v| lvl(v)).sum::<f32>() / 24.0;
+        let treble = d.levels[40..64].iter().map(|&v| lvl(v)).sum::<f32>() / 24.0;
 
         // ---- the drift (the flourish) ----
         let triggered = self.flourish.update(&d.levels, dt, t.flourish);
@@ -1231,12 +1299,41 @@ impl Family for Drift {
         };
 
         // ---- per ground row: depth, the road's centre and half width ----
+        // Road segments from near to far: each fills the rows between its screen row and the nearer
+        // road above which nothing has been drawn yet, so a crest hides the road beyond it until the
+        // road climbs back into view (the classic pseudo-3D hill clip).
         let rows_end = (iy1.max(0) as usize).min(ROWS);
-        for y in hz_row.max(0) as usize..rows_end {
-            let z = CAM_H * f / (y as f32 + 0.5 - self.layout.hz);
-            self.row_z[y] = z;
-            self.row_cx[y] = cam.cx + (self.road_at(z) - cam.x) * f / z;
-            self.row_hw[y] = HALF_W * f / z;
+        for ok in self.row_ok[..rows_end].iter_mut() {
+            *ok = false;
+        }
+        let mut clip = iy1 as f32;
+        let (mut prev_y, mut prev_z) = (f32::MAX, 0.0f32);
+        for i in 1..ROAD_N {
+            let z = i as f32 * DZ;
+            self.seg_clip[i] = clip;
+            if z < 8.0 {
+                continue;
+            }
+            let y = cam.project(0.0, self.elev[i], z).1;
+            if y < clip {
+                let top = ((y - 0.5).ceil() as i32).max(iy0);
+                let bot = ((clip.min(prev_y) - 0.5).ceil() as i32 - 1).min(iy1 - 1);
+                for r in top..=bot {
+                    let ri = r as usize;
+                    if ri >= rows_end {
+                        continue;
+                    }
+                    let tt = if prev_y < f32::MAX { ((r as f32 + 0.5 - y) / (prev_y - y)).clamp(0.0, 1.0) } else { 0.0 };
+                    let zr = z + (prev_z - z) * tt;
+                    self.row_z[ri] = zr;
+                    self.row_cx[ri] = cam.cx + (self.road_at(zr) - cam.x) * f / zr;
+                    self.row_hw[ri] = HALF_W * f / zr;
+                    self.row_ok[ri] = true;
+                }
+                clip = y;
+            }
+            prev_y = y;
+            prev_z = z;
         }
 
         let pal = Palette::new(t);
@@ -1263,8 +1360,15 @@ impl Family for Drift {
             }
 
             // ---- the ground, row by row ----
-            for y in hz_row.max(0)..iy1.min(ROWS as i32) {
+            for y in iy0..iy1.min(ROWS as i32) {
                 let yi = y as usize;
+                if !self.row_ok[yi] {
+                    // Beyond a crest, below the horizon: the far side of the pass in the haze.
+                    if y >= hz_row {
+                        c.fill_rect(ix0, y, iw, 1, Rgba::lerp_linear(pal.haze, pal.valley_lo, 0.35));
+                    }
+                    continue;
+                }
                 let (z, cx, hw) = (self.row_z[yi], self.row_cx[yi], self.row_hw[yi]);
                 let fog = (z / FOG_Z).clamp(0.0, 1.0).powf(1.3);
                 let fogged = |col: Rgba| Rgba::lerp_linear(col, pal.haze, fog);
@@ -1296,7 +1400,11 @@ impl Family for Drift {
                     continue;
                 }
                 let x = ix0 as f32 + (li.vx - self.bg_off * 0.6).rem_euclid(2.0 * RIDGE_W as f32);
-                let edge_x = self.row_cx[yi as usize] + self.row_hw[yi as usize] * 1.25 + 2.0;
+                let edge_x = if self.row_ok[yi as usize] {
+                    self.row_cx[yi as usize] + self.row_hw[yi as usize] * 1.25 + 2.0
+                } else {
+                    w as f32 * 0.5
+                };
                 if x >= ix1 as f32 || x < edge_x || !(flash || light_on(li, e)) {
                     continue;
                 }
@@ -1307,7 +1415,10 @@ impl Family for Drift {
                 };
                 let depth = 1.0 - (yi - hz_row) as f32 / (iy1 - hz_row).max(1) as f32;
                 let col = if flash_on { WHITE } else { base };
-                c.fill_rect(x as i32, yi, 1, 1, with_alpha(col, 0.55 + 0.45 * (1.0 - depth * 0.6)));
+                // The city swells with the mids: brighter, and the bright ones bloom to 2 px.
+                let a = (0.5 + 0.3 * (1.0 - depth * 0.6) + 0.45 * mids).min(1.0);
+                let wd = if mids > 0.45 && li.kind != 1 { 2 } else { 1 };
+                c.fill_rect(x as i32, yi, wd, 1, with_alpha(col, a));
             }
 
             // ---- pines on the mountainside, far to near ----
@@ -1319,13 +1430,17 @@ impl Family for Drift {
                 }
                 let x = self.road_at(z) - (HALF_W + 5.0 + hash01(k) * 26.0);
                 let th = 8.0 + hash01(k * 7 + 3) * 9.0;
+                let g = self.elev_at(z);
+                if !self.ground_seen(z, cam.project(x, g, z).1) {
+                    continue;
+                }
                 let fog = (z / FOG_Z).clamp(0.0, 1.0).powf(1.3);
                 let col = Rgba::lerp_linear(pal.pine, pal.haze, fog);
-                let apex = cam.project(x, th, z);
-                let bl = cam.project(x - th * 0.32, 1.5, z);
-                let br = cam.project(x + th * 0.32, 1.5, z);
+                let apex = cam.project(x, g + th, z);
+                let bl = cam.project(x - th * 0.32, g + 1.5, z);
+                let br = cam.project(x + th * 0.32, g + 1.5, z);
                 fill_convex(c, &[apex, br, bl], (0.0, 0.0), 0, col);
-                let (t0, t1) = (cam.project(x, 1.6, z), cam.project(x, 0.0, z));
+                let (t0, t1) = (cam.project(x, g + 1.6, z), cam.project(x, g, z));
                 let tw = (0.6 * f / z).max(1.0);
                 c.fill_rect(
                     (t0.0 - tw * 0.5).round() as i32,
@@ -1346,16 +1461,26 @@ impl Family for Drift {
                 }
                 let fog = (z / FOG_Z).clamp(0.0, 1.0).powf(1.3);
                 let pw = (0.35 * f / z).max(1.0);
+                let g = self.elev_at(z);
+                if !self.ground_seen(z, cam.project(self.road_at(z), g, z).1) {
+                    prev_rail = None;
+                    continue;
+                }
                 for (side, refl) in [(-1.0f32, pal.neon), (1.0, pal.hot)] {
                     let x = self.road_at(z) + side * (HALF_W + KERB_W + 1.0);
-                    let (b, tp) = (cam.project(x, 0.0, z), cam.project(x, POST_H, z));
+                    let (b, tp) = (cam.project(x, g, z), cam.project(x, g + POST_H, z));
                     let col = Rgba::lerp_linear(pal.post, pal.haze, fog);
                     let (px0, pwi) = ((b.0 - pw * 0.5).round() as i32, pw.round() as i32);
                     c.fill_rect(px0, tp.1.round() as i32, pwi, (b.1 - tp.1).round().max(1.0) as i32, col);
-                    let rc = if flash_on { WHITE } else { Rgba::lerp_linear(refl, pal.haze, fog * 0.6) };
+                    // The reflectors glint with the treble.
+                    let rc = if flash_on {
+                        WHITE
+                    } else {
+                        Rgba::lerp_linear(Rgba::lerp_linear(refl, WHITE, 0.7 * treble), pal.haze, fog * 0.6)
+                    };
                     c.fill_rect(px0, tp.1.round() as i32, pwi, (0.5 * f / z).round().max(1.0) as i32, rc);
                     if side > 0.0 {
-                        let rail = cam.project(x, RAIL_H, z);
+                        let rail = cam.project(x, g + RAIL_H, z);
                         if let Some(q) = prev_rail {
                             let rcol = Rgba::lerp_linear(pal.rail, pal.haze, fog);
                             let (qx, qy, rx, ry) = (q.0.round() as i32, q.1.round() as i32, rail.0.round() as i32, rail.1.round() as i32);
@@ -1386,7 +1511,7 @@ impl Family for Drift {
                 for (i, q) in BODY.iter().enumerate() {
                     glow[i] = pose.screen((q.0 * ku, q.1 * kv, 0.0));
                 }
-                fill_convex(c, &glow, (0.0, 0.0), hz_row, with_alpha(pal.neon, a * (0.8 + 0.4 * bass)));
+                fill_convex(c, &glow, (0.0, 0.0), hz_row, with_alpha(pal.neon, a * (0.3 + 1.9 * bass)));
             }
         }
 
@@ -1398,10 +1523,12 @@ impl Family for Drift {
             draw_shapes(c, &shapes);
             if only == Only::All && faces_viewer(&pose, &tail_face()) {
                 // The four round tail lamps' glow and, on a kick, the exhaust's pop.
-                let r = (1.3 * f / CAR_Z).max(1.0).round() as i32;
+                // A kick flares them like a dab of the brakes.
+                let flare = (self.kick / KICK_SLIP).clamp(0.0, 1.0);
+                let r = ((1.3 + 1.2 * flare) * f / CAR_Z).max(1.0).round() as i32;
                 for vc in tail_lamps() {
                     let (gx, gy) = pose.screen((BODY[4].0 - 0.5, vc, TAIL_Y));
-                    c.fill_circle(gx.round() as i32, gy.round() as i32, r, with_alpha(pal.hot, 0.22));
+                    c.fill_circle(gx.round() as i32, gy.round() as i32, r, with_alpha(pal.hot, 0.2 + 0.35 * flare));
                 }
                 if self.flame > 0.0 {
                     let (fx, fy) = pose.screen(EXHAUST);
@@ -1427,7 +1554,7 @@ impl Family for Drift {
                 let lv = lvl(d.levels[i]) + (1.0 - lvl(d.levels[i])) * boost;
                 let rw = (PUFF_R0 + lv * PUFF_GAIN) * (1.0 + PUFF_GROW * age) + p.jr;
                 let x = self.road_at(p.z) + p.d;
-                let (sx, sy) = cam.project(x, p.y + rw * 0.6, p.z);
+                let (sx, sy) = cam.project(x, self.elev_at(p.z) + p.y + rw * 0.6, p.z);
                 let r = (rw * f / p.z).min(r_max_px);
                 if r < 0.5 || sx + r < ix0 as f32 || sx - r >= ix1 as f32 {
                     continue;
@@ -1611,7 +1738,7 @@ mod tests {
     }
     /// A behind-the-car camera for the model tests: the car at `CAR_Z`, straight ahead.
     fn test_cam() -> Cam {
-        Cam { cx: 60.0, hz: 20.0, f: FOCAL, x: 0.0 }
+        Cam { cx: 60.0, hz: 20.0, f: FOCAL, x: 0.0, y: CAM_H }
     }
 
     #[test]
@@ -1685,6 +1812,59 @@ mod tests {
             inside = lamp;
         }
         assert_eq!(runs, 4, "{runs} lamp runs across the tail's row {row}");
+    }
+
+    /// The wheels sit inside the body: from behind and turned up to 30 degrees, drawing them adds no
+    /// width to the car's painted silhouette (the old ones stuck out like a tractor's), only a little
+    /// tyre under the sills.
+    #[test]
+    fn the_wheels_tuck_in_under_the_body() {
+        let t = theme("drift-shibuya");
+        let paint = Paint::new(&t);
+        for deg in [-30.0f32, 0.0, 30.0] {
+            let paint_box = |with: bool| {
+                let mut c = Canvas::new(120, 70);
+                let pose = Pose::new(0.0, CAR_Z, deg.to_radians(), test_cam());
+                draw_shapes(&mut c, &car_shapes_opt(&pose, 0.0, &paint, with));
+                let (mut x0, mut x1, mut y1) = (i32::MAX, i32::MIN, i32::MIN);
+                for y in 0..70 {
+                    for x in 0..120 {
+                        if c.get(x, y).a > 0 {
+                            x0 = x0.min(x);
+                            x1 = x1.max(x);
+                            y1 = y1.max(y);
+                        }
+                    }
+                }
+                (x0, x1, y1)
+            };
+            let (a0, a1, ay) = paint_box(false);
+            let (b0, b1, by) = paint_box(true);
+            assert!(b0 >= a0 - 1 && b1 <= a1 + 1, "{deg}: wheels widen the car {a0}..{a1} -> {b0}..{b1}");
+            assert!(by >= ay && by <= ay + 3, "{deg}: tyres hang {} px below the body", by - ay);
+        }
+    }
+
+    /// The road has hills: over a run, the road at a fixed far depth moves up and down the screen,
+    /// and now and then a crest hides the road beyond it (rows under the horizon get no road).
+    #[test]
+    fn the_road_climbs_and_dips() {
+        let t = calm_theme("drift-touge");
+        let mut fam = Drift::default();
+        let (mut lo, mut hi, mut hidden) = (f32::MAX, f32::MIN, 0);
+        for _ in 0..120 {
+            let _ = frames(&mut fam, &t, 380, 60, 0.15, 10);
+            let cam = fam.cam(380);
+            let y = cam.project(0.0, fam.elev_at(200.0), 200.0).1;
+            lo = lo.min(y);
+            hi = hi.max(y);
+            let hz = fam.layout.hz_row as usize;
+            if (hz..hz + 3).any(|r| !fam.row_ok[r]) {
+                hidden += 1;
+            }
+        }
+        assert!(hi - lo >= 6.0, "the far road only moved rows {lo:.1}..{hi:.1}");
+        assert!(hidden >= 5, "a crest hid the far road in only {hidden} of 120 samples");
     }
 
     /// The model really turns: from behind it is narrow; turned 45 degrees either way it is wider on
@@ -1797,7 +1977,7 @@ mod tests {
         for k in 200..260 {
             c.clear();
             fam.draw(&mut c, &t, &music(0.6, 0.15, k, if k < 203 { 1 } else { 0 }));
-            fired |= fam.flame > 0.0 && fam.kick > KICK_SLIP * 0.8;
+            fired |= fam.flame > 0.0 && fam.kick > KICK_SLIP * 0.8 && fam.bump > 0.5;
         }
         assert!(fired, "a kick did not kick");
     }
@@ -2119,7 +2299,7 @@ mod tests {
             let mut c = Canvas::new(8 * 60, 40);
             c.fill_rect(0, 0, 8 * 60, 40, Palette::new(&t).road_a);
             for (k, deg) in [-60.0f32, -40.0, -20.0, 0.0, 20.0, 40.0, 60.0, 180.0].into_iter().enumerate() {
-                let cam = Cam { cx: k as f32 * 60.0 + 30.0, hz: 0.0, f: FOCAL, x: 0.0 };
+                let cam = Cam { cx: k as f32 * 60.0 + 30.0, hz: 0.0, f: FOCAL, x: 0.0, y: CAM_H };
                 let pose = Pose::new(0.0, CAR_Z, deg.to_radians(), cam);
                 draw_shapes(&mut c, &car_shapes(&pose, (-deg * 0.6).clamp(-COUNTER_MAX, COUNTER_MAX).to_radians(), &paint));
             }

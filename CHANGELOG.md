@@ -3,6 +3,16 @@
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); dates are release dates,
 not commit dates.
 
+## [Unreleased]
+
+- `drift` — the user's notes on v0.4.2. The wheels are smaller (2.5 tall, was 3.4) and tucked
+  inside the body, drawn under it, with only the near wheels' outer faces over the flank; the old
+  ones were drawn whole over the body and poked through the tail "like a tractor". The road has
+  hills (gradients to ~11 %), drawn near to far with the pseudo-3D crest clip, so a crest hides the
+  road, posts and pines beyond it. More of the music shows: a bass kick also flares the tail lamps
+  and jolts the camera, the neon underglow pulses with the bass, the valley's city lights swell
+  with the mids and the reflectors glint with the treble.
+
 ## [0.4.2] — 2026-10-02
 
 - `drift` — reworked as a chase camera down a touge at the user's request ("a view from behind
