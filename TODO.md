@@ -3,7 +3,7 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** (Unreleased, on main) — TOKYO DRIFT, THIRD TAKE: CHASE CAM ON A TOUGE, R34
+**Last updated:** v0.4.2 — TOKYO DRIFT, THIRD TAKE: CHASE CAM ON A TOUGE, R34
 TAIL. The user: "a view from behind the car going along a touge road" and "model the car off the
 rear of an R34 Skyline". `drift` is now a pseudo-3D racer road (OutRun-style rows, a winding course,
 haze to the horizon) on a mountain pass: pines on the slope, a guardrail on reflector posts, the

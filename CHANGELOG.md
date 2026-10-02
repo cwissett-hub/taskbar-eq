@@ -3,7 +3,7 @@
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); dates are release dates,
 not commit dates.
 
-## [Unreleased]
+## [0.4.2] — 2026-10-02
 
 - `drift` — reworked as a chase camera down a touge at the user's request ("a view from behind
   the car going along a touge road"; an interim oblique "iso" street the same day read as "a car
