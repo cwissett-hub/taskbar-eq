@@ -5,6 +5,11 @@ not commit dates.
 
 ## [Unreleased]
 
+- `drift` — the reflector posts and guardrail are now drawn in the cliff's far-to-near pass, so a far
+  post behind a nearer stretch of cliff is hidden; before, on right-handers their neon reflectors
+  showed through the rock (the user: "the cityscape on the right is going through the mountain and
+  road"). A far city skyline across the valley (blocks and towers, lit windows, neon, red aircraft
+  lights) pans with the corners above the horizon.
 - `nos` — reworked at the user's request ("feels very schizo and seems quite barebones"): a 2 Fast 2
   Furious street race from the driver's seat, on `drift`'s perspective camera and car model (now
   `pub(crate)`). A neon city street at night (buildings with windows, shopfronts and blade signs,

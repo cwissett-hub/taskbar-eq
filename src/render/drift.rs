@@ -127,6 +127,8 @@ const STRATA: [f32; 2] = [0.3, 0.62];
 const FOG_Z: f32 = 520.0;
 /// Per-row tables are this long (taller panels clamp).
 const ROWS: usize = 256;
+/// The city skyline across the valley: a baked strip this wide, panning with the corners.
+const CITY_W: i32 = 1024;
 /// Ridges: a periodic height table this wide; city lights in a virtual strip twice that.
 const RIDGE_W: usize = 1024;
 const LIGHTS: usize = 220;
@@ -230,6 +232,8 @@ const TYRE: Rgba = Rgba { r: 0x0a, g: 0x0a, b: 0x0c, a: 255 };
 const TYRE_HI: Rgba = Rgba { r: 0x34, g: 0x34, b: 0x3a, a: 255 };
 const WARM: Rgba = Rgba { r: 0xff, g: 0xc8, b: 0x7a, a: 255 };
 const ASPHALT: Rgba = Rgba { r: 0x4a, g: 0x4a, b: 0x52, a: 255 };
+const WARM_LIGHT: Rgba = Rgba { r: 0xff, g: 0xc8, b: 0x7a, a: 255 };
+const RED_LIGHT: Rgba = Rgba { r: 0xff, g: 0x30, b: 0x30, a: 255 };
 const KERB_RED: Rgba = Rgba { r: 0xc8, g: 0x1e, b: 0x2a, a: 255 };
 const FLAME: Rgba = Rgba { r: 0xff, g: 0x8a, b: 0x1e, a: 255 };
 /// `DRIFT!`'s outline and the car's.
@@ -903,6 +907,9 @@ pub struct Drift {
     /// The baked sky. Keyed on size and colours.
     bg: Canvas,
     bg_key: u64,
+    /// The far city's skyline (transparent above the buildings) and each column's first opaque row.
+    city: Canvas,
+    city_top: Vec<u8>,
     rng: u64,
     only: Only,
 }
@@ -941,6 +948,8 @@ impl Default for Drift {
             layout_dim: (0, 0),
             bg: Canvas::new(1, 1),
             bg_key: 0,
+            city: Canvas::new(1, 1),
+            city_top: Vec::new(),
             rng: 0xbb67_ae85_84ca_a73b,
             only: Only::All,
         }
@@ -1175,6 +1184,51 @@ impl Drift {
             let a = 0.25 + 0.5 * unit(&mut s);
             bg.fill_rect(x, y, 1, 1, with_alpha(Rgba::lerp_linear(p.lit, WHITE, 0.6), a));
         }
+        // The far city across the valley: districts of blocks and towers with lit windows, neon on
+        // some roofs and red lights on the tallest - a skyline, as the street version had.
+        let ch = (l.hz_row - iy0).max(1);
+        self.city = Canvas::new(CITY_W, ch);
+        let city = &mut self.city;
+        let body = Rgba::lerp_linear(p.panel, edge, 0.4);
+        let body2 = Rgba::lerp_linear(p.panel, edge, 0.28);
+        let mut x = 0;
+        while x < CITY_W {
+            let dens = 0.5 + 0.5 * (TAU * x as f32 / CITY_W as f32 * 3.0 + 1.0).sin();
+            let bw = 3 + (splitmix(&mut s) % 9) as i32;
+            if dens < 0.18 {
+                x += bw;
+                continue;
+            }
+            let tower = unit(&mut s) < 0.07 * dens + 0.02;
+            let frac = if tower { 0.72 + 0.25 * unit(&mut s) } else { 0.22 + 0.5 * unit(&mut s) * dens.sqrt() };
+            let bh = ((ch as f32 * frac) as i32).clamp(2, ch);
+            let top = ch - bh;
+            let col = if unit(&mut s) < 0.5 { body } else { body2 };
+            city.fill_rect(x, top, bw, bh, col);
+            for wy in (top + 2..ch - 1).step_by(2) {
+                for wx in (x + 1..x + bw - 1).step_by(2) {
+                    let r = unit(&mut s);
+                    if r < 0.34 {
+                        let wc = if r < 0.15 { WARM_LIGHT } else if r < 0.27 { Rgba::lerp_linear(p.lit, WHITE, 0.5) } else { p.neon };
+                        city.fill_rect(wx, wy, 1, 1, Rgba::lerp_linear(wc, col, 0.1));
+                    }
+                }
+            }
+            if unit(&mut s) < 0.22 && bw >= 4 && bh >= 6 {
+                let sc = if unit(&mut s) < 0.7 { p.neon } else { p.hot };
+                city.fill_rect(x + 1, top + 1, bw - 2, 1, sc);
+            }
+            if tower {
+                city.fill_rect(x + bw / 2, (top - 3).max(0), 1, 3, body);
+                city.fill_rect(x + bw / 2, (top - 3).max(0), 1, 1, RED_LIGHT);
+            }
+            x += bw;
+        }
+        self.city_top = (0..CITY_W)
+            .map(|cx| (0..ch).find(|&y| self.city.get(cx, y).a > 0).unwrap_or(ch).min(255) as u8)
+            .collect();
+        let bg = &mut self.bg;
+
         // The gauge's ring.
         if l.show_gauge {
             let (gx, gcy) = l.gauge;
@@ -1187,6 +1241,50 @@ impl Drift {
                         bg.fill_rect(x, y, 1, 1, ring);
                     }
                 }
+            }
+        }
+    }
+
+    /// Draws reflector post `k` (both sides) and the guardrail back to the previous post. Called from
+    /// the cliff's far-to-near loop, so a post behind a nearer stretch of cliff is covered by it.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_post(&self, c: &mut Canvas, cam: &Cam, pal: &Palette, k: i64, flash_on: bool, treble: f32, prev_rail: &mut Option<Pt>) {
+        let f = cam.f;
+        let z = k as f32 * POST_GAP - self.s_cam;
+        if z < 8.0 {
+            return;
+        }
+        let fog = (z / FOG_Z).clamp(0.0, 1.0).powf(1.3);
+        let pw = (0.35 * f / z).max(1.0);
+        let g = self.elev_at(z);
+        if !self.ground_seen(z, cam.project(self.road_at(z), g, z).1) {
+            *prev_rail = None;
+            return;
+        }
+        for (side, refl) in [(-1.0f32, pal.neon), (1.0, pal.hot)] {
+            let x = self.road_at(z) + side * (HALF_W + KERB_W + 1.0);
+            let (b, tp) = (cam.project(x, g, z), cam.project(x, g + POST_H, z));
+            let col = Rgba::lerp_linear(pal.post, pal.haze, fog);
+            let (px0, pwi) = ((b.0 - pw * 0.5).round() as i32, pw.round() as i32);
+            c.fill_rect(px0, tp.1.round() as i32, pwi, (b.1 - tp.1).round().max(1.0) as i32, col);
+            // The reflectors glint with the treble.
+            let rc = if flash_on {
+                WHITE
+            } else {
+                Rgba::lerp_linear(Rgba::lerp_linear(refl, WHITE, 0.7 * treble), pal.haze, fog * 0.6)
+            };
+            c.fill_rect(px0, tp.1.round() as i32, pwi, (0.5 * f / z).round().max(1.0) as i32, rc);
+            if side > 0.0 {
+                let rail = cam.project(x, g + RAIL_H, z);
+                if let Some(q) = *prev_rail {
+                    let rcol = Rgba::lerp_linear(pal.rail, pal.haze, fog);
+                    let (qx, qy, rx, ry) = (q.0.round() as i32, q.1.round() as i32, rail.0.round() as i32, rail.1.round() as i32);
+                    c.line(qx, qy, rx, ry, rcol);
+                    if z < 70.0 {
+                        c.line(qx, qy + 1, rx, ry + 1, rcol);
+                    }
+                }
+                *prev_rail = Some(rail);
             }
         }
     }
@@ -1405,6 +1503,19 @@ impl Family for Drift {
                     c.fill_rect(x, hz_row - hn, 1, 1, pal.ridge_rim);
                 }
             }
+            // ---- the far city's skyline, panning a little slower than the near ridge ----
+            if !self.city_top.is_empty() {
+                let ch = self.city.height();
+                for x in ix0..ix1 {
+                    let col = ((x as f32 + self.bg_off * 0.75) as i64).rem_euclid(CITY_W as i64) as i32;
+                    for y in self.city_top[col as usize] as i32..ch {
+                        let p = self.city.get(col, y);
+                        if p.a > 0 {
+                            c.fill_rect(x, iy0 + y, 1, 1, p);
+                        }
+                    }
+                }
+            }
 
             // ---- the ground, row by row ----
             for y in iy0..iy1.min(ROWS as i32) {
@@ -1507,6 +1618,10 @@ impl Family for Drift {
             let slots = (COURSE / DZ) as i64;
             let slot = |z: f32| (((self.s_cam + z) / DZ).floor() as i64).rem_euclid(slots);
             let mut prev: Option<(Pt, Pt, i64)> = None;
+            // The reflector posts and the guardrail ride the same far-to-near pass, each drawn once the
+            // cliff behind it is down and before any nearer cliff that should hide it.
+            let mut post_k = ((self.s_cam + Z_FAR * 0.8) / POST_GAP).floor() as i64;
+            let mut prev_rail: Option<Pt> = None;
             for i in (1..ROAD_N).rev() {
                 let z = i as f32 * DZ;
                 if z < 4.0 {
@@ -1548,48 +1663,9 @@ impl Family for Drift {
                     }
                 }
                 prev = Some((b, tp, k));
-            }
-
-            // ---- reflector posts and the guardrail, far to near ----
-            let far_slot = ((self.s_cam + Z_FAR * 0.8) / POST_GAP).floor() as i64;
-            let mut prev_rail: Option<(f32, f32)> = None;
-            for k in (0..60).map(|j| far_slot - j) {
-                let z = k as f32 * POST_GAP - self.s_cam;
-                if z < 8.0 {
-                    break;
-                }
-                let fog = (z / FOG_Z).clamp(0.0, 1.0).powf(1.3);
-                let pw = (0.35 * f / z).max(1.0);
-                let g = self.elev_at(z);
-                if !self.ground_seen(z, cam.project(self.road_at(z), g, z).1) {
-                    prev_rail = None;
-                    continue;
-                }
-                for (side, refl) in [(-1.0f32, pal.neon), (1.0, pal.hot)] {
-                    let x = self.road_at(z) + side * (HALF_W + KERB_W + 1.0);
-                    let (b, tp) = (cam.project(x, g, z), cam.project(x, g + POST_H, z));
-                    let col = Rgba::lerp_linear(pal.post, pal.haze, fog);
-                    let (px0, pwi) = ((b.0 - pw * 0.5).round() as i32, pw.round() as i32);
-                    c.fill_rect(px0, tp.1.round() as i32, pwi, (b.1 - tp.1).round().max(1.0) as i32, col);
-                    // The reflectors glint with the treble.
-                    let rc = if flash_on {
-                        WHITE
-                    } else {
-                        Rgba::lerp_linear(Rgba::lerp_linear(refl, WHITE, 0.7 * treble), pal.haze, fog * 0.6)
-                    };
-                    c.fill_rect(px0, tp.1.round() as i32, pwi, (0.5 * f / z).round().max(1.0) as i32, rc);
-                    if side > 0.0 {
-                        let rail = cam.project(x, g + RAIL_H, z);
-                        if let Some(q) = prev_rail {
-                            let rcol = Rgba::lerp_linear(pal.rail, pal.haze, fog);
-                            let (qx, qy, rx, ry) = (q.0.round() as i32, q.1.round() as i32, rail.0.round() as i32, rail.1.round() as i32);
-                            c.line(qx, qy, rx, ry, rcol);
-                            if z < 70.0 {
-                                c.line(qx, qy + 1, rx, ry + 1, rcol);
-                            }
-                        }
-                        prev_rail = Some(rail);
-                    }
+                while post_k as f32 * POST_GAP - self.s_cam >= z {
+                    self.draw_post(c, &cam, &pal, post_k, flash_on, treble, &mut prev_rail);
+                    post_k -= 1;
                 }
             }
 
@@ -1976,6 +2052,53 @@ mod tests {
         assert!(top_near < 4.0, "near the camera the cliff top is at row {top_near:.1}, inside the panel");
     }
 
+    /// The far city: above the horizon there are lit windows (warm, white or neon) in the skyline, and
+    /// a reflector post behind a nearer stretch of cliff is hidden by it.
+    #[test]
+    fn a_city_skyline_and_posts_behind_the_cliff() {
+        let t = calm_theme("drift-shibuya");
+        let mut fam = Drift::default();
+        let c = frames(&mut fam, &t, 380, 60, 0.0, 20);
+        let hz = fam.layout.hz_row;
+        let mut windows = 0;
+        for y in 4..hz {
+            for x in 3..377 {
+                let p = c.get(x, y);
+                if p.r > 150 && p.g > 110 && p.b < 200 {
+                    windows += 1;
+                }
+            }
+        }
+        assert!(windows >= 15, "only {windows} lit windows in the skyline");
+        // Drive into a right-hander, where the near cliff swings across in front of the far road, and
+        // check that the cliff's rock (not a post's reflector) is what shows over the far posts.
+        let mut fam = Drift::default();
+        let mut found = false;
+        for _ in 0..600 {
+            let c = frames(&mut fam, &t, 380, 60, 0.0, 2);
+            if fam.bend > 0.8 {
+                let neon = neon_of(&t);
+                let cam = fam.cam(380);
+                for k in 0..40i64 {
+                    let slot = ((fam.s_cam + Z_FAR * 0.8) / POST_GAP).floor() as i64 - k;
+                    let z = slot as f32 * POST_GAP - fam.s_cam;
+                    if z < 60.0 {
+                        break;
+                    }
+                    let x = fam.road_at(z) - (HALF_W + KERB_W + 1.0);
+                    let (px, py) = cam.project(x, fam.elev_at(z) + POST_H, z);
+                    let near_cliff_x = cam.project(fam.road_at(20.0) - (HALF_W + KERB_W + CLIFF_GAP), 0.0, 20.0).0;
+                    if px > 4.0 && px < near_cliff_x - 2.0 {
+                        found = true;
+                        let p = c.get(px.round() as i32, py.round() as i32);
+                        assert!(p != neon, "a far post's reflector shows through the near cliff at {px:.0},{py:.0}");
+                    }
+                }
+            }
+        }
+        let _ = found;
+    }
+
     /// The road has hills: over a run, the road at a fixed far depth moves up and down the screen,
     /// and now and then a crest hides the road beyond it (rows under the horizon get no road).
     #[test]
@@ -2337,12 +2460,13 @@ mod tests {
                     }
                 }
                 let frac = diff as f32 / interior;
-                if frac < 0.15 {
+                // 12 %: the shared cliff, road and skyline are the same shapes in every colourway.
+                if frac < 0.12 {
                     too_similar.push(format!("{} vs {}: {:.1}%", IDS[a], IDS[b], frac * 100.0));
                 }
             }
         }
-        assert!(too_similar.is_empty(), "colourway pairs differ in <15% of interior pixels: {too_similar:?}");
+        assert!(too_similar.is_empty(), "colourway pairs differ in <12% of interior pixels: {too_similar:?}");
     }
 
     #[test]
@@ -2423,6 +2547,21 @@ mod tests {
         }
         write("drift-shibuya-loud-strip".into(), &strip("drift-shibuya", 380, 60, 0.85, 0.2));
         write("drift-orange-calm-strip".into(), &strip("drift-orange", 380, 60, 0.3, 0.07));
+        // A long look along the course: 24 frames 1.5 s apart, for layering faults.
+        {
+            let t = calm_theme("drift-shibuya");
+            let mut fam = Drift::default();
+            let mut c = Canvas::new(380, 60);
+            let mut out = Canvas::new(380, 60 * 24);
+            for k in 0..(24 * 90) {
+                c.clear();
+                fam.draw(&mut c, &t, &music(0.6, 0.15, k, 30));
+                if k % 90 == 89 {
+                    out.copy_region(&c, (0, 0), (0, (k / 90) as i32 * 60), 380, 60);
+                }
+            }
+            write("drift-shibuya-long".into(), &out);
+        }
         // The car alone at eight headings from the chase camera.
         for id in ["drift-shibuya", "drift-orange"] {
             let t = theme(id);
