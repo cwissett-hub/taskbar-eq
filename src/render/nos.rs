@@ -20,10 +20,12 @@
 //! - **The cockpit.** A-pillars and the headliner frame the windshield; a rear-view mirror catches
 //!   the headlights of a car behind (they flash on a kick); our headlights light the road ahead. The
 //!   dashboard carries the **meter - a wide LED strip**, 48 segments (bands folded 64 -> 48), each lit
-//!   when its band passes a threshold rising left to right, `lit` to 70 %, amber, red. Behind the
-//!   steering wheel (which turns with the street's curves) the cluster: 10 shift lights and a rev bar.
-//!   Right of the wheel the speed (`MPH`, 2x `font3x5`) and the gear in a box; left of it the NOS
-//!   bottle's pressure, which the hit drains and which then refills.
+//!   when its band passes a threshold rising left to right, `lit` to 70 %, amber, red. Right-hand
+//!   drive: behind the steering wheel, right of centre (it turns with the street's curves), the
+//!   cluster - 10 shift lights and a rev bar; left of the wheel the speed (`MPH`, 2x `font3x5`) and
+//!   the gear in a box, then the NOS bottle's pressure, which the hit drains and which then refills.
+//!   The A-pillars lean in toward the roof, with the side windows dimmed beyond them, a door mirror
+//!   at the foot of each, and the headliner deepening toward the sides.
 //!
 //! # The engine
 //!
@@ -33,6 +35,9 @@
 //! fill toward it and flash blue just before), and a bass kick with the revs past `EARLY_SHIFT` shifts
 //! early, on the beat. Revs under `DOWNSHIFT` shift down. Speed is the gear's top speed times the
 //! revs, and it drives the street. A shift jolts the camera; at most one shift per `SHIFT_GAP_MS`.
+//! And it races: from a launch the car runs up through the gears, cruises at the top for a couple
+//! of seconds, then brakes hard with rev-matched downshifts to somewhere between 35 and 75 mph, and
+//! goes again - so the speed keeps rising and falling on a steady loud track.
 //!
 //! # The flourish - the NOS hit
 //!
@@ -69,7 +74,8 @@ const DASH_FRAC: f32 = 0.27;
 /// Focal length in px on a full-height panel; the driver's eye height and lane, world units.
 const FOCAL: f32 = 120.0;
 const EYE_H: f32 = 4.2;
-const EYE_X: f32 = 4.0;
+/// The driver sits on the right (a Japanese car), a little right of the lane's centre.
+const EYE_X: f32 = 5.5;
 
 // ---- the street ----
 
@@ -138,6 +144,18 @@ const ONSET_REFRACTORY_MS: f32 = 200.0;
 const RIVAL_FAR: f32 = 150.0;
 const RIVAL_CLOSE: f32 = 72.0;
 const RIVAL_EASE_MS: f32 = 1500.0;
+/// The race cycle: from a launch the car runs up through the gears, cruises at the top for
+/// `CRUISE_MS` (plus up to `CRUISE_VAR_MS`), then brakes hard - revs falling at `BRAKE_RATE`, rev-matched
+/// downshifts under `BRAKE_DOWNSHIFT` - to between `BRAKE_TO` and `BRAKE_TO + BRAKE_VAR` mph, and goes
+/// again. A run gives up waiting for top gear after `RUN_MAX_MS`.
+const CRUISE_MS: f32 = 2200.0;
+const CRUISE_VAR_MS: f32 = 1800.0;
+const BRAKE_RATE: f32 = 0.9;
+const BRAKE_DOWNSHIFT: f32 = 0.5;
+const BRAKE_TO: f32 = 35.0;
+const BRAKE_VAR: f32 = 40.0;
+const BRAKE_MAX_MS: f32 = 3500.0;
+const RUN_MAX_MS: f32 = 14000.0;
 /// NOS bottle: refill time.
 const BOTTLE_REFILL_MS: f32 = 6000.0;
 
@@ -254,33 +272,38 @@ fn layout(w: i32, h: i32) -> Layout {
     l.strip_y = l.dash_top + 1;
     l.strip_h = if ih >= 44 { 2 } else { 1 };
 
-    // The wheel's rim tops out a little under the strip.
+    // The wheel - right-hand drive, so right of centre - tops out a little under the strip.
     let r = 30.0 * l.s;
     let top = (l.strip_y + l.strip_h + 2) as f32;
-    l.wheel = (cx as f32, top + r, r, (4.0 * l.s).max(2.0));
+    let wx = ix0 as f32 + iw as f32 * 0.70;
+    l.wheel = (wx, top + r, r, (4.0 * l.s).max(2.0));
 
     // The cluster, in the wheel's opening: shift lights, then the rev bar.
     l.led_w = if iw >= 200 { 3 } else { 2 };
     l.led_gap = 1;
     let leds_w = SHIFT_LEDS as i32 * (l.led_w + l.led_gap) - l.led_gap;
-    l.led_x = cx - leds_w / 2;
+    l.led_x = wx as i32 - leds_w / 2;
     l.led_y = top as i32 + (l.wheel.3 as i32) + 1;
     l.rev_bar = (l.led_x, l.led_y + 2, leds_w, 2);
 
-    // Right of the wheel: speed and gear; left of it: the NOS bottle.
-    let right = cx + r as i32 + 6;
+    // Left of the wheel, toward the centre console: speed and gear, then the NOS bottle.
+    let edge = (wx - r) as i32 - 5;
     let gear_w = 3 * 2 + 4;
     let dy = l.dash_top + (iy1 - l.dash_top - 10).max(0) / 2 + 1;
     l.show_speed = w >= SPEED_MIN_W && iy1 - l.dash_top >= 12;
-    if l.show_speed {
-        l.speed = (right, dy);
-        l.mph = (right + text_w("000", 2) + 3, dy + 5);
-        l.gear_box = (l.mph.0 + text_w("MPH", 1) + 5, l.dash_top + 1, gear_w, (iy1 - l.dash_top - 1).min(14));
+    let readouts_left = if l.show_speed {
+        let (sw, mw) = (text_w("000", 2), text_w("MPH", 1));
+        let x0 = edge - (sw + 3 + mw + 5 + gear_w);
+        l.speed = (x0, dy);
+        l.mph = (x0 + sw + 3, dy + 5);
+        l.gear_box = (l.mph.0 + mw + 5, l.dash_top + 1, gear_w, (iy1 - l.dash_top - 1).min(14));
+        x0
     } else {
-        l.gear_box = (right, l.dash_top + 2, gear_w, (iy1 - l.dash_top - 2).min(14));
-    }
+        l.gear_box = (edge - gear_w, l.dash_top + 2, gear_w, (iy1 - l.dash_top - 2).min(14));
+        edge - gear_w
+    };
     // Clear of the left A-pillar's foot; on a narrow panel the label goes and the bar shortens.
-    let left = cx - r as i32 - 6;
+    let left = readouts_left - 6;
     let room = left - (ix0 + (18.0 * l.s) as i32);
     let label_w = text_w("NOS", 1) + 3;
     let bar_w = ((44.0 * l.s) as i32).min(room - label_w);
@@ -452,6 +475,14 @@ struct Warp {
     speed: f32,
 }
 
+/// Where the car is in the race cycle.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Phase {
+    Run,
+    Cruise,
+    Brake,
+}
+
 /// Which layers draw - a test hook.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Only {
@@ -475,6 +506,12 @@ pub struct Nos {
     since_shift_ms: f32,
     /// How long the revs have sat at the limiter.
     limiter_ms: f32,
+    /// The race cycle: the phase, how long it has run, how long this cruise lasts, how slow this
+    /// braking goes.
+    phase: Phase,
+    phase_ms: f32,
+    cruise_for: f32,
+    brake_to: f32,
     /// The camera jolt of the last shift (0..1), and the mirror's flash on a kick.
     jolt: f32,
     flash: f32,
@@ -515,6 +552,10 @@ impl Default for Nos {
             mph: 0.0,
             since_shift_ms: 1.0e6,
             limiter_ms: 0.0,
+            phase: Phase::Run,
+            phase_ms: 0.0,
+            cruise_for: CRUISE_MS,
+            brake_to: BRAKE_TO,
             jolt: 0.0,
             flash: 0.0,
             s_cam: 0.0,
@@ -693,11 +734,47 @@ impl Nos {
         if !self.throttle.is_finite() {
             self.throttle = 0.0;
         }
-        let thr = self.throttle.clamp(0.0, 1.0);
+        let music = self.throttle.clamp(0.0, 1.0);
         let g = self.gear.clamp(1, 6) as usize;
         self.since_shift_ms = (self.since_shift_ms + dt).min(1.0e6);
+
+        // The race cycle: run up the gears, cruise, brake hard, go again. With no music there is no
+        // race - the car just coasts.
+        self.phase_ms = (self.phase_ms + dt).min(1.0e6);
+        if music < KICK_THROTTLE || purge > 0.0 {
+            self.phase = Phase::Run;
+            self.phase_ms = 0.0;
+        } else {
+            match self.phase {
+                Phase::Run if (g == 6 && self.rpm >= 0.8) || self.phase_ms >= RUN_MAX_MS => {
+                    let r = self.next_rng();
+                    self.phase = Phase::Cruise;
+                    self.phase_ms = 0.0;
+                    self.cruise_for = CRUISE_MS + CRUISE_VAR_MS * (r >> 40) as f32 / (1u64 << 24) as f32;
+                }
+                Phase::Cruise if self.phase_ms >= self.cruise_for => {
+                    let r = self.next_rng();
+                    self.phase = Phase::Brake;
+                    self.phase_ms = 0.0;
+                    self.brake_to = BRAKE_TO + BRAKE_VAR * (r >> 40) as f32 / (1u64 << 24) as f32;
+                }
+                Phase::Brake if self.mph <= self.brake_to || self.phase_ms >= BRAKE_MAX_MS => {
+                    self.phase = Phase::Run;
+                    self.phase_ms = 0.0;
+                }
+                _ => {}
+            }
+        }
+        let braking = self.phase == Phase::Brake;
+        let thr = match self.phase {
+            Phase::Run => music,
+            Phase::Cruise => music * 0.75,
+            Phase::Brake => 0.0,
+        };
         if purge > 0.0 {
             self.rpm += (1.0 - self.rpm) * (dt / 120.0).min(1.0);
+        } else if braking {
+            self.rpm = (self.rpm - BRAKE_RATE * dts).max(IDLE);
         } else {
             let climb = REV_RATE[g] * thr - REV_FALL * (1.0 - thr);
             self.rpm = (self.rpm + climb * dts).clamp(IDLE, 1.0);
@@ -713,7 +790,8 @@ impl Nos {
         }
         let early = kick && thr > KICK_THROTTLE && self.rpm >= EARLY_SHIFT && self.since_shift_ms >= EARLY_GAP_MS;
         let at_limit = self.rpm >= UPSHIFT && (kick || self.limiter_ms >= LIMITER_MS);
-        let up = g < 6 && (at_limit || early);
+        let up = !braking && g < 6 && (at_limit || early);
+        let down_at = if braking { BRAKE_DOWNSHIFT } else { DOWNSHIFT };
         if settled && purge == 0.0 && up {
             self.rpm *= TOP_MPH[g] / TOP_MPH[g + 1];
             self.gear += 1;
@@ -727,10 +805,12 @@ impl Nos {
                     self.kick_shifts += 1;
                 }
             }
-        } else if settled && g > 1 && self.rpm < DOWNSHIFT {
-            self.rpm = (self.rpm * TOP_MPH[g] / TOP_MPH[g - 1]).min(0.85);
+        } else if settled && g > 1 && self.rpm < down_at {
+            // Rev-matched: the revs jump by the ratio, and the camera kicks a little.
+            self.rpm = (self.rpm * TOP_MPH[g] / TOP_MPH[g - 1]).min(0.88);
             self.gear -= 1;
             self.since_shift_ms = 0.0;
+            self.jolt = 0.6;
             #[cfg(test)]
             {
                 self.shifts += 1;
@@ -1052,14 +1132,31 @@ impl Family for Nos {
 
             // ---- the cockpit: headliner, A-pillars, mirror ----
             let s = l.s;
-            c.fill_rect(ix0, iy0, iw, (2.0 * s).round().max(1.0) as i32, pal.trim);
-            let (pt, pb) = (40.0 * s, 16.0 * s);
-            let left = [(ix0 as f32, iy0 as f32), (ix0 as f32 + pt, iy0 as f32), (ix0 as f32 + pb, view_bottom as f32 + 1.0), (ix0 as f32, view_bottom as f32 + 1.0)];
-            let right = [(ix1 as f32, iy0 as f32), (ix1 as f32 - pt, iy0 as f32), (ix1 as f32 - pb, view_bottom as f32 + 1.0), (ix1 as f32, view_bottom as f32 + 1.0)];
-            drift::fill_convex(c, &left, (0.0, 0.0), 0, pal.trim);
-            drift::fill_convex(c, &right, (0.0, 0.0), 0, pal.trim);
-            c.line((ix0 as f32 + pt) as i32, iy0, (ix0 as f32 + pb) as i32, view_bottom, pal.trim_hi);
-            c.line((ix1 as f32 - pt) as i32, iy0, (ix1 as f32 - pb) as i32, view_bottom, pal.trim_hi);
+            let (top, bot) = (iy0 as f32, view_bottom as f32 + 1.0);
+            // Each A-pillar is a band leaning in toward the roof; beyond it the side window, dimmed,
+            // with the door mirror at its foot.
+            let (out_t, out_b, pw) = (36.0 * s, 9.0 * s, 8.0 * s);
+            let seal = Rgba::lerp_linear(pal.trim, BLACK, 0.6);
+            for (sign, edge) in [(1.0f32, ix0 as f32), (-1.0, ix1 as f32)] {
+                let (ot, ob) = (edge + sign * out_t, edge + sign * out_b);
+                let (it, ib) = (ot + sign * pw, ob + sign * pw * 0.85);
+                drift::fill_convex(c, &[(edge, top), (ot, top), (ob, bot), (edge, bot)], (0.0, 0.0), 0, with_alpha(BLACK, 0.55));
+                let mx0 = edge + sign * 1.0;
+                let mx1 = edge + sign * (out_b + 3.0 * s);
+                let my = bot - 7.0 * s;
+                drift::fill_convex(c, &[(mx0, my), (mx1, my + 1.0), (mx1, my + 4.0 * s), (mx0, my + 5.0 * s)], (0.0, 0.0), 0, pal.trim);
+                c.fill_rect(((mx0 + mx1) * 0.5) as i32, (my + 2.0 * s) as i32, 2, 1, Rgba::lerp_linear(pal.trim, pal.neon, 0.4));
+                drift::fill_convex(c, &[(ot, top), (it, top), (ib, bot), (ob, bot)], (0.0, 0.0), 0, pal.trim);
+                c.line(it.round() as i32, iy0, ib.round() as i32, view_bottom, pal.trim_hi);
+                c.line(ot.round() as i32, iy0, ob.round() as i32, view_bottom, seal);
+            }
+            // The headliner: the windshield's top edge, deeper toward the sides.
+            for x in ix0..ix1 {
+                let u = (x - (ix0 + iw / 2)) as f32 / (iw as f32 * 0.5);
+                let d = (2.0 * s + 3.0 * s * u * u).round().max(1.0) as i32;
+                c.fill_rect(x, iy0, 1, d, pal.trim);
+                c.fill_rect(x, iy0 + d, 1, 1, seal);
+            }
             let (mx, my, mw, mh) = l.mirror;
             c.fill_rect(mx + mw / 2, iy0, 1, my - iy0 + 1, pal.trim);
             c.fill_rect(mx, my, mw, mh, pal.trim);
@@ -1333,7 +1430,7 @@ mod tests {
     }
 
     /// Not schizo: on loud steady music the car works up through the gears one at a time, the revs
-    /// dropping at each shift, never chattering (at least `SHIFT_GAP_MS` between shifts) and moving
+    /// dropping at each upshift, never chattering (at least `SHIFT_GAP_MS` between shifts) and moving
     /// smoothly between them; on silence it slows and shifts back down.
     #[test]
     fn the_engine_climbs_through_the_gears_smoothly() {
@@ -1346,23 +1443,70 @@ mod tests {
             c.clear();
             fam.draw(&mut c, &t, &music(0.8, 0.22, k, 0));
             if fam.gear != last_gear {
-                assert_eq!(fam.gear, last_gear + 1, "frame {k}: jumped {last_gear} -> {}", fam.gear);
-                assert!(last_rpm >= UPSHIFT - 0.02, "frame {k}: shifted at {last_rpm:.2} revs");
-                assert!(fam.rpm < last_rpm - 0.1, "frame {k}: the revs did not drop ({last_rpm:.2} -> {:.2})", fam.rpm);
+                assert!((fam.gear as i32 - last_gear as i32).abs() == 1, "frame {k}: jumped {last_gear} -> {}", fam.gear);
                 assert!((k as i64 - last_shift_k) as f32 * 16.7 >= SHIFT_GAP_MS, "frame {k}: shifts {} frames apart", k as i64 - last_shift_k);
                 last_shift_k = k as i64;
-                ups += 1;
+                if fam.gear > last_gear {
+                    assert!(last_rpm >= UPSHIFT - 0.02, "frame {k}: shifted up at {last_rpm:.2} revs");
+                    assert!(fam.rpm < last_rpm - 0.1, "frame {k}: the revs did not drop ({last_rpm:.2} -> {:.2})", fam.rpm);
+                    ups += 1;
+                }
             } else {
                 assert!((fam.rpm - last_rpm).abs() <= 0.04, "frame {k}: revs jumped {last_rpm:.2} -> {:.2}", fam.rpm);
             }
             last_gear = fam.gear;
             last_rpm = fam.rpm;
         }
-        assert!(ups >= 4 && fam.gear >= 5, "only {ups} upshifts, in gear {} after 10 s", fam.gear);
+        assert!(ups >= 4, "only {ups} upshifts in 10 s");
         let top = fam.mph;
         let _ = frames(&mut fam, &t, 380, 60, 0.0, 480);
         assert!(fam.gear <= 2, "still in gear {} after 8 s of silence", fam.gear);
         assert!(fam.mph < top * 0.4, "speed only fell {top:.0} -> {:.0}", fam.mph);
+    }
+
+    /// It races, not cruises: on a steady loud track the speed keeps rising and falling - several
+    /// runs up the gears and several hard stops, the speed swinging by 70 mph or more.
+    #[test]
+    fn it_speeds_up_and_slows_down() {
+        let t = calm_theme("nos-2fast");
+        let mut fam = Nos::default();
+        let mut c = Canvas::new(380, 60);
+        let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+        let (mut ups, mut downs, mut last) = (0, 0, fam.gear);
+        let mut brakes = 0;
+        let mut was_braking = false;
+        for k in 0..2400 {
+            c.clear();
+            fam.draw(&mut c, &t, &music(0.8, 0.22, k, 30));
+            if k > 600 {
+                lo = lo.min(fam.mph);
+                hi = hi.max(fam.mph);
+            }
+            if fam.gear > last {
+                ups += 1;
+            } else if fam.gear < last {
+                downs += 1;
+            }
+            last = fam.gear;
+            let braking = fam.phase == Phase::Brake;
+            if braking && !was_braking {
+                brakes += 1;
+            }
+            was_braking = braking;
+        }
+        assert!(hi - lo >= 70.0, "speed only ranged {lo:.0}..{hi:.0} mph");
+        assert!(brakes >= 2 && downs >= 4 && ups >= 8, "{brakes} stops, {downs} downshifts, {ups} upshifts in 40 s");
+    }
+
+    /// The cockpit is right-hand drive: the steering wheel's rim is right of centre.
+    #[test]
+    fn the_wheel_is_on_the_right() {
+        for (w, h) in [(380, 60), (190, 48), (128, 44)] {
+            let l = layout(w, h);
+            assert!(l.wheel.0 > w as f32 * 0.6, "{w}x{h}: wheel at x {:.0}", l.wheel.0);
+            let (gx, _, gw, _) = l.gear_box;
+            assert!(gx + gw < (l.wheel.0 - l.wheel.2) as i32, "{w}x{h}: gear box under the wheel");
+        }
     }
 
     /// Shifts land on the beat: at the shift point the engine waits on the limiter for a kick, and a
@@ -1563,7 +1707,8 @@ mod tests {
         }
     }
 
-    /// Dumps for the eye test, composited over `#202020`. Each file is `<name>.<w>x<h>.rgba`.
+    /// Dumps for the eye test, composited over `#202020`. Each file is `<name>.<w>x<h>.rgba`; the strip
+    /// is twelve frames 1.5 s apart, a full race cycle.
     ///
     /// Run: cargo test --release dump_nos -- --ignored --nocapture
     #[test]
@@ -1618,12 +1763,12 @@ mod tests {
         let t = calm_theme("nos-2fast");
         let mut fam = Nos::default();
         let mut c = Canvas::new(380, 60);
-        let mut out = Canvas::new(380, 480);
-        for k in 0..(60 + 8 * 30) {
+        let mut out = Canvas::new(380, 720);
+        for k in 0..(60 + 12 * 90) {
             c.clear();
             fam.draw(&mut c, &t, &music(0.85, 0.22, k, 30));
-            if k >= 60 && (k - 60) % 30 == 29 {
-                out.copy_region(&c, (0, 0), (0, ((k - 60) / 30) as i32 * 60), 380, 60);
+            if k >= 60 && (k - 60) % 90 == 89 {
+                out.copy_region(&c, (0, 0), (0, ((k - 60) / 90) as i32 * 60), 380, 60);
             }
         }
         write("nos-2fast-strip".into(), &out);

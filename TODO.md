@@ -161,8 +161,8 @@ Nothing right now. Queued, in order:
 
 - [ ] **Judge section 34 on `docs/review/index.html`: NOS reworked as a street race from the
       driver's seat** (engine model, shifts on the kick, the rival, the cockpit, the purge). Running
-      on your taskbar now; unreleased on main. Open: reaches 6th in ~8 s and then cruises at 186 -
-      relaunch from a standing start now and then? Rival size/distance? Busier facades?
+      on your taskbar now; unreleased on main. Open: the race cycle's rhythm (run, cruise, brake)? Rival size/distance?
+      Busier facades?
 - [ ] **Judge section 33 on `docs/review/index.html`: drift's tucked-in wheels, the hills, the cliff
       and drop, and the new music reactions** (kick: lamp flare and camera jolt; underglow on the bass; city lights
       on the mids; reflectors on the treble). Running on your taskbar now; unreleased on main.

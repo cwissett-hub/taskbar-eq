@@ -5,6 +5,10 @@ not commit dates.
 
 ## [Unreleased]
 
+- `nos` — the user's notes: right-hand drive (the wheel and cluster right of centre, the readouts
+  to its left); proper A-pillars leaning in toward the roof with dimmed side windows, door mirrors
+  and a deepening headliner; and a race cycle - run up the gears, cruise 2-4 s, brake hard with
+  rev-matched downshifts to 35-75 mph, go again - instead of sitting at 186 mph in sixth.
 - `drift` — the reflector posts and guardrail are now drawn in the cliff's far-to-near pass, so a far
   post behind a nearer stretch of cliff is hidden; before, on right-handers their neon reflectors
   showed through the rock (the user: "the cityscape on the right is going through the mountain and
