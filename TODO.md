@@ -3,7 +3,11 @@
 Kept current and pushed with every change, so progress is visible without reading the whole commit
 history. Newest first within each section. Commit hashes link the claim to the evidence.
 
-**Last updated:** v0.4.2 — TOKYO DRIFT, THIRD TAKE: CHASE CAM ON A TOUGE, R34
+**Last updated:** v0.4.3 — NOS REWORKED AS A STREET RACE FROM THE DRIVER'S SEAT (right-hand drive, a
+run/cruise/brake race cycle, shifts on the kick), and DRIFT got tucked-in wheels, hills, a cliff and a
+drop, a far city skyline and more of the music. Review sheet sections 33 and 34.
+
+Earlier: v0.4.2 — TOKYO DRIFT, THIRD TAKE: CHASE CAM ON A TOUGE, R34
 TAIL. The user: "a view from behind the car going along a touge road" and "model the car off the
 rear of an R34 Skyline". `drift` is now a pseudo-3D racer road (OutRun-style rows, a winding course,
 haze to the horizon) on a mountain pass: pines on the slope, a guardrail on reflector posts, the
@@ -161,11 +165,11 @@ Nothing right now. Queued, in order:
 
 - [ ] **Judge section 34 on `docs/review/index.html`: NOS reworked as a street race from the
       driver's seat** (engine model, shifts on the kick, the rival, the cockpit, the purge). Running
-      on your taskbar now; unreleased on main. Open: the race cycle's rhythm (run, cruise, brake)? Rival size/distance?
+      on your taskbar now; released in v0.4.3. Open: the race cycle's rhythm (run, cruise, brake)? Rival size/distance?
       Busier facades?
 - [ ] **Judge section 33 on `docs/review/index.html`: drift's tucked-in wheels, the hills, the cliff
       and drop, and the new music reactions** (kick: lamp flare and camera jolt; underglow on the bass; city lights
-      on the mids; reflectors on the treble). Running on your taskbar now; unreleased on main.
+      on the mids; reflectors on the treble). Running on your taskbar now; released in v0.4.3.
 - [ ] **Judge section 32 on `docs/review/index.html`: Tokyo Drift as a chase cam down a touge
       with an R34-style tail.** Running on your taskbar now (pick any `drift-*` colourway).
       Open questions: do the four round tail lamps read as an R34 at 1:1 (they are ~2 px each)?

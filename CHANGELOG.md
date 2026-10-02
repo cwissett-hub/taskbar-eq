@@ -3,7 +3,7 @@
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); dates are release dates,
 not commit dates.
 
-## [Unreleased]
+## [0.4.3] — 2026-10-02
 
 - `nos` — the user's notes: right-hand drive (the wheel and cluster right of centre, the readouts
   to its left); proper A-pillars leaning in toward the roof with dimmed side windows, door mirrors
